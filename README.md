@@ -8,9 +8,10 @@ A free, open-source game library for Mac. Docked turns Switch games you own into
 
 Free, about 115 MB. macOS 13 or later; see [what you need](#what-you-need) and [how to open it the first time](#install).
 
-- **Convert**: drop in a game you dumped yourself, add its update and DLC, and press Convert. The work is done by [nxnative](https://github.com/seedds/nxnative).
+- **Convert**: drop in a game you dumped yourself, add its update and DLC, and press Convert. Queue as many as you like; they run one after another. The work is done by [nxnative](https://github.com/seedds/nxnative).
 - **Play**: one library for converted games and for other consoles, which run in [RetroArch](https://www.retroarch.com) if you have it.
-- **Organise**: favourites, collections, play time, and games saved where you choose.
+- **Organise**: covers made from each game's own art, favourites, collections, progress and play time.
+- **Clean up**: choose which leftovers and original files to remove once a game works.
 
 No games, keys, firmware or console files are included, and none may be posted here.
 
@@ -38,6 +39,10 @@ A converted game's graphics are prepared for the Mac that made it. On a differen
 Use Docked only with games and system files from your own console, where your local law allows it. Docked needs your own `prod.keys` file for some file types. It stays on your Mac: Docked remembers where it is and never copies or sends it.
 
 Docked is not affiliated with, endorsed by or connected to Nintendo or any other company. Console and game names belong to their owners and are used only to say what works with what.
+
+## Privacy
+
+Docked collects nothing and has no account. It goes online only when you choose **Check for Updates**, which asks GitHub for the newest version number. Covers come from your own games or pictures you choose; none are downloaded. **Copy Report** takes out your name, folders, addresses and anything like a key, but read a report before you post it.
 
 ## Build it yourself
 

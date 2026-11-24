@@ -19,11 +19,11 @@ final class Builder: ObservableObject {
     var started = Date(), stageStarted = Date()
     private var estimator = Estimator.load(), times: [(String, Double)] = [], etaAt = Date()
     private(set) var skipsPipeline = false
-    var pipelineToCome: Bool { !skipsPipeline && !["Pipeline archive", "Prewarm pipelines", "Mac app"].contains(stage) }
     @Published var parts: (done: Int, total: Int)?   // the pipeline step's own progress
     private var work: URL?, watch: DispatchSourceTimer?, partsAt: (count: Int, at: Date)?
     private var proc: Process?
     private var activity: NSObjectProtocol?
+    private(set) var failedAt = ""
     private var lastRed = "", stderrTail = "", cancelled = false
 
     func start(_ input: BuildInput, keys: String?, quick: Bool = false) {
@@ -110,16 +110,17 @@ final class Builder: ObservableObject {
     func pipelineLeft(_ now: Date = Date()) -> Double? {
         guard let p = parts, let a = partsAt, p.done > 0 else { return nil }
         let each = a.at.timeIntervalSince(stageStarted) / Double(p.done)
-        return max(0, each * Double(p.total - p.done) - now.timeIntervalSince(a.at)) + 45   // and packing the app
+        return max(0, each * Double(p.total - p.done) - now.timeIntervalSince(a.at))
     }
 
     // The engine's own figure counts down between its reports.
     func remaining(_ now: Date = Date()) -> Double? {
         guard running else { return nil }
-        if stage == "Pipeline archive" { return pipelineLeft(now) }
-        return estimator.remaining(step: stageCount > 0 ? stage : "", elapsed: now.timeIntervalSince(stageStarted), engineETA: eta.map { max(0, $0 - now.timeIntervalSince(etaAt)) })
+        return estimator.remaining(step: stageCount > 0 ? stage : "", elapsed: now.timeIntervalSince(stageStarted), engineETA: eta.map { max(0, $0 - now.timeIntervalSince(etaAt)) }, quick: skipsPipeline, pipelineLeft: pipelineLeft(now))
     }
 
+    var report: String { let v = ProcessInfo.processInfo.operatingSystemVersion; return makeReport(title: titleID.map { "\(title) [\($0)]" } ?? title, step: failedAt, error: error ?? "", log: log, version: appVersion, os: "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)", chip: chipName(), space: freeSpace()) }
+    func whole(quick: Bool) -> Double { estimator.whole(quick: quick) }
     private func add(_ s: String) { log.append(s); if log.count > 300 { log.removeFirst(log.count - 200) } }
 
     private func finished(_ code: Int32) {
@@ -128,7 +129,7 @@ final class Builder: ObservableObject {
         if code == 0 { endStep(); estimator.learn(times); estimator.save(); stage = "Done" }
         else if cancelled { stage = "Stopped" }
         else {
-            stage = "Failed"
+            failedAt = stageCount > 0 ? "step \(stageIndex) of \(stageCount), \(stage)" : stage; stage = "Failed"
             error = !lastRed.isEmpty ? lastRed : !stderrTail.isEmpty ? String(stderrTail.suffix(600)) : "The engine stopped with code \(code)."
         }
         onFinish()

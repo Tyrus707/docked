@@ -15,10 +15,11 @@ let helpTopics: [HelpTopic] = [
         "1. Drop the game in the window, then add its update and DLC. Nothing starts yet.",
         "2. Check the list and any warnings, then choose Convert. If asked, choose your prod.keys file.",
         "3. Wait 10 to 60 minutes the first time. Stay plugged in with the lid open.",
-        "4. When it finishes, the game appears in the window. Click it to play.",
+        "4. When it finishes, the game appears in the window. Click it for its details; double-click it, or press Play, to start it.",
         "To add an update or DLC later, open the game's ••• menu and choose Add Update or DLC (also in the File menu). It converts again, reusing what it can, and keeps your save.",
         "Choose where the game is saved before you convert, or open its ••• menu later and choose Move to Folder. Use Docked to move it, so it stays in the window.",
-        "To save space, open a game's ••• menu and choose Move Original Files to Trash. Docked keeps a link to each file, so deleting one in Finder alone doesn't free its space.",
+        "Add more games while one converts: they wait in a queue and start by themselves. Docked remembers the queue if you quit.",
+        "To save space, choose Clean Up from a game's ••• menu or the Options menu, and pick what to remove. Docked keeps a link to each original file, so deleting one in Finder alone doesn't free its space.",
     ]),
     HelpTopic(title: "About prod.keys", symbol: "key", lines: [
         "They belong to the Switch system, not to a game. One file works for many games.",
@@ -29,6 +30,7 @@ let helpTopics: [HelpTopic] = [
         "A controller works best: connect it in System Settings > Bluetooth before you start the game.",
         "Keyboard: WASD moves, Shift and the arrow keys turn the camera, the arrow keys alone are the D-pad.",
         "J K U I are A B X Y. Q E are L R. Z C are ZL ZR. Return is +, Tab is −, F and G press the sticks, Space shakes.",
+        "To change a game's cover, drop a picture on it or choose Choose Cover from its ••• menu. Covers or Icons is in the Options menu.",
         "Full screen: Control-Command-F. Quit: Command-Q, or hold the controller's Home button for 2 seconds. Save in the game first.",
         "Open a game's ••• menu and choose Play with Settings to change frame rate, resolution or language.",
     ]),
@@ -37,7 +39,7 @@ let helpTopics: [HelpTopic] = [
         "\"Nobody has tested this game yet\": Docked makes a best guess, and the game may not start.",
         "Some games can't work at all, such as older 32-bit games. Online play and amiibo aren't supported.",
         "The game opens and then closes: its log is in your Library folder, under Logs > nxnative.",
-        "Low on space: choose Clean Up Leftovers from the Options menu. Your games and saves stay.",
+        "Low on space: choose Clean Up from the Options menu. Your games and saves stay.",
     ]),
 ]
 

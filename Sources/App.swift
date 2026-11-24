@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var builder: Builder?
     static var moving: () -> Bool = { false }
     static var leaving: () -> Void = {}
+    static var waiting: () -> Int = { 0 }
     func applicationWillTerminate(_ n: Notification) { Self.leaving() }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { !(Self.builder?.running ?? false) && !Self.moving() }
     func applicationShouldTerminate(_ s: NSApplication) -> NSApplication.TerminateReply {
@@ -12,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let b = Self.builder, b.running else { return .terminateNow }
         let a = NSAlert()
         a.messageText = "Stop converting \(b.title)?"
-        a.informativeText = "Finished steps are kept, so adding the game again continues from there."
+        a.informativeText = Self.waiting() > 0 ? "Finished steps are kept. This game and the \(Self.waiting()) waiting stay in the queue, ready to continue next time." : "Finished steps are kept, and the game stays in the queue, ready to continue next time."
         a.addButton(withTitle: "Keep Converting"); a.addButton(withTitle: "Stop and Quit")
         if a.runModal() == .alertFirstButtonReturn { return .terminateCancel }
         b.onFinish = { s.reply(toApplicationShouldTerminate: true) }
@@ -33,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             CommandGroup(replacing: .newItem) {
                 Button("Add Game…") { model.pickGame() }.keyboardShortcut("o")
                 Menu("Add Update or DLC") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.addTo(g) } } }.disabled(model.games.isEmpty)
-                Menu("Move Original Files to Trash") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.offerTrash(g) } } }.disabled(model.games.isEmpty)
+                Button("Clean Up…") { model.cleanUp(nil) }
                 Menu("Move Game to Folder") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.moveGame(g) } } }.disabled(model.games.isEmpty)
             }
             CommandGroup(replacing: .help) { Button("How to Use Docked") { model.showHelp = true }.keyboardShortcut("?") }
@@ -92,16 +93,45 @@ final class Model: ObservableObject {
         library.roms[i].name = t; reload()
     }
     func pickArt(_ g: Game) {
-        guard let r = g.rom else { return }
-        let p = NSOpenPanel(); p.allowedContentTypes = [.png, .jpeg]; p.message = "Choose a picture for \(g.name)."
-        guard p.runModal() == .OK, let u = p.url, let i = NSImage(contentsOf: u), i.size.width > 0 else { return }
-        let side: CGFloat = 512, o = NSImage(size: NSSize(width: side, height: side)), k = max(side / i.size.width, side / i.size.height), w = i.size.width * k, h = i.size.height * k
-        o.lockFocus(); i.draw(in: NSRect(x: (side - w) / 2, y: (side - h) / 2, width: w, height: h)); o.unlockFocus()
-        let to = Paths.root.appendingPathComponent("Artwork/" + r.id.replacingOccurrences(of: ":", with: "-") + ".png")
-        try? FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let d = o.tiffRepresentation.flatMap({ NSBitmapImageRep(data: $0) })?.representation(using: .png, properties: [:]) { try? d.write(to: to, options: .atomic) }
-        icons[g.id] = nil; washes[g.id] = nil; reload()
+        let p = NSOpenPanel(); p.allowedContentTypes = [.png, .jpeg, .heic, .webP, .tiff]; p.message = "Choose a cover for \(g.name)."
+        if p.runModal() == .OK, let u = p.url { setArt(g, u) }
     }
+    func setArt(_ g: Game, _ u: URL) {
+        guard let n = (try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, n < 60_000_000, let i = NSImage(contentsOf: u), Cover.keep(i, at: Cover.custom(g)) else { message = "That picture couldn't be used."; return }
+        forgetArt(g)
+    }
+    func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); forgetArt(g) }
+    func hasArt(_ g: Game) -> Bool { FileManager.default.fileExists(atPath: Cover.custom(g).path) }
+    private func forgetArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers[g.id] = nil; reload() }
+    // Dropped on a game: a picture becomes its cover, anything else is added as usual.
+    func dropped(_ urls: [URL], on g: Game) { if urls.count == 1, pictureTypes.contains(urls[0].pathExtension.lowercased()) { setArt(g, urls[0]) } else { add(urls) } }
+    private var covers: [String: NSImage] = [:]
+    private var making = Set<String>()
+    @Published private var coverTick = 0
+    // Made in the background the first time it is wanted; the tile waits with a plain one.
+    func cover(_ g: Game) -> NSImage? {
+        if let c = covers[g.id] { return c }
+        guard making.insert(g.id).inserted else { return nil }
+        let own = Cover.custom(g), box = g.rom.flatMap { RetroArch.art($0) }, icns = g.url.appendingPathComponent("Contents/Resources/AppIcon.icns"), plain = g.rom != nil || !FileManager.default.fileExists(atPath: icns.path) ? (hasArt(g) || box != nil ? nil : icon(g)) : nil
+        Cover.queue.async {
+            let c: NSImage? = autoreleasepool { let art = NSImage(contentsOf: own) ?? box.flatMap { NSImage(contentsOf: $0) } ?? plain ?? NSImage(contentsOf: icns); return art.map { Cover.make(art: $0) } }
+            DispatchQueue.main.async { self.making.remove(g.id); self.covers[g.id] = c ?? self.icon(g); if self.making.isEmpty || self.covers.count % 8 == 0 { self.coverTick += 1 } }
+        }
+        return nil
+    }
+    // ---- the chosen game ----
+    @Published var selected: String?
+    var chosen: Game? { selected.flatMap { id in games.first { $0.id == id } } }
+    func select(_ g: Game) { if selected != g.id { selected = g.id } }   // a second click of a double-click must not close it again
+    private var sizes: [String: Int64] = [:]
+    func size(_ g: Game) -> Int64? {
+        if let s = sizes[g.id] { return s }
+        guard making.insert("size" + g.id).inserted else { return nil }
+        DispatchQueue.global(qos: .utility).async { let s = folderSize(g.url); DispatchQueue.main.async { self.making.remove("size" + g.id); self.sizes[g.id] = s; self.coverTick += 1 } }
+        return nil
+    }
+    @Published var look = Look(rawValue: UserDefaults.standard.string(forKey: "look") ?? "") ?? .covers { didSet { UserDefaults.standard.set(look.rawValue, forKey: "look") } }
+    var arrived: String?   // a game that has just been converted, until its tile has come down on the shelf
     private func playRom(_ g: Game, _ r: Rom) {
         guard let c = console(r.console) else { return }
         if let p = RetroArch.problem(c, rom: r.path) { message = p; return }
@@ -122,15 +152,7 @@ final class Model: ObservableObject {
     func renameCollection(_ o: String, _ n: String) { let was = section; library.renameCollection(o, n); if was == .collection(o) { section = library.collections.contains(o) ? was : .home } }
     func wash(_ g: Game) -> NSImage {
         if let w = washes[g.id] { return w }
-        // Shrunk to a few spots of colour, then grown in steps, which smooths it without a blur filter.
-        let src = icon(g)
-        func draw(_ from: NSImage, _ size: NSSize, _ part: NSRect = .zero) -> NSImage {
-            let o = NSImage(size: size); o.lockFocus(); NSGraphicsContext.current?.imageInterpolation = .high
-            from.draw(in: NSRect(origin: .zero, size: size), from: part, operation: .copy, fraction: 1); o.unlockFocus(); return o
-        }
-        var w = draw(src, NSSize(width: 6, height: 3), NSRect(x: src.size.width * 0.18, y: src.size.height * 0.3, width: src.size.width * 0.64, height: src.size.height * 0.4))
-        for k in [18, 54, 160, 480] as [CGFloat] { w = draw(w, NSSize(width: k, height: k / 2)) }
-        washes[g.id] = w; return w
+        let w = Cover.glow(icon(g), NSRect(x: 0.14, y: 0.14, width: 0.72, height: 0.72), width: 480, height: 240, blur: 34); washes[g.id] = w; return w
     }
     private func trackPlay() {
         tracker.identify = { [weak self] u in self?.games.first { u.path == $0.url.path || u.path.hasPrefix($0.url.path + "/") }?.titleID.uppercased() }
@@ -147,7 +169,9 @@ final class Model: ObservableObject {
     init() {
         AppDelegate.builder = builder
         AppDelegate.moving = { [weak self] in self?.moving != nil }
+        AppDelegate.waiting = { [weak self] in self?.queue.waiting.count ?? 0 }
         builder.onFinish = { [weak self] in self?.finished() }
+        DispatchQueue.global(qos: .utility).async { finishRemovals() }
         reload(); trackPlay(); recheck(first: true)
     }
 
@@ -161,18 +185,23 @@ final class Model: ObservableObject {
     }
     @Published var reviewPlace = Paths.games   // where the game on the review screen will go
     private var buildPlace = Paths.games
+    @Published var queue = Queue.load() { didSet { if queue != oldValue { queue.save() } } }
+    @Published var after = After(rawValue: UserDefaults.standard.string(forKey: "afterConverting") ?? "") ?? .ask { didSet { UserDefaults.standard.set(after.rawValue, forKey: "afterConverting") } }
+    @Published var cleaning: CleanUp?
+    @Published var removing = false
+    private var retry: DispatchWorkItem?
     @Published var moving: String?
     @Published var quick = UserDefaults.standard.bool(forKey: "skipPipeline") { didSet { UserDefaults.standard.set(quick, forKey: "skipPipeline") } }
     @Published var converting = false   // kept apart from the builder, whose every progress report would redraw the library
     var arrivingIcon: NSImage? { builder.titleID.flatMap { id in games.first { $0.titleID.uppercased() == id } }.map { icon($0) } }
-    @Published var offer: Game?   // just finished: its original files can go
+    @Published var offers: [Game] = []   // just finished: what is left over can go
     private var icons: [String: NSImage] = [:]
 
     func icon(_ g: Game) -> NSImage {
         if let i = icons[g.id] { return i }
         if let r = g.rom { let i = romIcon(r); icons[g.id] = i; return i }
         let has = FileManager.default.fileExists(atPath: g.url.appendingPathComponent("Contents/Resources/AppIcon.icns").path)
-        let i = has ? NSWorkspace.shared.icon(forFile: g.url.path) : plainIcon(); icons[g.id] = i; return i
+        let i = autoreleasepool { Cover.small(has ? NSWorkspace.shared.icon(forFile: g.url.path) : plainIcon(), 256) }; icons[g.id] = i; return i   // the full-size art is let go at once
     }
 
     // A game's box art, cropped to a tile, or its console's colour and name
@@ -209,21 +238,71 @@ final class Model: ObservableObject {
 
     func originals(_ g: Game) -> Originals { findOriginals(links: keptFiles(g.titleID), sources: sources[g.titleID.uppercased()] ?? []) }
 
-    func offerTrash(_ g: Game) {
-        guard !builder.running, moving == nil else { message = "Wait until Docked has finished its current job."; return }
-        let o = originals(g)
-        guard !o.isEmpty else { message = "Docked has no original files for \(g.name)."; return }
-        let a = NSAlert(), size = ByteCountFormatter.string(fromByteCount: o.bytes, countStyle: .file)
-        a.messageText = "Move \(g.name)'s original files to the Trash?"
-        let names = (o.files.isEmpty ? o.links : o.files).map { "• " + $0.lastPathComponent }.joined(separator: "\n")
-        a.informativeText = names + "\n\n\(size). Open the game first and check that it works. To convert it again, or add an update, you'd need these files back."
-            + (o.files.isEmpty ? "\n\nDocked only knows its own links to these files. If you have them somewhere else too, space is freed once you remove those." : "\n\nThe space is freed when you empty the Trash.")
-        a.addButton(withTitle: "Keep Files"); a.addButton(withTitle: "Move to Trash")
-        guard a.runModal() == .alertSecondButtonReturn else { return }
-        let failed = trashOriginals(o)
-        if failed.isEmpty { var s = sources; s[g.titleID.uppercased()] = nil; sources = s }
-        else { message = "These couldn't be moved to the Trash and were left alone: " + failed.map(\.lastPathComponent).joined(separator: ", ") }
-        if offer?.id == g.id { offer = nil }
+    // ---- cleaning up ----
+    var busyBuilds: Set<String> { Set(queue.all.map { ($0.family.map { buildFolderKey($0) } ?? buildKey($0.urls)) + "_build" }) }
+    private var keysNeeded: Bool { queue.all.contains { $0.needsKeys } }
+
+    // One game, or everything. Measured off the main thread: a conversion's folder holds thousands of files.
+    func cleanUp(_ g: Game?) {
+        guard moving == nil, !removing else { message = "Wait until Docked has finished its current job."; return }
+        let lib = games.filter { $0.rom == nil }, busy = busyBuilds, src = sources, inUse = Set(queue.all.compactMap(\.family)), k = findKeys(keys), needed = keysNeeded
+        cleaning = CleanUp(one: g)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var c = CleanUp(one: g); c.ready = true
+            for var l in findLeftovers(library: lib, busy: busy) where g == nil || l.id == g!.titleID.uppercased() {
+                l.bytes = l.folders.reduce(0) { $0 + folderSize($1) }
+                let game = lib.first { $0.titleID.uppercased() == l.id }, safe = game.map { selfContained($0.url, titleID: $0.titleID) } ?? lib.allSatisfy { selfContained($0.url, titleID: $0.titleID) }   // whose it was is unknown, so no game may need it
+                c.items.append(CleanItem(kind: .leftovers(l), game: game, name: l.name, bytes: l.bytes, on: safe && (g != nil || game != nil), blocked: safe ? nil : game == nil ? "A game may still use these files, so they stay." : "This game still uses these files, so they stay."))
+            }
+            for x in (g.map { [$0] } ?? lib) where !inUse.contains(x.titleID.uppercased()) {
+                let o = findOriginals(links: keptFiles(x.titleID), sources: src[x.titleID.uppercased()] ?? [])
+                if !o.isEmpty { c.items.append(CleanItem(kind: .originals(o), game: x, name: x.name, bytes: o.bytes, on: false)) }
+            }
+            if let k { c.items.append(CleanItem(kind: .keys(k), name: (k as NSString).lastPathComponent, bytes: 0, on: false, blocked: needed ? "Games waiting to convert need it." : nil)) }
+            DispatchQueue.main.async { if self.cleaning?.one?.id == g?.id, self.cleaning?.ready == false { if c.items.isEmpty || (g != nil && !c.items.contains { $0.game != nil }) { self.cleaning = nil; self.message = g == nil ? "There is nothing to clean up." : "There is nothing left over from \(g!.name)."; if let g { self.offers.removeAll { $0.id == g.id } } } else { self.cleaning = c } } }
+        }
+    }
+    func doCleanUp(_ c: CleanUp) {
+        cleaning = nil; removing = true; let lib = games.filter { $0.rom == nil }, busy = busyBuilds, inUse = Set(queue.all.compactMap(\.family)), needed = keysNeeded
+        DispatchQueue.global(qos: .userInitiated).async {
+            var failed: [String] = [], gone: [String] = [], keysGone = false
+            for i in c.items where i.on && i.blocked == nil {
+                switch i.kind {
+                case let .leftovers(l):
+                    guard (i.game.map { [$0] } ?? lib).allSatisfy({ selfContained($0.url, titleID: $0.titleID) }) else { failed.append("\(l.name)'s leftovers"); continue }
+                    if !removeLeftovers(l.folders, busy: busy).isEmpty { failed.append("\(l.name)'s leftovers") } else { removeNotes(for: i.game?.url, title: l.id) }
+                case let .originals(o):
+                    guard let g = i.game, !inUse.contains(g.titleID.uppercased()) else { failed.append(i.name); continue }
+                    let f = trashOriginals(o); if f.isEmpty { gone.append(g.titleID.uppercased()); removeNotes(for: nil, title: g.titleID.uppercased()) } else { failed += f.map(\.lastPathComponent) }
+                case let .keys(k): if needed || !trashKeys(k) { failed.append(i.name) } else { keysGone = true }
+                }
+            }
+            DispatchQueue.main.async {
+                self.removing = false; if !gone.isEmpty { var s = self.sources; gone.forEach { s[$0] = nil }; self.sources = s }; if keysGone { self.keys = nil }
+                let touched = Set(c.items.compactMap { $0.game?.id }); self.offers.removeAll { touched.contains($0.id) }
+                if !failed.isEmpty { self.message = "These were left alone: " + failed.joined(separator: ", ") }
+                self.reload(); self.startNext()
+            }
+        }
+    }
+    // Chosen before converting. Never the keys; the originals only to the Trash; and only once the finished game is proven to stand on its own.
+    private func automatic(_ j: Job, _ g: Game) {
+        guard j.after != .ask else { offers.removeAll { $0.id == g.id }; offers.append(g); return }
+        removing = true; let busy = busyBuilds, src = sources[g.titleID.uppercased()] ?? [], id = g.titleID.uppercased()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let safe = selfContained(g.url, titleID: g.titleID); var failed: [String] = [], trashed = false
+            if safe {
+                let mine = findLeftovers(library: [g], busy: busy).filter { $0.id == id }.flatMap(\.folders); failed += removeLeftovers(mine, busy: busy).map(\.lastPathComponent)
+                if j.after == .everything { let f = trashOriginals(findOriginals(links: keptFiles(id), sources: src)); failed += f.map(\.lastPathComponent); trashed = f.isEmpty }
+                removeNotes(for: g.url, title: id)
+            }
+            DispatchQueue.main.async {
+                self.removing = false; if trashed { var s = self.sources; s[id] = nil; self.sources = s }
+                if !safe { self.queue.problems.append(Problem(title: g.name, reason: "Converted, but it still uses its leftovers, so nothing was removed.")) }
+                else if !failed.isEmpty { self.queue.problems.append(Problem(title: g.name, reason: "Converted, but these could not be removed: " + failed.joined(separator: ", "))) }
+                self.startNext()
+            }
+        }
     }
 
     func reload() {
@@ -231,34 +310,42 @@ final class Model: ObservableObject {
         games = ([Paths.games] + folders.map { URL(fileURLWithPath: $0) }).flatMap { scanLibrary($0) }.filter { seen.insert($0.id).inserted }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         games += library.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0) }
-        library.meet(games)
+        library.meet(games); offers = offers.filter { o in games.contains { $0.id == o.id } }; if let s = selected, !games.contains(where: { $0.id == s }) { selected = nil }
     }
 
     private func finished() {
-        icons = [:]; converting = false
-        defer { if builder.stage == "Done", let id = builder.titleID { offerLater(id) } }
-        if builder.stage == "Done", let app = builder.output, buildPlace.path != Paths.games.path { move(app, to: buildPlace) } else { reload() }
+        icons = [:]; covers = [:]; sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID }; let job = queue.current
+        switch builder.stage {
+        case "Done":
+            if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
+            queue.done()
+            if let app = builder.output, buildPlace.path != Paths.games.path { move(app, to: buildPlace) { self.settle(job) } } else { reload(); settle(job) }
+        case "Stopped": queue.stopped(); reload()
+        default:
+            let (t, b) = Notify.text(done: nil, failed: job?.title ?? builder.title, left: queue.waiting.count, problems: 0); Notify.say(t, b)
+            queue.failed(builder.error ?? "It stopped without saying why.", report: builder.report); reload(); startNext()
+        }
     }
-
-    private func offerLater(_ id: String) {
-        if !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
-        offer = games.first { $0.titleID.uppercased() == id }
+    private func settle(_ j: Job?) {
+        let (t, b) = Notify.text(done: builder.title, failed: nil, left: queue.waiting.count, problems: queue.problems.count); Notify.say(t, b)
+        guard let id = builder.titleID, let g = games.first(where: { $0.titleID.uppercased() == id }) else { startNext(); return }
+        if let j, j.after != .ask { automatic(j, g) } else { offers.removeAll { $0.id == g.id }; offers.append(g); startNext() }
     }
 
     // Off the main thread: another disk means a long copy.
-    private func move(_ app: URL, to dir: URL) {
+    private func move(_ app: URL, to dir: URL, then: (() -> Void)? = nil) {
         moving = app.deletingPathExtension().lastPathComponent
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try placeGame(app, in: dir) }
             DispatchQueue.main.async {
-                self.moving = nil; self.icons = [:]
+                self.moving = nil; self.icons = [:]; self.covers = [:]
                 switch result {
                 case .success: if dir.path != Paths.games.path, !self.folders.contains(dir.path) { self.folders.append(dir.path) }
                 case .failure(let e): self.message = "\(app.deletingPathExtension().lastPathComponent) stayed in \(app.deletingLastPathComponent().lastPathComponent). \(e.localizedDescription)"
                 }
                 self.reload()
-                if let o = self.offer { self.offer = self.games.first { $0.titleID == o.titleID } }
-                else if let id = self.builder.titleID, self.builder.stage == "Done" { self.offer = self.games.first { $0.titleID.uppercased() == id } }
+                self.offers = self.offers.compactMap { o in self.games.first { $0.titleID == o.titleID } }
+                if let then { then() } else { self.startNext() }
             }
         }
     }
@@ -292,7 +379,7 @@ final class Model: ObservableObject {
         checking = true
         DispatchQueue.global(qos: .userInitiated).async {
             let c = runChecks()
-            DispatchQueue.main.async { self.checks = c; self.checking = false; if first, !self.ready, cannotConvert() == nil { self.showSetup = true } }
+            DispatchQueue.main.async { self.checks = c; self.checking = false; self.startNext(); if first, !self.ready, cannotConvert() == nil { self.showSetup = true } }
         }
     }
 
@@ -359,29 +446,70 @@ final class Model: ObservableObject {
 
     var existing: Game? { review.family.flatMap { f in games.first { $0.titleID.uppercased() == f } } }
 
+    // Adds the game on the review screen to the queue. It starts at once when nothing else is converting.
     func convert() -> Bool {
-        guard !builder.running, moving == nil, review.blocker == nil else { return false }
+        guard review.blocker == nil else { return false }
         if let e = placeProblem(reviewPlace), reviewPlace.path != Paths.games.path { reviewNote = e.localizedDescription; return false }
-        if let g = existing, isOpen(g) {
-            reviewNote = "Save and quit \(g.name) first."; return false
-        }
         do {
-            let input = try resolveInput(review.parts.map(\.url), family: review.family)
-            let free = freeSpace(), need = spaceNeeded(input.bytes)
-            guard free >= need else {
-                let f = ByteCountFormatter()
-                reviewNote = "Not enough disk space. This game needs about \(f.string(fromByteCount: need)) while converting and you have \(f.string(fromByteCount: free))."; return false
-            }
-            if input.needsKeys, findKeys(keys) == nil, !pickKeys() { return false }
-            buildPlace = reviewPlace; if existing == nil { destination = reviewPlace }
-            let kept = Set(review.family.map { keptFiles($0).map(\.path) } ?? [])
-            let before = review.family.flatMap { sources[$0] } ?? []
+            let parts = review.parts.map(\.url), dir = (try? parts.first?.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let packages = dir ? try resolveInput(parts, family: review.family).needsKeys : parts.contains { packageTypes.contains($0.pathExtension.lowercased()) }
+            if packages, findKeys(keys) == nil, !pickKeys() { return false }
+            let kept = Set(review.family.map { keptFiles($0).map(\.path) } ?? []), before = review.family.flatMap { sources[$0] } ?? []
             let now = review.parts.filter { !kept.contains($0.url.path) && packageTypes.union(["nup"]).contains($0.url.pathExtension.lowercased()) }.map { SourceFile(path: $0.url.path, size: $0.bytes) }
-            buildSources = before.filter { b in !now.contains { $0.path == b.path } } + now
-            offer = nil
-            builder.start(input, keys: findKeys(keys), quick: quick); converting = builder.running; review.parts = []; return true
+            let job = Job(title: existing?.name ?? jobTitle, family: review.family, parts: parts.map(\.path), place: reviewPlace.path, quick: quick, after: after, bytes: parts.reduce(0) { $0 + folderSize($1) }, needsKeys: packages, sources: before.filter { b in !now.contains { $0.path == b.path } } + now)
+            if existing == nil { destination = reviewPlace }
+            let idle = queue.current == nil && queue.waiting.isEmpty
+            // With nothing ahead of it, a problem is said here and now; otherwise it is checked again when its turn comes.
+            if idle, !builder.running { switch verdict(job) { case let .no(why): reviewNote = why; return false; case .wait where existing.map(isOpen) == true: reviewNote = "Save and quit \(existing!.name) first."; return false; default: break } }
+            guard queue.add(job) else { reviewNote = "\(job.title) is already in the queue."; return false }
+            if idle { queue.paused = false }; Notify.ask()
+            builder.error = builder.running ? builder.error : nil
+            review.parts = []; startNext(); return true
         } catch { reviewNote = error.localizedDescription; return false }
     }
+    private var jobTitle: String { (review.parts.first { $0.kind == .base } ?? review.parts.first).map { cleanName($0.url) } ?? "Game" }
+
+    private func verdict(_ j: Job) -> Queue.Verdict {
+        if let f = j.family, let g = games.first(where: { $0.titleID.uppercased() == f }), isOpen(g) { return .wait }
+        for p in j.parts where !FileManager.default.fileExists(atPath: p) { return .no("\((p as NSString).lastPathComponent) can't be found.") }
+        if let e = placeProblem(j.placeURL), j.place != Paths.games.path { return .no(e.localizedDescription) }
+        if j.needsKeys, findKeys(keys) == nil { return .no("Your prod.keys file can't be found.") }
+        let free = freeSpace(), need = spaceNeeded(j.bytes), f = ByteCountFormatter()
+        if free < need { return .no("Not enough disk space. It needs about \(f.string(fromByteCount: need)) while converting and you have \(f.string(fromByteCount: free)).") }
+        return .go
+    }
+    func startNext() {
+        retry?.cancel(); retry = nil
+        guard !builder.running, moving == nil, !removing, !installing, !queue.paused else { return }
+        guard ready else { if !checks.isEmpty, !queue.waiting.isEmpty { queue.paused = true }; return }
+        while let j = queue.next(verdict) {
+            do {
+                let input = try resolveInput(j.urls, family: j.family)
+                buildPlace = j.placeURL; buildSources = j.sources
+                builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick); converting = builder.running
+                if builder.running { return }
+                queue.failed(builder.error ?? "The conversion engine did not start.")
+            } catch { queue.problems.append(Problem(title: j.title, reason: error.localizedDescription)); queue.done() }
+        }
+        // Only games that are open are left: look again shortly.
+        if !queue.waiting.isEmpty { let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: w) }
+    }
+    var waits: Bool { builder.running || moving != nil || removing || !queue.waiting.isEmpty }
+    func queueTime(_ now: Double) -> Double { now + queue.waiting.reduce(0) { $0 + builder.whole(quick: $1.quick) } }
+    func copyReport(_ t: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string); message = "The report is copied. Your name, folders, addresses and anything like a key are taken out. Read it before you post it." }
+    @Published var checkingUpdate = false
+    func lookForUpdate() {
+        guard !checkingUpdate else { return }; checkingUpdate = true
+        checkForUpdate { a in
+            self.checkingUpdate = false
+            switch a {
+            case .newest: self.message = "You have the newest Docked (\(appVersion))."
+            case .unknown: self.message = "Docked could not check for updates. Try again later."
+            case let .available(v): let n = NSAlert(); n.messageText = "Docked \(v) is available"; n.informativeText = "You have \(appVersion). The download page opens in your browser."; n.addButton(withTitle: "Open Download Page"); n.addButton(withTitle: "Not Now"); if n.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(releasePage) }
+            }
+        }
+    }
+    func resumeQueue() { queue.paused = false; builder.error = nil; startNext(); if !ready { showSetup = true } }
 
     func play(_ g: Game, settings: Bool = false) {
         if let r = g.rom { playRom(g, r); return }
@@ -398,25 +526,6 @@ final class Model: ObservableObject {
         do { try FileManager.default.trashItem(at: u, resultingItemURL: nil) } catch { message = error.localizedDescription }
         reload()
     }
-
-    func cleanLeftovers() {
-        let fm = FileManager.default
-        let dirs = ((try? fm.contentsOfDirectory(at: Paths.games, includingPropertiesForKeys: nil)) ?? []).filter { $0.lastPathComponent.hasSuffix("_build") }
-        guard moving == nil else { message = "Wait until Docked has finished its current job."; return }
-        guard !dirs.isEmpty else { message = "There is nothing to clean up."; return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let size = ByteCountFormatter().string(fromByteCount: dirs.reduce(0) { $0 + folderSize($1) })
-            DispatchQueue.main.async { if !self.builder.running { self.askCleanUp(dirs, size) } }
-        }
-    }
-
-    private func askCleanUp(_ dirs: [URL], _ size: String) {
-        let a = NSAlert()
-        a.messageText = "Move conversion leftovers to the Trash?"
-        a.informativeText = "Up to \(size). Your games and saves stay. Converting one of these games again would take the full time."
-        a.addButton(withTitle: "Move to Trash"); a.addButton(withTitle: "Cancel")
-        if a.runModal() == .alertFirstButtonReturn { dirs.forEach(trash) }
-    }
 }
 
 struct ContentView: View {
@@ -430,18 +539,20 @@ struct ContentView: View {
         VStack(spacing: 0) {
             if model.games.isEmpty && !model.converting { empty } else { Shell(deleting: $deleting) }
             if let m = model.moving { Divider(); HStack { ProgressView().controlSize(.small); Text("Moving \(m)…"); Spacer() }.padding(16) }
-            if let g = model.offer, !builder.running {
+            if let g = model.offers.first {
                 Divider()
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(g.name) is ready").font(.headline)
-                        Text("Once you've checked it works, you can remove its original files to save space.").font(.callout).foregroundStyle(.secondary)
+                        Text(model.offers.count == 1 ? "\(g.name) is ready" : "\(g.name) and \(model.offers.count - 1) more are ready").font(.headline)
+                        Text("Check that it works, then remove what's left over to save space.").font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Remove Originals…") { model.offerTrash(g) }
-                    Button("Keep Them") { model.offer = nil }
+                    Button("Clean Up…") { model.cleanUp(g) }
+                    Button("Keep Everything") { model.offers.removeFirst() }
                 }.padding(16)
             }
+            if model.removing { Divider(); HStack { ProgressView().controlSize(.small); Text("Cleaning up…"); Spacer() }.padding(16) }
+            if !model.queue.waiting.isEmpty || !model.queue.problems.isEmpty { Divider(); QueueBar() }
             if builder.running || builder.error != nil { Divider(); BuildBar() }
         }
         .background(Backdrop())
@@ -454,13 +565,16 @@ struct ContentView: View {
         .toolbar {
             Button { model.pickGame() } label: { Label("Add Game", systemImage: "plus") }
             Menu {
+                Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }
+                Divider()
                 Button("How to Use…") { model.showHelp = true }
                 Button("Consoles…") { model.showConsoles = true }
                 Button("Setup…") { model.recheck(); model.showSetup = true }
                 Button(model.keys == nil ? "Choose prod.keys…" : "Change prod.keys…") { _ = model.pickKeys() }
+                Button("Check for Updates…") { model.lookForUpdate() }.disabled(model.checkingUpdate)
                 Button("Show Games in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Paths.games]) }
                 Divider()
-                Button("Clean Up Leftovers…") { model.cleanLeftovers() }.disabled(builder.running)
+                Button("Clean Up…") { model.cleanUp(nil) }
             } label: { Label("Options", systemImage: "ellipsis.circle") }
         }
         .sheet(isPresented: $model.showSetup) { SetupView() }
@@ -469,6 +583,7 @@ struct ContentView: View {
         .alert("Rename Game", isPresented: .init(get: { model.retitling != nil }, set: { if !$0 { model.retitling = nil } })) { TextField("Name", text: $newName); Button("Rename") { if let g = model.retitling { model.retitle(g, newName) }; newName = "" }; Button("Cancel", role: .cancel) { newName = "" } }
         .sheet(isPresented: $model.showHelp) { HelpView() }
         .sheet(isPresented: $model.showReview) { ReviewView() }
+        .sheet(isPresented: .init(get: { model.cleaning != nil }, set: { if !$0 { model.cleaning = nil } })) { CleanUpView() }
         .alert("Docked", isPresented: .init(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) { Button("OK") {} } message: { Text(model.message ?? "") }
         .confirmationDialog("Move \(deleting?.name ?? "") to the Trash?", isPresented: .init(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { g in
             Button("Move to Trash", role: .destructive) { model.trash(g.url) }
@@ -492,6 +607,7 @@ struct ContentView: View {
 }
 
 struct BuildBar: View {
+    @EnvironmentObject var model: Model
     @EnvironmentObject var builder: Builder
     @State private var showLog = false
 
@@ -505,12 +621,12 @@ struct BuildBar: View {
                 }
                 Spacer()
                 Button(showLog ? "Hide Details" : "Details") { showLog.toggle() }
-                if builder.running { Button("Stop") { builder.cancel() } } else { Button("Dismiss") { builder.error = nil } }
+                if builder.running { Button("Stop") { builder.cancel() } } else { Button("Copy Report") { model.copyReport(builder.report) }; Button("Dismiss") { builder.error = nil } }
             }
             if builder.running {
                 TimelineView(.periodic(from: .now, by: 15)) { t in
                     HStack {
-                        if let left = timeLeftText(builder.remaining(t.date), step: builder.stage, pipelineToCome: builder.pipelineToCome) { Text(left) }
+                        if let left = builder.remaining(t.date) { Text(timeLeftText(left)! + (model.queue.waiting.isEmpty ? "" : ". All \(model.queue.waiting.count + 1) games: " + shortTime(model.queueTime(left)))) }
                         Spacer()
                         Text(elapsedText(t.date.timeIntervalSince(builder.started))).foregroundStyle(.secondary)
                     }.font(.callout)

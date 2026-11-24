@@ -1,14 +1,30 @@
 import SwiftUI
 
 struct Shell: View {
+    @EnvironmentObject var model: Model
     @Binding var deleting: Game?
-    var body: some View { HStack(spacing: 0) { Sidebar(); Rectangle().fill(style.line.opacity(0.6)).frame(width: 1); Pane(deleting: $deleting) } }
+    @Environment(\.accessibilityReduceMotion) private var still
+    var body: some View {
+        GeometryReader { geo in
+            let wide = geo.size.width >= 960, g = model.chosen
+            HStack(spacing: 0) {
+                Sidebar(); line
+                Pane(deleting: $deleting).frame(maxWidth: .infinity)
+                if wide, let g { line; Inspector(game: g, deleting: $deleting).transition(.move(edge: .trailing)) }
+            }
+            .overlay(alignment: .trailing) { if !wide, let g { HStack(spacing: 0) { line; Inspector(game: g, deleting: $deleting) }.shadow(color: .black.opacity(0.35), radius: 16, x: -4).transition(.move(edge: .trailing)) } }
+            .clipped().animation(still ? nil : .easeOut(duration: 0.2), value: g?.id)
+        }.onExitCommand { model.selected = nil }
+    }
+    var line: some View { Rectangle().fill(style.line.opacity(0.6)).frame(width: 1) }
 }
 
 // ---- sidebar ----
 struct Sidebar: View {
     @EnvironmentObject var model: Model
     @State private var naming = false
+    @Namespace private var mark
+    @Environment(\.accessibilityReduceMotion) private var still
     @State private var name = ""
     var body: some View {
         ScrollView {
@@ -32,14 +48,14 @@ struct Sidebar: View {
     func head(_ t: String) -> some View { Text(t).font(.caption.weight(.semibold)).foregroundStyle(style.soft).padding(.leading, 10).padding(.top, 14).padding(.bottom, 3).accessibilityAddTraits(.isHeader) }
     func row(_ s: Section) -> some View {
         let on = model.section == s, n = s == .home ? nil : model.count(s)
-        return Button { model.section = s } label: {
+        return Button { withAnimation(still ? nil : .easeOut(duration: 0.18)) { model.section = s } } label: {
             HStack(spacing: 9) {
                 Image(systemName: on && s == .favorites ? "heart.fill" : s.symbol).frame(width: 18).foregroundStyle(on ? style.accent : style.soft)
                 Text(s.title).foregroundStyle(style.text).lineLimit(1)
                 Spacer()
                 if let n { Text("\(n)").font(.caption).monospacedDigit().foregroundStyle(style.soft) }
             }
-            .padding(.horizontal, 10).frame(height: 30).background(on ? style.tile : .clear, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
+            .padding(.horizontal, 10).frame(height: 30).background { if on { RoundedRectangle(cornerRadius: 8).fill(style.tile).matchedGeometryEffect(id: "mark", in: mark) } }.contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityAddTraits(on ? .isSelected : [])
     }
 }
@@ -49,7 +65,7 @@ struct Pane: View {
     @EnvironmentObject var model: Model
     @Binding var deleting: Game?
     var body: some View {
-        if model.section == .home && model.search.isEmpty { Home(deleting: $deleting) } else { Grid(deleting: $deleting) }
+        ZStack { if model.section == .home && model.search.isEmpty { Home(deleting: $deleting).transition(.opacity) } else { Grid(deleting: $deleting).id(model.search.isEmpty ? model.section : .all).transition(.opacity) } }
     }
 }
 
@@ -59,7 +75,8 @@ struct Home: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
-                if let g = model.shown(.all, by: .recent).first { Hero(game: g) }
+                let recent = Array(model.shown(.all, by: .recent).prefix(5))
+                if !recent.isEmpty { Carousel(games: recent) }
                 if model.converting { Shelf(title: "Converting") { ArrivingTile().frame(width: 164) } }
                 let fav = model.shown(.favorites)
                 if !fav.isEmpty { shelf("Favorites", .favorites, fav) }
@@ -83,7 +100,7 @@ struct Shelf<C: View>: View {
                 Spacer()
                 if let all, count > 3 { Button("See All") { all() }.buttonStyle(.plain).font(.callout).foregroundStyle(style.accent) }
             }
-            ScrollView(.horizontal, showsIndicators: false) { HStack(alignment: .top, spacing: 8) { content() } }
+            ScrollView(.horizontal, showsIndicators: false) { LazyHStack(alignment: .top, spacing: 8) { content() } }
         }
     }
 }
@@ -104,9 +121,9 @@ struct Hero: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(20).frame(maxWidth: .infinity, minHeight: 176, alignment: .leading)
-        .background { ZStack { Image(nsImage: model.wash(game)).resizable().interpolation(.high).scaledToFill(); LinearGradient(colors: [.black.opacity(0.72), .black.opacity(0.46)], startPoint: .leading, endPoint: .trailing) } }
-        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .padding(20).frame(maxWidth: .infinity, minHeight: 196, alignment: .leading)
+        .background { ZStack { Color(hex: 0x14242B); Image(nsImage: model.wash(game)).resizable().interpolation(.high).scaledToFill(); LinearGradient(colors: [.black.opacity(0.76), .black.opacity(0.44)], startPoint: .leading, endPoint: .trailing) } }
+        .clipShape(RoundedRectangle(cornerRadius: 18)).contentShape(RoundedRectangle(cornerRadius: 18)).onTapGesture { model.select(game) }
     }
 }
 
@@ -155,7 +172,11 @@ struct Tile: View {
     @Binding var deleting: Game?
     var body: some View {
         let e = model.library.entry(game.titleID)
-        GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID)), play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) }
+        let note = model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
+        Group {
+            if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.selected == game.id, select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
+            else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.selected == game.id, select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
+        }.onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
     }
 }
 
@@ -177,10 +198,11 @@ struct GameActions: View {
         }
         Divider()
         if game.rom == nil { Button("Add Update or DLC…") { model.addTo(game) }; Button("Move to Folder…") { model.moveGame(game) } }
-        else { Button("Choose Artwork…") { model.pickArt(game) }; Button("Rename…") { model.retitling = game } }
+        else { Button("Rename…") { model.retitling = game } }
+        Button("Choose Cover…") { model.pickArt(game) }; if model.hasArt(game) { Button("Use Original Cover") { model.clearArt(game) } }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) }
         Divider()
-        if game.rom == nil { Button("Move Original Files to Trash…") { model.offerTrash(game) }; Button("Move Game to Trash…") { deleting = game } }
+        if game.rom == nil { Button("Clean Up…") { model.cleanUp(game) }; Button("Move Game to Trash…") { deleting = game } }
         else { Button("Remove from Library") { model.removeRom(game) } }
     }
 }

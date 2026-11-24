@@ -51,7 +51,8 @@ struct DPad: Shape {
 struct GameTile: View {
     let game: Game, icon: NSImage
     var favorite = false, running = false, note = ""
-    let play: () -> Void
+    var chosen = false
+    let select: () -> Void, play: () -> Void
     @ViewBuilder var actions: () -> AnyView
     @State private var over = false
     @FocusState private var focused: Bool
@@ -59,10 +60,10 @@ struct GameTile: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Button(action: play) {
+            Button(action: select) {
                 VStack(spacing: 8) {
                     Image(nsImage: icon).resizable().frame(width: 124, height: 124)
-                        .overlay { if over || focused { Image(systemName: "play.fill").font(.system(size: 20)).foregroundStyle(.white).padding(15).background(.black.opacity(0.62), in: Circle()).accessibilityHidden(true) } }
+                        .overlay { if over { Button(action: play) { Image(systemName: "play.fill").font(.system(size: 20)).foregroundStyle(.white).padding(15).background(.black.opacity(0.62), in: Circle()).contentShape(Circle()) }.buttonStyle(.plain).help("Play \(game.name)").accessibilityLabel("Play \(game.name)") } }
                         .scaleEffect(over && !still ? 1.03 : 1)
                     if style.shelf { Capsule().fill(style.line).frame(width: 128, height: 3) }
                     VStack(spacing: 2) {
@@ -75,11 +76,11 @@ struct GameTile: View {
                     }
                 }
                 .padding(12).frame(maxWidth: .infinity, minHeight: 208, alignment: .top)
-                .background(over || focused ? style.tile : .clear, in: RoundedRectangle(cornerRadius: 14))
-                .overlay { if focused { RoundedRectangle(cornerRadius: 14).strokeBorder(style.accent, lineWidth: 2) } }
+                .background(over || focused || chosen ? style.tile : .clear, in: RoundedRectangle(cornerRadius: 14))
+                .overlay { if focused || chosen { RoundedRectangle(cornerRadius: 14).strokeBorder(style.accent, lineWidth: 2) } }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain).focused($focused).noFocusRing().help("Play \(game.name)").accessibilityLabel("Play \(game.name)")
+            .buttonStyle(.plain).focused($focused).noFocusRing().simultaneousGesture(TapGesture(count: 2).onEnded(play)).accessibilityLabel(game.name).accessibilityAddTraits(chosen ? .isSelected : []).accessibilityAction(named: "Play", play)
             Menu { actions() } label: { Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(style.text).frame(width: 28, height: 28).contentShape(Circle()) }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().padding(6)
                 .opacity(over || focused ? 1 : 0.45).accessibilityLabel("More for \(game.name)").help("More")

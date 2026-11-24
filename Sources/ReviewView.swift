@@ -49,12 +49,16 @@ struct ReviewView: View {
             }
             if let g = model.existing { Label(existingNote(g), systemImage: "arrow.triangle.2.circlepath").foregroundStyle(.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
             if let n = model.reviewNote { Label(n, systemImage: "exclamationmark.circle").foregroundStyle(Color(light: 0xB3261E, dark: 0xFF8A80)).font(.callout) }
-            if builder.running { Label("\(builder.title) is converting. You can convert this when it's done.", systemImage: "hourglass").foregroundStyle(.secondary).font(.callout) }
+            Picker("When it's done", selection: $model.after) { ForEach(After.allCases, id: \.self) { Text($0.label).tag($0) } }.fixedSize()
+            if model.after == .everything { Text("The original files go to the Trash before you've tried the game. Don't empty it until you have.").font(.callout).foregroundStyle(Color(light: 0x8A4B00, dark: 0xF2B45C)).fixedSize(horizontal: false, vertical: true) }
+            else if model.after == .leftovers { Text("Frees the most space. Adding an update later then takes the full time.").font(.callout).foregroundStyle(.secondary) }
+            if !model.review.parts.isEmpty { let s = spaceText(need: spaceNeeded(model.review.parts.reduce(0) { $0 + $1.bytes }), free: freeSpace()); Label(s.text, systemImage: s.short ? "exclamationmark.triangle" : "internaldrive").foregroundStyle(s.short ? Color(light: 0x8A4B00, dark: 0xF2B45C) : Color.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
+            if model.waits { Label("This waits its turn and starts by itself.", systemImage: "hourglass").foregroundStyle(.secondary).font(.callout) }
             HStack {
                 Button("Add More Files…") { model.pickGame() }
                 Spacer()
                 Button("Cancel") { model.review.parts = []; dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Convert") { if model.convert() { dismiss() } }.keyboardShortcut(.defaultAction).tint(style.button).disabled(builder.running || model.review.blocker != nil)
+                Button(model.waits ? "Add to Queue" : "Convert") { if model.convert() { dismiss() } }.keyboardShortcut(.defaultAction).tint(style.button).disabled(model.review.blocker != nil)
             }
         }
         .whenChanged(model.review) { model.reviewNote = nil }
