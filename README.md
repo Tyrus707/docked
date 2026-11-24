@@ -4,6 +4,10 @@
 
 A free, open-source game library for Mac. Docked turns Switch games you own into native Mac apps, and keeps them beside your games for other consoles.
 
+### [⬇ Download Docked.zip](https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip)
+
+Free, about 115 MB. macOS 13 or later; see [what you need](#what-you-need) and [how to open it the first time](#install).
+
 - **Convert**: drop in a game you dumped yourself, add its update and DLC, and press Convert. The work is done by [nxnative](https://github.com/seedds/nxnative).
 - **Play**: one library for converted games and for other consoles, which run in [RetroArch](https://www.retroarch.com) if you have it.
 - **Organise**: favourites, collections, play time, and games saved where you choose.
@@ -22,7 +26,7 @@ Docked has been tested on macOS 27.2. Older versions and Intel are built for but
 
 ## Install
 
-1. Download **Docked.zip** from [Releases](../../releases) and unzip it.
+1. Download [**Docked.zip**](https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip) and unzip it. Older versions are under [Releases](https://github.com/Tyrus707/docked/releases).
 2. Move **Docked** to Applications and open it.
 3. Docked is not notarised by Apple. If macOS blocks it, open **System Settings > Privacy & Security** and choose **Open Anyway**.
 4. To convert games, follow the steps in Docked's Setup window. The conversion tools are inside the app; Xcode is not.
