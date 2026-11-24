@@ -1,0 +1,10 @@
+.DS_Store
+*.app
+*.zip
+*.tar.xz
+*.keys
+*.nsp
+*.xci
+*.nsz
+*.xcz
+*.nup
