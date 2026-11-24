@@ -27,4 +27,6 @@ Docked's download carries these, unchanged except that library paths were made r
 | zbic (Python) | 1.0.1.post1 | GPLv2 | https://pypi.org/project/zbic/1.0.1.post1/ |
 | zstandard (Python) | 0.25.0 | BSD-3-Clause | https://pypi.org/project/zstandard/0.25.0/ |
 
+The complete source of zbic (GPL version 2), as used, is in [GPL-source](GPL-source) here and in the download.
+
 RetroArch is not included. The icon was made for Docked.
