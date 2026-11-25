@@ -110,6 +110,14 @@ enum Disc {
 
     // A cue sheet names the tracks and their kind. PlayStation data is MODE2; a disc that starts with music is a PC Engine CD.
     static func cue(_ u: URL) -> Set<String>? {
+        let (firstTrack, data) = cueTracks(u)
+        if firstTrack == "AUDIO" && data != nil { return ["pce"] }
+        guard let d = data else { return nil }
+        if let seen = track(d.url, d.start) { return seen }
+        return d.mode.hasPrefix("MODE2") ? ["ps1", "ps2"] : ["saturn", "pce", "dreamcast"]
+    }
+    // The kind of the first track, and where the first data track starts (in bytes)
+    static func cueTracks(_ u: URL) -> (first: String, data: (url: URL, mode: String, start: Int)?) {
         var file: URL?, firstFile: URL?, data: (url: URL, mode: String, index: Int)?, firstTrack = ""
         var current: (url: URL?, mode: String)?
         for l in lines(u) {
@@ -125,11 +133,8 @@ enum Disc {
                 data = (f, c.mode, m.count == 3 ? (m[0] * 60 + m[1]) * 75 + m[2] : 0)
             }
         }
-        if firstTrack == "AUDIO" && data != nil { return ["pce"] }
-        guard let d = data else { return nil }
-        let start = d.index * (d.mode.contains("2352") ? 2352 : 2048)
-        if let seen = track(d.url, start) { return seen }
-        return d.mode.hasPrefix("MODE2") ? ["ps1", "ps2"] : ["saturn", "pce", "dreamcast"]
+        _ = firstFile
+        return (firstTrack, data.map { ($0.url, $0.mode, $0.index * ($0.mode.contains("2352") ? 2352 : 2048)) })
     }
 
     // A CHD keeps its tracks in metadata: GD-ROM is Dreamcast, DVD is PS2 or PSP, and a CD's first track tells as a cue sheet does.
@@ -151,5 +156,40 @@ enum Disc {
         guard let first = tracks.first(where: { $0.contains("TRACK:1 ") }) ?? tracks.first else { return nil }
         if first.contains("TYPE:AUDIO") { return tracks.count > 1 ? ["pce"] : nil }
         return first.contains("TYPE:MODE2") ? ["ps1", "ps2"] : ["saturn", "pce", "dreamcast"]
+    }
+    // ---- serials ----
+    // The product code a disc carries, which game lists use to tell disc games apart. Only the disc's first sectors are read;
+    // a compressed image (CHD, CSO) is left to its name.
+    static func serial(_ u: URL, depth: Int = 0) -> String? {
+        switch u.pathExtension.lowercased() {
+        case "iso", "gcm": return nintendoID(u, at: 0) ?? serial(open(u, 0))
+        case "rvz", "wia": let h = read(u, 0, 0x60); return ["WIA", "RVZ"].contains(text(h, 0, 3)) ? id6(h, 0x58) : nil
+        case "ciso": return nintendoID(u, at: 0x8000)
+        case "cue": return cueTracks(u).data.flatMap { serial(open($0.url, $0.start)) }
+        case "ccd": return serial(open(u.deletingPathExtension().appendingPathExtension("img"), 0))
+        case "m3u":
+            guard depth < 2, let first = lines(u).first(where: { !$0.hasPrefix("#") }) else { return nil }
+            return serial(u.deletingLastPathComponent().appendingPathComponent(first), depth: depth + 1)
+        default: return nil
+        }
+    }
+    // A GameCube or Wii disc's six-letter ID, such as GM8E01
+    static func nintendoID(_ u: URL, at base: Int) -> String? { nintendo(u, at: base) == nil ? nil : id6(read(u, base, 6), 0) }
+    static func id6(_ b: [UInt8], _ i: Int) -> String? { let s = text(b, i, 6); return s.count == 6 && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) } ? s : nil }
+    static func serial(_ t: Track) -> String? {
+        let first = t.sector(0), sega = text(first, 0, 16)
+        if sega == "SEGA SEGASATURN" { return code(text(first, 0x20, 10)) }
+        if sega == "SEGA SEGAKATANA" { return code(text(first, 0x40, 10)) }
+        let pvd = t.sector(16)
+        guard text(pvd, 1, 5) == "CD001" else { return nil }
+        if let umd = file(t, pvd, "UMD_DATA.BIN") { return code(String(decoding: umd.prefix(16), as: UTF8.self).split(separator: "|").first.map(String.init) ?? "") }
+        guard let cnf = file(t, pvd, "SYSTEM.CNF") else { return nil }
+        let s = String(decoding: cnf, as: UTF8.self).uppercased()
+        guard let r = s.range(of: #"[A-Z]{4}[_-][0-9]{3}\.?[0-9]{2}"#, options: .regularExpression) else { return nil }
+        return s[r].replacingOccurrences(of: ".", with: "").replacingOccurrences(of: "_", with: "-")   // SLUS_000.01 is SLUS-00001
+    }
+    static func code(_ s: String) -> String? {
+        let t = s.trimmingCharacters(in: .whitespaces.union(.controlCharacters))
+        return t.count >= 4 && t.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }) ? t : nil
     }
 }

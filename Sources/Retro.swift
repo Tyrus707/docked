@@ -70,7 +70,7 @@ enum RetroArch {
         let mine = Paths.root.appendingPathComponent("Artwork/" + r.id.replacingOccurrences(of: ":", with: "-") + ".png")
         let name = base.lastPathComponent.replacingOccurrences(of: "[&*/:`<>?\\\\|\"]", with: "_", options: .regularExpression)
         let box = console(r.console).map { c in [support, old].map { $0.appendingPathComponent("thumbnails/\(c.folder)/Named_Boxarts/\(name).png") } } ?? []
-        return ([mine, base.appendingPathExtension("png"), base.appendingPathExtension("jpg")] + box).first { FileManager.default.fileExists(atPath: $0.path) }
+        return ([mine, base.appendingPathExtension("png"), base.appendingPathExtension("jpg"), Lookup.artFile(r.id)] + box).first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     // ---- system files from the player's own console ----

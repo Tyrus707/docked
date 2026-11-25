@@ -72,23 +72,30 @@ final class Model: ObservableObject {
     @Published var asking: (files: [URL], choices: [Console])?   // a file several consoles use
     @Published var retitling: Game?
     @Published var showConsoles = false
+    // ---- covers and details, found online once the player has said yes (Lookup.swift) ----
+    @Published var lookUp = UserDefaults.standard.object(forKey: "lookUp") as? Bool { didSet { UserDefaults.standard.set(lookUp, forKey: "lookUp") } }
+    @Published var askLookUp = false
+    @Published var picking: Picking?
+    @Published var finding = Set<String>()
+    var waitingLookUp: [String] = [], picks: [Picking] = []
 
     // Games for other consoles are kept where they are; only their place is remembered.
     func addRoms(_ urls: [URL]) {
-        var ask: [URL] = [], choices: [Console] = [], added = 0, last: Console?
+        var ask: [URL] = [], choices: [Console] = [], added = 0, last: Console?, new: [String] = []
         for u in pickRoms(urls) {
             let c = consolesFor(u)
-            if c.count == 1 { library.addRom(Rom(id: romID(u, c[0].id), name: cleanName(u), console: c[0].id, path: u.path)); added += 1; last = c[0] }
+            if c.count == 1 { let id = romID(u, c[0].id); library.addRom(Rom(id: id, name: cleanName(u), console: c[0].id, path: u.path)); new.append(id); added += 1; last = c[0] }
             else if c.count > 1 { ask.append(u); for x in c where !choices.contains(x) { choices.append(x) } }
         }
-        if added > 0 { reload(); if let l = last { section = .console(l.id) }; getReady(pickRoms(urls).filter { consolesFor($0).count == 1 }) }
+        if added > 0 { reload(); if let l = last { section = .console(l.id) }; getReady(pickRoms(urls).filter { consolesFor($0).count == 1 }); lookUpAdded(new) }
         if !ask.isEmpty { asking = (ask, choices) }
         else if added == 0 { message = "Docked doesn't recognise that file. It reads Switch games, and game files for the consoles listed under Consoles in Settings." }
     }
     func answer(_ c: Console) {
         let files = (asking?.files ?? []).filter { consolesFor($0).contains(c) }
-        for u in files { library.addRom(Rom(id: romID(u, c.id), name: cleanName(u), console: c.id, path: u.path)) }
-        asking = nil; reload(); section = .console(c.id); getReady(files, as: c)
+        let ids = files.map { romID($0, c.id) }
+        for (u, id) in zip(files, ids) { library.addRom(Rom(id: id, name: cleanName(u), console: c.id, path: u.path)) }
+        asking = nil; reload(); section = .console(c.id); getReady(files, as: c); lookUpAdded(ids)
     }
     // ---- RetroArch, set up inside Docked the first time a console's game is added ----
     @Published var retro: RetroWork?
@@ -130,7 +137,7 @@ final class Model: ObservableObject {
         wantsBios = BiosAsk(console: c, then: then)
     }
     func biosDone(play: Bool) {
-        let a = wantsBios; wantsBios = nil
+        let a = wantsBios; wantsBios = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { if self.picking == nil { self.nextPick() } }
         if play, let t = a?.then { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: t) }
     }
     // Files the player chose, checked and kept where the core looks. Returns what to tell them.
@@ -158,7 +165,7 @@ final class Model: ObservableObject {
     }
     func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); forgetArt(g) }
     func hasArt(_ g: Game) -> Bool { FileManager.default.fileExists(atPath: Cover.custom(g).path) }
-    private func forgetArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers[g.id] = nil; reload() }
+    func forgetArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers[g.id] = nil; reload() }
     // Dropped on a game: a picture becomes its cover, sound its theme, anything else is added as usual.
     func dropped(_ urls: [URL], on g: Game) { if urls.count == 1, pictureTypes.contains(urls[0].pathExtension.lowercased()) { setArt(g, urls[0]) } else if urls.count == 1, soundTypes.contains(urls[0].pathExtension.lowercased()) { setTheme(g, urls[0]) } else { add(urls) } }
     private var covers: [String: NSImage] = [:]
@@ -449,7 +456,7 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     @Published var guided = UserDefaults.standard.bool(forKey: "guided") { didSet { UserDefaults.standard.set(guided, forKey: "guided") } }
@@ -838,6 +845,8 @@ struct ContentView: View {
         .sheet(item: $model.wantsBios) { BiosView(ask: $0) }
         .confirmationDialog("Which console is \(model.asking?.files.first.map { cleanName($0) } ?? "this")\((model.asking?.files.count ?? 1) > 1 ? " and the others" : "") for?", isPresented: .init(get: { model.asking != nil }, set: { if !$0 { model.asking = nil } })) { ForEach(model.asking?.choices ?? []) { c in Button(c.name) { model.answer(c) } } }
         .alert("Rename Game", isPresented: .init(get: { model.retitling != nil }, set: { if !$0 { model.retitling = nil } })) { TextField("Name", text: $newName); Button("Rename") { if let g = model.retitling { model.retitle(g, newName) }; newName = "" }; Button("Cancel", role: .cancel) { newName = "" } }
+        .alert("Find covers and details for your games?", isPresented: .init(get: { model.askLookUp && model.wantsBios == nil }, set: { if !$0 { model.askLookUp = false } })) { Button("Find Them") { model.allowLookUp(true) }; Button("Not Now", role: .cancel) { model.allowLookUp(false) } } message: { Text(Lookup.consent) }
+        .sheet(item: $model.picking, onDismiss: { model.nextPick() }) { GamePicker(pick: $0) }
         .sheet(isPresented: $model.showHelp) { HelpView() }
         .sheet(isPresented: $model.showReview) { ReviewView() }
         .sheet(item: $model.editing) { SmartEditor(s: $0) }
