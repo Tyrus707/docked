@@ -1,6 +1,6 @@
 # What is inside the download
 
-Docked itself is under the [MIT licence](LICENSE). Its download carries the parts below, unchanged except that library paths were made relative. Each keeps its own licence. The texts are in [Licences](Licences) here, and inside the app in `Docked.app/Contents/Resources/Licences` (from 1.4; earlier downloads carry only the licences that came inside each part).
+Docked itself is under the [MIT licence](LICENSE). Its download carries the parts below, unchanged except that library paths were made relative. Each keeps its own licence. The texts are in [Licences](Licences) here, and inside the app in `Docked.app/Contents/Resources/Licences` (from 1.3; earlier downloads carry only the licences that came inside each part).
 
 | Part | Version | Licence | Source |
 |---|---|---|---|
@@ -28,7 +28,7 @@ Docked itself is under the [MIT licence](LICENSE). Its download carries the part
 | zbic (Python) | 1.0.1.post1 | GPLv2 | https://pypi.org/project/zbic/1.0.1.post1/ |
 | zstandard (Python) | 0.25.0 | BSD-3-Clause | https://pypi.org/project/zstandard/0.25.0/ |
 
-The complete source of zbic (GPL version 2), as used, is in [GPL-source](GPL-source) here and, from 1.4, inside the app in `Contents/Resources/GPL-source`.
+The complete source of zbic (GPL version 2), as used, is in [GPL-source](GPL-source) here and, from 1.3, inside the app in `Contents/Resources/GPL-source`.
 
 The nxnative engine is carried whole at the pinned commit, including its own per-game notes and data. Its authors state that nothing from any game is in it, and no keys or firmware are.
 
