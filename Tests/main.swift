@@ -358,9 +358,9 @@ var bentM = em; bentM[bentM.count / 2] ^= 1; check(Engine.read(bentM, esig(em), 
 var badName = EngineInfo(format: 1, commit: newCommit, date: "2030-01-02T03:04:05Z", minApp: "1.0", tree: newTree, summary: "", full: fullP, deltas: []); badName.full.name = "../../x"; let bm = try! JSONEncoder().encode(badName); check(Engine.read(bm, esig(bm), key: epub) == nil, "a file name that leaves the release is refused")
 let sigText = Data(esig(em).base64EncodedString().utf8), here = Engine.installed(eg.appendingPathComponent("tools"), key: epub)
 check(here?.commit == pinnedEngine && here?.info == nil, "the engine Docked was built with is used")
-check(Engine.answer(em, sigText, active: here, key: epub) == .available(Engine.read(em, esig(em), key: epub)!), "a newer one is offered")
+check(Engine.answer(em, sigText, active: here, app: "2.0", key: epub) == .available(Engine.read(em, esig(em), key: epub)!), "a newer one is offered")
 let old = manifest(date: "2001-01-01T00:00:00Z"); check(Engine.answer(old, Data(esig(old).base64EncodedString().utf8), active: here, key: epub) == .newest, "an older one is not")
-let later = manifest(minApp: "99.0"); check(Engine.answer(later, Data(esig(later).base64EncodedString().utf8), active: here, key: epub) == .needsApp("99.0"), "one for a newer Docked waits for it")
+let laterEngine = manifest(minApp: "99.0"); check(Engine.answer(laterEngine, Data(esig(laterEngine).base64EncodedString().utf8), active: here, key: epub) == .needsApp("99.0"), "one for a newer Docked waits for it")
 check(Engine.answer(em, Data("junk".utf8), active: here, key: epub) == .unknown && Engine.answer(nil, nil, active: here, key: epub) == .unknown, "no answer, no offer")
 // putting it in place
 func fetchFrom(_ p: EngineInfo.Pack, _ dir: URL) -> URL? { let to = dir.appendingPathComponent(".engine-\(UUID().uuidString).download"); try? fm.copyItem(at: eg.appendingPathComponent("pub/" + p.name), to: to); return to }
@@ -377,14 +377,14 @@ prefuses("one for a newer Docked") { try prep(manifest(minApp: "3.0")) }
 fetched = []; let next = try? prep(em)
 check(next != nil && fetched == ["engine-delta.tar.xz"] && Engine.tree(eg.appendingPathComponent("tools.next/engine")) == newTree, "only the difference is downloaded, and it comes out exactly as signed")
 check(Engine.tree(eg.appendingPathComponent("tools/engine")) == tools0 && Engine.installed(eg.appendingPathComponent("tools"), key: epub)?.commit == pinnedEngine, "the tools in use are not touched while it is made")
-check(Engine.installed(eg.appendingPathComponent("tools.next"), key: epub, app: "2.0")?.commit == newCommit && Engine.installed(eg.appendingPathComponent("tools.next"), key: epub, app: "1.0") == nil, "the new one is used only by a Docked recent enough")
+check(Engine.installed(eg.appendingPathComponent("tools.next"), key: epub, app: "2.0")?.commit == newCommit && Engine.installed(eg.appendingPathComponent("tools.next"), key: epub, app: "0.9") == nil, "the new one is used only by a Docked recent enough")
 try! Engine.swapIn(next!, root: eg)
 check(Engine.installed(eg.appendingPathComponent("tools"), key: epub, app: "2.0")?.commit == newCommit && Engine.installed(eg.appendingPathComponent("tools.previous"), key: epub)?.commit == pinnedEngine && !fm.fileExists(atPath: eg.path + "/tools.next"), "swapped in, the old one kept")
 check((try? String(contentsOf: eg.appendingPathComponent("tools/bin/python3"), encoding: .utf8)) == "py", "the rest of the tools carried over")
-try! Engine.goBack(root: eg, key: epub); check(Engine.installed(eg.appendingPathComponent("tools"), key: epub)?.commit == pinnedEngine && Engine.installed(eg.appendingPathComponent("tools.previous"), key: epub, app: "2.0")?.commit == newCommit, "back to the one before, and forward again is possible")
-try! Engine.goBack(root: eg, key: epub); Engine.forget()
+try! Engine.goBack(root: eg, key: epub, app: "2.0"); check(Engine.installed(eg.appendingPathComponent("tools"), key: epub)?.commit == pinnedEngine && Engine.installed(eg.appendingPathComponent("tools.previous"), key: epub, app: "2.0")?.commit == newCommit, "back to the one before, and forward again is possible")
+try! Engine.goBack(root: eg, key: epub, app: "2.0"); Engine.forget()
 // the whole engine when the one here is not the one the difference was made from
-eput("tools.previous/engine/extra", "x"); try! Engine.goBack(root: eg, key: epub); fetched = []
+eput("tools.previous/engine/extra", "x"); try! Engine.goBack(root: eg, key: epub, app: "2.0"); fetched = []
 let next2 = try? prep(manifest(String(repeating: "c", count: 40), date: "2031-01-01T00:00:00Z")); check(next2 != nil && fetched == ["engine-full.tar.xz"] && Engine.tree(eg.appendingPathComponent("tools.next/engine")) == newTree, "a changed engine here gets the whole engine")
 try? fm.removeItem(at: eg.appendingPathComponent("tools.next"))
 // an older signed engine than the one this Docked carries is not used

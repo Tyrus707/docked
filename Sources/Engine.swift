@@ -183,9 +183,9 @@ enum Engine {
         try? fm.moveItem(at: next, to: prev)   // if this fails the old tools wait in tools.next, which goes next time
     }
     // Back to the engine before, in one step. The newer one becomes the previous, so this can be undone.
-    static func goBack(root: URL = Paths.root, key: String = Update.publicKey) throws {
+    static func goBack(root: URL = Paths.root, key: String = Update.publicKey, app: String = appVersion) throws {
         let tools = root.appendingPathComponent("tools"), prev = root.appendingPathComponent("tools.previous")
-        guard installed(prev, key: key) != nil else { throw EngineError("There is no earlier engine to go back to.") }
+        guard installed(prev, key: key, app: app) != nil else { throw EngineError("There is no earlier engine to go back to.") }
         guard renamex_np(prev.path, tools.path, UInt32(RENAME_SWAP)) == 0 else { throw EngineError("Docked could not go back to the earlier engine. Nothing was changed.") }
         forget()
     }
