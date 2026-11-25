@@ -15,7 +15,10 @@ func log() -> [String] { ((try? String(contentsOf: root.appendingPathComponent("
 func queueUp(_ m: Model, _ n: Int, _ mode: String = "ok", after: After = .ask) -> Bool { m.after = after; m.review = Review(parts: []); m.review.add([nsp(n, mode)]); m.reviewPlace = Paths.games; return m.convert() }
 _ = put("prod.keys", "k = 1")
 let m = Model(); check(wait(60) { m.ready }, "ready with the stand-in tools: " + m.checks.filter { !$0.ok }.map(\.title).joined(separator: ", "))
-check(wait { m.showGuide } && !m.guided, "someone new gets the guide"); m.showGuide = false; m.guided = true; let m2 = Model(); check(wait(60) { m2.ready } && !m2.showGuide && !m2.showSetup, "and only once")
+check(!wait(2) { m.showGuide || m.showSetup }, "someone new sees their library, not the setup guide"); let m2 = Model(); check(wait(60) { m2.ready } && !m2.showGuide && !m2.showSetup, "nor the next time")
+// a Switch game added before the Mac is ready is kept, and comes back once it is
+m.checks = [Check(title: "Xcode", ok: false, detail: "", fix: "")]; m.add([nsp(30)]); check(m.showSetup && m.waitingSwitch.count == 1 && !m.showReview, "the first Switch game asks for setup and is kept"); m.showSetup = false
+m.recheck(); check(wait(60) { m.ready && m.showReview } && m.waitingSwitch.isEmpty && m.review.parts.count == 1, "once ready, it comes back to be converted"); m.showReview = false; m.review = Review(parts: [])
 // three in a row, one failing
 check(queueUp(m, 1) && m.builder.running, "the first starts at once"); check(queueUp(m, 2, "fail") && queueUp(m, 3) && m.queue.waiting.count == 2, "two wait"); check(!queueUp(m, 3) && m.reviewNote?.contains("already in the queue") == true, "not twice"); check(m.builder.remaining() != nil && m.queueTime(m.builder.remaining()!) > m.builder.remaining()! + 800, "time for all of them")
 check(wait { !m.builder.running && m.queue.waiting.isEmpty && m.queue.current == nil && !m.checkingGame }, "all run"); check(log().filter { $0.hasPrefix("start") } == ["start \(id(1))", "start \(id(2))", "start \(id(3))"] && !log().contains("overlap"), "in order, never two at once"); check(m.queue.problems.map(\.title) == ["Game 2"] && m.queue.problems[0].reason.contains("broken on purpose"), "the failure is kept, with its reason"); check(game(m, id(1)) != nil && game(m, id(3)) != nil && m.offers.count == 2, "both are ready")
