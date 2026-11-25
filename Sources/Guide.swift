@@ -85,7 +85,7 @@ struct GuideView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(cannotConvert() == nil ? "Drop a Switch game with its update and DLC, or games for other consoles." : "Drop games for other consoles. They play in RetroArch.").foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
             dropBox("Drop games here", "gamecontroller") { u in finish(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.add([u]) } } choose: { finish(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.pickGame() } }
-            if !RetroArch.installed { HStack { Text("Other consoles need RetroArch, which is free.").font(.callout).foregroundStyle(style.soft); Button("Get RetroArch") { NSWorkspace.shared.open(URL(string: "https://www.retroarch.com/?page=platforms")!) } } }
+            if !RetroArch.installed { Text("Other consoles play in RetroArch, which is free. Docked downloads it and keeps it inside itself the first time you add one of their games.").font(.callout).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true) }
             if cannotConvert() == nil, !model.ready { Label("Your Mac isn't ready to convert yet. The setup guide, in Settings, picks up where you left off.", systemImage: "info.circle").font(.callout).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true) }
         }
     }

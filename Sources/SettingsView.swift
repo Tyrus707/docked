@@ -40,7 +40,7 @@ struct SettingsSheet: View {
         VStack(spacing: 14) {
             line("This Mac", cannotConvert() ?? (model.ready ? "Ready to convert Switch games." : model.checks.isEmpty ? "Checking…" : "\(model.checks.filter { !$0.ok }.count) to do: \(nextCheck(model.checks)?.title ?? "")")) { Button("Details…") { model.leaveSettings { model.recheck(); model.showSetup = true } } }
             line("Setup guide", "One step at a time, from the beginning.") { Button("Open Guide…") { model.leaveSettings { model.recheck(); model.showGuide = true } } }
-            line("Other consoles", RetroArch.installed ? "RetroArch is installed." : "RetroArch is not installed.") { Button("Consoles…") { model.leaveSettings { model.showConsoles = true } } }
+            line("Other consoles", RetroArch.installed ? "RetroArch \(RetroArch.installedVersion ?? "") is set up inside Docked." : "Docked sets up RetroArch the first time you add one of their games.") { Button("Consoles…") { model.leaveSettings { model.showConsoles = true } } }
             line("Games folder", "") { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Paths.games]) } }
         }
     }

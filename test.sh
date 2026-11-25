@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-swiftc -swift-version 5 -target ${ARCH:-arm64}-apple-macos13.0 Sources/Core.swift Sources/Builder.swift Sources/Review.swift Sources/Estimate.swift Sources/Place.swift Sources/Install.swift Sources/Originals.swift Sources/Pipeline.swift Sources/LibraryData.swift Sources/Consoles.swift Sources/Queue.swift Sources/Cleanup.swift Sources/Extras.swift Sources/Notes.swift Sources/Smart.swift Sources/Navigate.swift Sources/Update.swift Sources/Arrive.swift Sources/Phone.swift Sources/Xcode.swift Tests/main.swift -o "$T/tests"
+swiftc -swift-version 5 -target ${ARCH:-arm64}-apple-macos13.0 Sources/Core.swift Sources/Builder.swift Sources/Review.swift Sources/Estimate.swift Sources/Place.swift Sources/Install.swift Sources/Originals.swift Sources/Pipeline.swift Sources/LibraryData.swift Sources/Consoles.swift Sources/Disc.swift Sources/Retro.swift Sources/Queue.swift Sources/Cleanup.swift Sources/Extras.swift Sources/Notes.swift Sources/Smart.swift Sources/Navigate.swift Sources/Update.swift Sources/Arrive.swift Sources/Phone.swift Sources/Xcode.swift Tests/main.swift -o "$T/tests"
 # Two small throwaway disk images stand in for other disks.
 hdiutil create -quiet -size 1200m -type SPARSE -fs APFS -volname DSBig "$T/big"; hdiutil create -quiet -size 40m -type SPARSE -fs APFS -volname DSSmall "$T/small"
 mkdir "$T/mb" "$T/ms"; hdiutil attach -quiet -nobrowse -mountpoint "$T/mb" "$T/big.sparseimage"; hdiutil attach -quiet -nobrowse -mountpoint "$T/ms" "$T/small.sparseimage"
@@ -10,7 +10,7 @@ trap 'hdiutil detach -quiet -force "$T/mb"; hdiutil detach -quiet -force "$T/ms"
 mkdir "$T/root"; BIGVOL="$T/mb" SMALLVOL="$T/ms" DOCKSIDE_ROOT="$T/root" "$T/tests"
 # With the engine installed: the same code against the real engine. Its own checkout and Python are only read; everything else is temporary.
 if [ -d "$HOME/Dockside/engine" ] && [ -d "$HOME/Dockside/venv" ]; then
-  swiftc -swift-version 5 -target ${ARCH:-arm64}-apple-macos13.0 Sources/Core.swift Sources/Builder.swift Sources/Review.swift Sources/Estimate.swift Sources/Install.swift Sources/Pipeline.swift Sources/Consoles.swift Sources/Queue.swift Sources/Place.swift Sources/Originals.swift Sources/Extras.swift Sources/Notes.swift Sources/Smart.swift Sources/LibraryData.swift Sources/Phone.swift Sources/Xcode.swift Tests/integration/main.swift -o "$T/itests"
+  swiftc -swift-version 5 -target ${ARCH:-arm64}-apple-macos13.0 Sources/Core.swift Sources/Builder.swift Sources/Review.swift Sources/Estimate.swift Sources/Install.swift Sources/Pipeline.swift Sources/Consoles.swift Sources/Disc.swift Sources/Retro.swift Sources/Queue.swift Sources/Place.swift Sources/Originals.swift Sources/Extras.swift Sources/Notes.swift Sources/Smart.swift Sources/LibraryData.swift Sources/Phone.swift Sources/Xcode.swift Tests/integration/main.swift -o "$T/itests"
   mkdir "$T/real"; ln -s "$HOME/Dockside/engine" "$T/real/engine"; ln -s "$HOME/Dockside/venv" "$T/real/venv"
   DOCKSIDE_ROOT="$T/real" "$T/itests"
 fi
