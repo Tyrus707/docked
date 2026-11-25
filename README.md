@@ -101,7 +101,7 @@ A converted game's graphics are prepared for the Mac that made it. On a differen
 
 <br>
 
-- **Feels like a console.** Docked opens in full screen, and you can get around with a controller or the arrow keys.
+- **Feels like a console.** Docked opens filling the screen, and you can get around with a controller or the arrow keys.
 - **Covers made from each game's own art**, or drop any picture onto a game.
 - **Theme music.** Give a game its own tune and it plays while that game is selected.
 - **Pick up where you left off.** Recent games come first, with how long you've played each one.

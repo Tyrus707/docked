@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import CryptoKit
 
 // ---- RetroArch, inside Docked ----
@@ -51,12 +51,29 @@ enum RetroArch {
     static func prepare() throws {
         let fm = FileManager.default
         for d in ["cores", "system", "saves", "states", "screenshots", "thumbnails"] { try fm.createDirectory(at: support.appendingPathComponent(d), withIntermediateDirectories: true) }
-        func line(_ k: String, _ v: String) -> String { "\(k) = \"\(v.replacingOccurrences(of: "\"", with: ""))\"\n" }
-        if !fm.fileExists(atPath: settings.path) { try (line("video_fullscreen", "true") + line("config_save_on_exit", "true")).write(to: settings, atomically: true, encoding: .utf8) }
+        if !fm.fileExists(atPath: settings.path) { try line("config_save_on_exit", "true").write(to: settings, atomically: true, encoding: .utf8) }
         let mine = line("libretro_directory", cores.path) + line("system_directory", system.path) + line("savefile_directory", support.appendingPathComponent("saves").path)
             + line("savestate_directory", support.appendingPathComponent("states").path) + line("screenshot_directory", support.appendingPathComponent("screenshots").path)
-            + line("thumbnails_directory", support.appendingPathComponent("thumbnails").path) + line("quit_on_close_content", "2")
+            + line("thumbnails_directory", support.appendingPathComponent("thumbnails").path) + line("quit_on_close_content", "2") + filling(screen())
         try mine.write(to: docked, atomically: true, encoding: .utf8)
+    }
+    static func line(_ k: String, _ v: String) -> String { "\(k) = \"\(v.replacingOccurrences(of: "\"", with: ""))\"\n" }
+    // Games open in a window as big as the screen, like the green button with Option held: no Space of their own, and the
+    // menu bar and Dock stay. RetroArch's own full screen on a Mac always takes a Space (video_windowed_fullscreen is not
+    // used there), so it is a window placed over the screen instead. Control-Command-F or RetroArch's F key still gives full screen.
+    static func filling(_ r: CGRect?) -> String {
+        var s = line("video_fullscreen", "false")
+        // RetroArch keeps the place as whole positive numbers; a screen left of or below the main one would not fit them.
+        guard let r, r.minX >= 0, r.minY >= 0, r.width >= 320, r.height >= 240 else { return s }
+        for (k, v) in [("video_window_save_positions", "true"), ("video_window_custom_size_enable", "true"), ("video_windowed_position_x", "\(Int(r.minX))"),
+                       ("video_windowed_position_y", "\(Int(r.minY))"), ("video_windowed_position_width", "\(Int(r.width))"), ("video_windowed_position_height", "\(Int(r.height))")] { s += line(k, v) }
+        return s
+    }
+    // The space inside RetroArch's window when it covers the screen Docked is on, title bar left out.
+    static func screen() -> CGRect? {
+        guard Thread.isMainThread else { return nil }   // set-up off the main thread; prepare() runs again on it just before a game starts
+        guard let s = [NSScreen.main, NSScreen.screens.first].compactMap({ $0 }).first(where: { $0.visibleFrame.minX >= 0 && $0.visibleFrame.minY >= 0 }) else { return nil }
+        return NSWindow.contentRect(forFrameRect: s.visibleFrame, styleMask: [.titled, .closable, .miniaturizable, .resizable])
     }
     // Only what the player has to fix themselves; everything else Docked sets up.
     static func problem(_ c: Console, rom: String) -> String? {

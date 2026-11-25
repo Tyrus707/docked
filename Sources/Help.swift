@@ -33,7 +33,7 @@ let helpTopics: [HelpTopic] = [
         "Move around with a controller or the arrow keys: A or Return opens a game's details, and again plays it. B or Escape goes back, L and R change section.",
         "To give a game theme music, drop a sound file on it or choose Choose Theme Music in its details. It plays while the game is selected. Theme music in Settings turns it off everywhere.",
         "A smart collection fills itself. Choose + beside Collections, then New Smart Collection.",
-        "Docked opens in full screen and looks for a new version once at launch. Both can be switched off in Settings.",
+        "Docked opens filling the screen and looks for a new version once at launch. Both can be switched off in Settings.",
         "To change a game's cover, drop a picture on it or choose Choose Cover from its ••• menu. Covers or Icons is in Settings.",
         "Full screen: Control-Command-F. Quit: Command-Q, or hold the controller's Home button for 2 seconds. Save in the game first.",
         "Open a game's ••• menu and choose Play with Settings to change frame rate, resolution or language.",

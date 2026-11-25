@@ -20,7 +20,7 @@ struct SettingsSheet: View {
     @ViewBuilder var general: some View {
         VStack(spacing: 14) {
             line("Show games as", "") { Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
-            flip("Open in full screen", "From the next time Docked opens.", $model.fullScreen)
+            flip("Open filling the screen", "A window as big as the screen, without a separate Space. From the next time Docked opens.", $model.fullScreen)
             flip("Theme music", "Plays a game's own theme while it is selected.", $model.themes)
             flip("Check for updates at launch", "Asks GitHub for the newest version numbers of Docked and its engine. Nothing else is sent.", $model.updatesAtLaunch)
             line("Updates", "") { if model.checkingUpdate { ProgressView().controlSize(.small) }; Button("Check Now") { model.leaveSettings { model.lookForUpdate() } }.disabled(model.checkingUpdate) }
