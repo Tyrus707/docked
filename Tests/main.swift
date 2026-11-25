@@ -621,4 +621,28 @@ do {
     check(Paths.now("/Users/x/Dockside/Games", root: n, home: "/Users/x") == "/Users/x/Docked/Games" && Paths.now("/Users/x/Docksider/a", root: n, home: "/Users/x") == "/Users/x/Docksider/a" && Paths.now("/Users/x/Dockside/a", root: URL(fileURLWithPath: "/Users/x/Dockside"), home: "/Users/x") == "/Users/x/Dockside/a", "saved paths follow the folder")
 }
 
+// game settings: the same choices the game's own settings window keeps
+do {
+    let dom = "local.docked.test.\(UUID().uuidString)"
+    _ = mk("Tuned.app/Contents/Info.plist", #"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>\#(dom)</string><key>DMTitleID</key><string>0100000000020000</string></dict></plist>"#)
+    _ = mk("Tuned.app/Contents/Resources/dm/env.txt", "DM_FRIENDS=1\n# note\nDM_LANG = ja\n")
+    _ = mk("Tuned.app/Contents/Resources/dm/launcher.json", #"{"schema":1,"game":"0100000000020000","settings":[{"env":"DM_OPMODE","kind":"choice","section":"Game","label":"Console mode","note":"","default":"1","level":"basic","options":[["1","Docked"],["0","Handheld"]]},{"env":"DM_LANG","kind":"choice","section":"Game","label":"Language","default":"en-US","options":[["en-US","English"],["ja","Japanese"]]},{"env":"DM_RUMBLE","kind":"toggle","section":"Controls","label":"Rumble","default":"1","level":"basic","on":"1","off":"0"},{"env":"DM_RUMBLE_GAIN","kind":"range","section":"Controls","label":"Strength","default":"1.0","needs":"DM_RUMBLE=1","min":0.0,"max":3.0,"step":0.1},{"env":"DM_RUMBLE_MIN","kind":"range","section":"Controls","label":"Cutoff","default":"0","min":0,"max":0.9,"step":0.05}],"future":true}"#)
+    let app = tmp.appendingPathComponent("Tuned.app")
+    let g = GameSettings(app: app)!, s = Dictionary(uniqueKeysWithValues: g.settings.map { ($0.env, $0) })
+    check(g.bundle == dom && g.game == "0100000000020000" && g.settings.count == 5 && g.sections == ["Game", "Controls"], "settings list read")
+    check(g.value(s["DM_OPMODE"]!) == "1" && !g.changed, "defaults until chosen")
+    g.set(s["DM_OPMODE"]!, "0"); g.set(s["DM_RUMBLE"]!, "0")
+    check(UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_OPMODE") == "0", "saved where the game's own window keeps it")
+    check(GameSettings(app: app)!.value(s["DM_OPMODE"]!) == "0" && g.changed, "choice read back")
+    g.set(s["DM_OPMODE"]!, "7"); check(g.value(s["DM_OPMODE"]!) == "0", "unknown option refused")
+    check(!g.applies(s["DM_RUMBLE_GAIN"]!) && g.applies(s["DM_RUMBLE_MIN"]!), "needs another setting")
+    check(g.isFixed(s["DM_LANG"]!) && g.value(s["DM_LANG"]!) == "ja", "env.txt wins"); g.set(s["DM_LANG"]!, "en-US"); check(UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_LANG") == nil, "fixed not saved")
+    check(s["DM_RUMBLE_GAIN"]!.text(1.25) == "1.2" || s["DM_RUMBLE_GAIN"]!.text(1.25) == "1.3", "range to one decimal"); check(s["DM_RUMBLE_MIN"]!.text(0.1) == "0.10", "range to two decimals")
+    UserDefaults(suiteName: dom)!.set("dev", forKey: "launcher.DM_MIC_DEVICE")
+    g.reset(); check(g.value(s["DM_OPMODE"]!) == "1" && !g.changed && UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_MIC_DEVICE") == "dev", "reset keeps other choices")
+    UserDefaults.standard.removePersistentDomain(forName: dom)
+    _ = mk("Bare.app/Contents/Info.plist", #"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>x.y</string></dict></plist>"#)
+    check(GameSettings(app: tmp.appendingPathComponent("Bare.app")) == nil, "no settings list: none")
+}
+
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)

@@ -677,6 +677,7 @@ final class Model: ObservableObject {
     @Published var padUsed = false
     var columns = 4, navigator = Navigator()
     @Published var editing: SmartCollection?
+    @Published var tuning: Game?   // the game whose Game Settings sheet is open
     var rows: [(id: String, games: [String])] {
         if section != .home || !search.isEmpty { return [("grid", shown(section == .home ? .all : section, by: sort).map(\.id))] }
         var r: [(String, [String])] = [("recent", shown(.all, by: .recent).prefix(5).map(\.id)), ("Favorites", shown(.favorites).map(\.id))]
@@ -887,6 +888,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showHelp) { HelpView() }
         .sheet(isPresented: $model.showReview) { ReviewView() }
         .sheet(item: $model.editing) { SmartEditor(s: $0) }
+        .sheet(item: $model.tuning) { g in if let gs = GameSettings(app: g.url) { GameSettingsView(game: g, gs: gs) } }
         .sheet(isPresented: .init(get: { model.cleaning != nil }, set: { if !$0 { model.cleaning = nil } })) { CleanUpView() }
         .alert("Docked", isPresented: .init(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) { Button("OK") {} } message: { Text(model.message ?? "") }
         .confirmationDialog("Move \(deleting?.name ?? "") to the Trash?", isPresented: .init(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { g in

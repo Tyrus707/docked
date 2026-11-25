@@ -206,7 +206,7 @@ struct GameActions: View {
         let e = model.library.entry(game.titleID)
         if game.missing { Button("Locate…") { model.locate(game) }; Button("Remove from Library") { model.forget(game) }; Divider() }
         Button("Play") { model.play(game) }.disabled(game.missing)
-        if game.rom == nil { Button("Play with Settings…") { model.play(game, settings: true) } }
+        if game.rom == nil { Button("Game Settings…") { model.openSettings(game) }.disabled(game.missing); Button("Play with Settings…") { model.play(game, settings: true) } }
         Divider()
         Button(e.favorite ? "Remove from Favorites" : "Favorite") { model.edit(game) { $0.favorite.toggle() } }
         Menu("Progress") { ForEach(Entry.Status.allCases, id: \.self) { s in Toggle(s.rawValue, isOn: .init(get: { e.status == s }, set: { if $0 { model.edit(game) { $0.status = s } } })) } }

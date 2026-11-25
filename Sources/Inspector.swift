@@ -45,7 +45,7 @@ struct Inspector: View {
                         if model.addingTheme { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Adding music…").font(.callout).foregroundStyle(style.soft) } }
                         else if model.hasTheme(game) { link("Change Theme Music…", "music.note") { model.pickTheme(game) }; link("Remove Theme Music", "minus.circle") { model.clearTheme(game) }; link(model.themes ? "Turn Theme Music Off" : "Turn Theme Music On", model.themes ? "speaker.slash" : "speaker.wave.2") { model.themes.toggle() } }
                         else { link("Choose Theme Music…", "music.note") { model.pickTheme(game) } }
-                        if game.rom == nil { link("Play with Settings…", "slider.horizontal.3") { model.play(game, settings: true) }; link("Add Update or DLC…", "plus.square.on.square") { model.addTo(game) }; link("Clean Up…", "sparkles") { model.cleanUp(game) } }
+                        if game.rom == nil { if !game.missing { link("Game Settings…", "slider.horizontal.3") { model.openSettings(game) } }; link("Play with Settings…", "play.circle") { model.play(game, settings: true) }; link("Add Update or DLC…", "plus.square.on.square") { model.addTo(game) }; link("Clean Up…", "sparkles") { model.cleanUp(game) } }
                         if !game.missing { link("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) } }
                     }
                 }.padding(18)
