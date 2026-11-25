@@ -17,7 +17,6 @@ S="$W/stage"; mkdir -p "$S/.background"
 ditto "$APP" "$S/Docked.app"
 ln -s /Applications "$S/Applications"
 tiffutil -cathidpicheck "$HERE/Art/dmg/background.png" "$HERE/Art/dmg/background@2x.png" -out "$S/.background/background.tiff" >/dev/null
-cp "$S/Docked.app/Contents/Resources/AppIcon.icns" "$S/.VolumeIcon.icns"
 if [ -n "${SIGN:-}" ]; then codesign --force --options runtime --timestamp --sign "$SIGN" "$S/Docked.app"; fi
 codesign --verify --strict "$S/Docked.app"
 
@@ -25,7 +24,6 @@ codesign --verify --strict "$S/Docked.app"
 MB=$(( $(du -sm "$S" | cut -f1) + 20 ))
 hdiutil create -quiet -srcfolder "$S" -volname "$VOL" -fs HFS+ -format UDRW -size ${MB}m "$W/rw.dmg"
 hdiutil attach -quiet -readwrite -noverify -noautoopen "$W/rw.dmg"
-SetFile -a C "$MNT" 2>/dev/null || xattr -wx com.apple.FinderInfo "0000000000000000040000000000000000000000000000000000000000000000" "$MNT" 2>/dev/null || true
 # Icon centres match Art/dmg/draw.py. Finder may ask once whether this Terminal can control it.
 osascript <<OSA || echo "warning: Finder could not lay out the window (allow Terminal under Privacy & Security › Automation); the image still works"
 tell application "Finder"
@@ -48,6 +46,9 @@ tell application "Finder"
   end tell
 end tell
 OSA
+# The disk's own icon, added once Finder is done with the window (it was lost when set before)
+cp "$S/Docked.app/Contents/Resources/AppIcon.icns" "$MNT/.VolumeIcon.icns"
+SetFile -a C "$MNT" 2>/dev/null || xattr -wx com.apple.FinderInfo "0000000000000000040000000000000000000000000000000000000000000000" "$MNT" 2>/dev/null || true
 rm -rf "$MNT/.fseventsd" "$MNT/.Trashes" 2>/dev/null || true
 chmod -Rf go-w "$MNT" 2>/dev/null || true; sync
 for i in 1 2 3 4 5; do hdiutil detach "$MNT" -quiet && break || sleep 2; done
