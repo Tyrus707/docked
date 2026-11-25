@@ -27,7 +27,7 @@ func redact(_ s: String, home: String = NSHomeDirectory(), user: String = NSUser
 }
 func makeReport(title: String, step: String, error: String, log: [String], version: String, os: String, chip: String, space: Int64) -> String {
     let f = ByteCountFormatter(); f.countStyle = .file
-    return redact("Docked \(version), engine \(pinnedEngine.prefix(12))\nmacOS \(os), \(chip), \(f.string(fromByteCount: space)) free\nGame: \(title)\nStopped at: \(step)\n\n\(error)\n\nLast lines:\n" + log.suffix(60).joined(separator: "\n"))
+    return redact("Docked \(version), engine \(activeEngine.prefix(12))\nmacOS \(os), \(chip), \(f.string(fromByteCount: space)) free\nGame: \(title)\nStopped at: \(step)\n\n\(error)\n\nLast lines:\n" + log.suffix(60).joined(separator: "\n"))
 }
 func chipName() -> String { var n = 0; guard sysctlbyname("machdep.cpu.brand_string", nil, &n, nil, 0) == 0, n > 0 else { return "unknown chip" }; var b = [CChar](repeating: 0, count: n); sysctlbyname("machdep.cpu.brand_string", &b, &n, nil, 0); return String(cString: b) }
 

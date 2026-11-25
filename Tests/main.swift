@@ -389,4 +389,91 @@ check(!looksLikeIPA(mk("ph/empty.ipa", "")) && !looksLikeIPA(mk("ph/text.ipa", S
 var tq = Queue(); var pj = job("P", "0100000000000009"); pj.target = .phone; check(tq.add(job("P", "0100000000000009")) && tq.add(pj) && !tq.add(pj), "the same game for Mac and iPhone, each once"); let oldQ = try! JSONDecoder().decode(Job.self, from: Data(#"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"t","parts":["/a"],"place":"/g","quick":false,"after":"ask","bytes":1,"needsKeys":true,"sources":[]}"#.utf8)); check(!oldQ.phone, "a queue from before")
 check(nextCheck([Check(title: "a", ok: true, detail: "", fix: ""), Check(title: "b", ok: false, detail: "", fix: ""), Check(title: "c", ok: false, detail: "", fix: "")])?.title == "b" && nextCheck([]) == nil, "one step at a time")
 
+// ---- engine updates: only a signed engine, checked file by file, swapped in whole, and the one before kept ----
+check(EngineEvent.parse(#"{"ev":"stage_end","k":6,"name":"Pipeline archive","ok":true,"warn":true,"summary":"failed, the app is packed without one"}"#) == .stageEnd(ok: true, warn: true, name: "Pipeline archive", summary: "failed, the app is packed without one"), "a step that finished without what it makes")
+b = drive(#"echo '{"ev":"stage","k":1,"n":2,"name":"Pipeline archive"}'; echo '{"ev":"stage_end","k":1,"name":"Pipeline archive","ok":true,"warn":true,"summary":"failed"}'; echo '{"ev":"stage_end","k":2,"name":"Mac app","ok":true}'"#)
+check(b.stage == "Done" && b.warnings == ["Pipeline archive: failed"], "warnings kept on a finished build")
+let ek = Curve25519.Signing.PrivateKey(), epub = ek.publicKey.rawRepresentation.base64EncodedString(), eg = tmp.appendingPathComponent("eg")
+func eput(_ p: String, _ s: String, x: Bool = false) { let u = eg.appendingPathComponent(p); try! fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true); try! Data(s.utf8).write(to: u); if x { chmod(u.path, 0o755) } }
+eput("tools/.dockside-pin", pinnedEngine + "\n"); eput("tools/bin/python3", "py", x: true); eput("tools/engine/a.py", "old a"); eput("tools/engine/gone.txt", "bye"); eput("tools/engine/dm/games/X/game.tsv", "old")
+eput("tools/engine/__pycache__/a.cpython.pyc", "cache"); eput("tools/engine/.DS_Store", "finder")
+let tools0 = Engine.tree(eg.appendingPathComponent("tools/engine"))!
+// the new engine, whole and as a difference
+eput("new/engine/a.py", "new a"); eput("new/engine/dm/games/X/game.tsv", "old"); eput("new/engine/dm/games/Y/game.tsv", "new game"); eput("new/engine/bin/tool", "t", x: true)
+let newTree = Engine.tree(eg.appendingPathComponent("new/engine"))!
+let pyTree = run("/usr/bin/python3", ["-I", URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Bundle/engine_tree.py").path, "tree", eg.appendingPathComponent("new/engine").path]).out
+check(pyTree.hasPrefix(newTree + " 4"), "the release script takes the same fingerprint: \(pyTree)")
+check(tools0 != newTree && Engine.tree(eg.appendingPathComponent("tools/engine")) == tools0, "a fingerprint, the same each time")
+eput("delta/engine/a.py", "new a"); eput("delta/engine/dm/games/Y/game.tsv", "new game"); eput("delta/engine/bin/tool", "t", x: true); eput("delta/engine.removed", "gone.txt\n")
+func xz(_ dir: String, _ name: String) -> EngineInfo.Pack { let f = eg.appendingPathComponent("pub/" + name); try? fm.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true); let items = (try! fm.contentsOfDirectory(atPath: eg.appendingPathComponent(dir).path)).sorted(); run("/usr/bin/tar", ["-cJf", f.path, "-C", eg.appendingPathComponent(dir).path] + items); return EngineInfo.Pack(name: name, sha256: sha256(f)!, bytes: Int(folderSize(f))) }
+let fullP = xz("new", "engine-full.tar.xz"); var deltaP = xz("delta", "engine-delta.tar.xz"); deltaP.from = pinnedEngine; deltaP.fromTree = tools0
+let newCommit = String(repeating: "b", count: 40)
+func manifest(_ c: String = newCommit, date: String = "2030-01-02T03:04:05Z", minApp: String = "1.0", tree: String = newTree, deltas: [EngineInfo.Pack]? = nil) -> Data { try! JSONEncoder().encode(EngineInfo(format: 1, commit: c, date: date, minApp: minApp, tree: tree, summary: "2 new game profiles", full: fullP, deltas: deltas ?? [deltaP])) }
+func esig(_ m: Data, _ k: Curve25519.Signing.PrivateKey = ek) -> Data { try! k.signature(for: Engine.said(m)) }
+let em = manifest()
+check(Engine.read(em, esig(em), key: epub)?.commit == newCommit, "a signed engine is read"); check(Engine.read(em, esig(em, Curve25519.Signing.PrivateKey()), key: epub) == nil && Engine.read(em, Data(count: 64), key: epub) == nil, "another key's is not")
+var bentM = em; bentM[bentM.count / 2] ^= 1; check(Engine.read(bentM, esig(em), key: epub) == nil, "nor one changed after signing"); check(Engine.read(em, try! ek.signature(for: em), key: epub) == nil, "nor a signature made for something else")
+var badName = EngineInfo(format: 1, commit: newCommit, date: "2030-01-02T03:04:05Z", minApp: "1.0", tree: newTree, summary: "", full: fullP, deltas: []); badName.full.name = "../../x"; let bm = try! JSONEncoder().encode(badName); check(Engine.read(bm, esig(bm), key: epub) == nil, "a file name that leaves the release is refused")
+let sigText = Data(esig(em).base64EncodedString().utf8), here = Engine.installed(eg.appendingPathComponent("tools"), key: epub)
+check(here?.commit == pinnedEngine && here?.info == nil, "the engine Docked was built with is used")
+check(Engine.answer(em, sigText, active: here, app: "2.0", key: epub) == .available(Engine.read(em, esig(em), key: epub)!), "a newer one is offered")
+let old = manifest(date: "2001-01-01T00:00:00Z"); check(Engine.answer(old, Data(esig(old).base64EncodedString().utf8), active: here, key: epub) == .newest, "an older one is not")
+let laterEngine = manifest(minApp: "99.0"); check(Engine.answer(laterEngine, Data(esig(laterEngine).base64EncodedString().utf8), active: here, key: epub) == .needsApp("99.0"), "one for a newer Docked waits for it")
+check(Engine.answer(em, Data("junk".utf8), active: here, key: epub) == .unknown && Engine.answer(nil, nil, active: here, key: epub) == .unknown, "no answer, no offer")
+// putting it in place
+func fetchFrom(_ p: EngineInfo.Pack, _ dir: URL) -> URL? { let to = dir.appendingPathComponent(".engine-\(UUID().uuidString).download"); try? fm.copyItem(at: eg.appendingPathComponent("pub/" + p.name), to: to); return to }
+var fetched: [String] = []
+func prep(_ m: Data, works: Bool = true, free: Int64 = 1 << 40) throws -> URL { try Engine.prepare(manifest: m, sig: esig(m), root: eg, key: epub, app: "2.0", free: free, fetch: { fetched.append($0.name); return fetchFrom($0, $1) }, works: { _ in works }) }
+func untouched(_ what: String) { check(Engine.tree(eg.appendingPathComponent("tools/engine")) == tools0 && !fm.fileExists(atPath: eg.path + "/tools.next") && !fm.fileExists(atPath: eg.path + "/engine.partial") && ((try? fm.contentsOfDirectory(atPath: eg.path)) ?? []).filter { $0.hasSuffix(".download") }.isEmpty, "nothing changed, nothing left: " + what) }
+func prefuses(_ what: String, _ f: () throws -> URL) { do { _ = try f(); check(false, "went through: " + what) } catch { untouched(what) } }
+prefuses("another key") { try Engine.prepare(manifest: em, sig: esig(em, Curve25519.Signing.PrivateKey()), root: eg, key: epub, app: "2.0", free: 1 << 40, fetch: fetchFrom, works: { _ in true }) }
+prefuses("files that are not what was signed") { try prep(manifest(tree: String(repeating: "0", count: 64))) }
+prefuses("an engine that does not start") { try prep(em, works: false) }
+prefuses("no space") { try prep(em, free: 1000) }
+prefuses("a download that is not the one signed") { var f = fullP; f.sha256 = String(repeating: "1", count: 64); var d = deltaP; d.sha256 = f.sha256; let m = try! JSONEncoder().encode(EngineInfo(format: 1, commit: newCommit, date: "2030-01-02T03:04:05Z", minApp: "1.0", tree: newTree, summary: "", full: f, deltas: [d])); return try prep(m) }
+prefuses("one for a newer Docked") { try prep(manifest(minApp: "3.0")) }
+fetched = []; let next = try? prep(em)
+check(next != nil && fetched == ["engine-delta.tar.xz"] && Engine.tree(eg.appendingPathComponent("tools.next/engine")) == newTree, "only the difference is downloaded, and it comes out exactly as signed")
+check(Engine.tree(eg.appendingPathComponent("tools/engine")) == tools0 && Engine.installed(eg.appendingPathComponent("tools"), key: epub)?.commit == pinnedEngine, "the tools in use are not touched while it is made")
+check(Engine.installed(eg.appendingPathComponent("tools.next"), key: epub, app: "2.0")?.commit == newCommit && Engine.installed(eg.appendingPathComponent("tools.next"), key: epub, app: "0.9") == nil, "the new one is used only by a Docked recent enough")
+try! Engine.swapIn(next!, root: eg)
+check(Engine.installed(eg.appendingPathComponent("tools"), key: epub, app: "2.0")?.commit == newCommit && Engine.installed(eg.appendingPathComponent("tools.previous"), key: epub)?.commit == pinnedEngine && !fm.fileExists(atPath: eg.path + "/tools.next"), "swapped in, the old one kept")
+check((try? String(contentsOf: eg.appendingPathComponent("tools/bin/python3"), encoding: .utf8)) == "py", "the rest of the tools carried over")
+try! Engine.goBack(root: eg, key: epub, app: "2.0"); check(Engine.installed(eg.appendingPathComponent("tools"), key: epub)?.commit == pinnedEngine && Engine.installed(eg.appendingPathComponent("tools.previous"), key: epub, app: "2.0")?.commit == newCommit, "back to the one before, and forward again is possible")
+try! Engine.goBack(root: eg, key: epub, app: "2.0"); Engine.forget()
+// the whole engine when the one here is not the one the difference was made from
+eput("tools.previous/engine/extra", "x"); try! Engine.goBack(root: eg, key: epub, app: "2.0"); fetched = []
+let next2 = try? prep(manifest(String(repeating: "c", count: 40), date: "2031-01-01T00:00:00Z")); check(next2 != nil && fetched == ["engine-full.tar.xz"] && Engine.tree(eg.appendingPathComponent("tools.next/engine")) == newTree, "a changed engine here gets the whole engine")
+try? fm.removeItem(at: eg.appendingPathComponent("tools.next"))
+// an older signed engine than the one this Docked carries is not used
+eput("old/.dockside-pin", String(repeating: "d", count: 40)); let om = manifest(String(repeating: "d", count: 40), date: "2001-01-01T00:00:00Z"); try! om.write(to: eg.appendingPathComponent("old/.dockside-engine.json")); eput("old/.dockside-engine.sig", esig(om).base64EncodedString())
+check(Engine.installed(eg.appendingPathComponent("old"), key: epub) == nil, "an engine older than Docked's own is not used")
+// a difference cannot reach outside the engine
+eput("bad/engine/x", "x"); eput("bad/engine.removed", "../../../victim\n"); eput("victim", "safe"); eput("tgt/engine/keep", "k")
+check((try? Engine.apply(eg.appendingPathComponent("bad/engine"), removed: eg.appendingPathComponent("bad/engine.removed"), to: eg.appendingPathComponent("tgt/engine"))) == nil && (try? String(contentsOf: eg.appendingPathComponent("victim"), encoding: .utf8)) == "safe", "a removal outside the engine is refused")
+eput("leftover/tools.next/x", "x"); eput("leftover/engine.partial/y", "y"); eput("leftover/.engine-1.download", "z"); eput("leftover/tools/keep", "k"); Engine.tidy(root: eg.appendingPathComponent("leftover"))
+check((try? fm.contentsOfDirectory(atPath: eg.appendingPathComponent("leftover").path)) == ["tools"], "what an update cut short is cleared")
+check(Engine.isCommit(pinnedEngine) && Engine.pinnedDate > Date(timeIntervalSince1970: 1_700_000_000), "the pin and its date are read")
+
+// ---- each converted game is checked ----
+func fakeGame(_ name: String, pso: [String: String]? = nil) -> URL {
+    let a = tmp.appendingPathComponent("vg/\(name).app"); try? fm.removeItem(at: a)
+    try! fm.createDirectory(at: a.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true); try! Data("x".utf8).write(to: a.appendingPathComponent("Contents/MacOS/dmhost")); chmod(a.path + "/Contents/MacOS/dmhost", 0o755)
+    NSDictionary(dictionary: ["DMTitleID": "0100000000010000", "CFBundleName": name]).write(to: a.appendingPathComponent("Contents/Info.plist"), atomically: true)
+    if let pso { let d = a.appendingPathComponent("Contents/PlugIns/PipelineArchive.bundle/Contents/Resources/pso"); try! fm.createDirectory(at: d, withIntermediateDirectories: true); for (k, v) in pso { try! Data(v.utf8).write(to: d.appendingPathComponent(k)) } }
+    return a
+}
+let whole = ["applegpu_g14s.mtl4a": "a", "prebuilt.tsv": "p", "archive.tsv": "arch\tapplegpu_g14s\nbases\t100\nfailed\t0 bases, 0 compute pipelines (metal-tt could not compile them: left to the device)\n"]
+func gc(_ a: URL, quick: Bool = false, warned: [String] = [], signed: Bool? = true) -> GameCheck { checkGame(a, titleID: "0100000000010000", quick: quick, warned: warned, verify: { _ in signed }) }
+check(gc(fakeGame("Fine", pso: whole)).ok && gc(fakeGame("NoGraphics")).ok, "a whole game passes, with or without graphics to prepare")
+check(gc(fakeGame("Fine", pso: whole), signed: nil).ok, "a signature check that could not tell is not held against it")
+check(!gc(fakeGame("Unsigned", pso: whole), signed: false).problems.isEmpty, "a signature that does not hold is a problem")
+check(!checkGame(fakeGame("Other"), titleID: "0100000000020000", quick: false, warned: [], verify: { _ in true }).problems.isEmpty, "another game's app is a problem")
+let half = whole.filter { $0.key != "prebuilt.tsv" }; check(gc(fakeGame("Half", pso: half)).problems.isEmpty && gc(fakeGame("Half", pso: half)).notes.contains { $0.contains("incomplete") }, "a partly built archive is noticed")
+var some = whole; some["archive.tsv"] = "failed\t12 bases, 3 compute pipelines (x)\n"; check(gc(fakeGame("Some", pso: some)).notes.contains { $0.hasPrefix("15 of") }, "pipelines the compiler left out are counted")
+check(gc(fakeGame("Warned"), warned: ["Pipeline archive: failed"]).notes.count == 1 && gc(fakeGame("Quick"), quick: true).ok, "a step that warned is noticed; a quick conversion has no archive to check")
+check(gc(fakeGame("Half", pso: half)).text().contains("leftovers were kept") && gc(fakeGame("Unsigned"), signed: false).text().hasPrefix("Converted, but") && gc(fakeGame("Unsigned"), signed: false).text(again: true).contains("second time"), "said plainly")
+check(gc(fakeGame("Half", pso: half)).mendable && gc(fakeGame("Unsigned"), signed: false).mendable && !checkGame(fakeGame("Other"), titleID: "0100000000020000", quick: false, warned: [], verify: { _ in true }).mendable, "converting again is tried only where it can help")
+let realApp = fakeGame("Real"); let cs = run("/usr/bin/codesign", ["--force", "--sign", "-", realApp.path]); check(cs.code != 0 || signatureHolds(realApp) == true, "codesign agrees with a signed app")
+
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)

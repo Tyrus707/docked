@@ -247,7 +247,7 @@ final class Model: ObservableObject {
         AppDelegate.moving = { [weak self] in self?.moving != nil }
         AppDelegate.waiting = { [weak self] in self?.queue.waiting.count ?? 0 }
         builder.onFinish = { [weak self] in self?.finished() }
-        DispatchQueue.global(qos: .utility).async { finishRemovals() }
+        DispatchQueue.global(qos: .utility).async { finishRemovals(); Engine.tidy() }
         reload(); trackPlay(); recheck(first: true)
     }
 
@@ -268,6 +268,7 @@ final class Model: ObservableObject {
     private var retry: DispatchWorkItem?
     @Published var moving: String?
     @Published var quick = UserDefaults.standard.bool(forKey: "skipPipeline") { didSet { UserDefaults.standard.set(quick, forKey: "skipPipeline") } }
+    @Published var checkingGame = false   // a game just converted is being checked
     @Published var converting = false   // kept apart from the builder, whose every progress report would redraw the library
     var arrivingIcon: NSImage? { builder.titleID.flatMap { id in games.first { $0.titleID.uppercased() == id } }.map { icon($0) } }
     @Published var offers: [Game] = []   // just finished: what is left over can go
@@ -398,7 +399,17 @@ final class Model: ObservableObject {
             if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
             queue.done()
             if let j = job, j.phone { finishPhone(j); return }
-            if let app = builder.output, buildPlace.path != Paths.games.path { move(app, to: buildPlace) { self.settle(job) } } else { reload(); settle(job) }
+            // Checked before it is called done, off the main thread: the signature check reads the app
+            guard let id = builder.titleID else { if let app = builder.output, buildPlace.path != Paths.games.path { move(app, to: buildPlace) { self.settle(job) } } else { reload(); settle(job) }; return }
+            guard let app = builder.output ?? scanLibrary().first(where: { $0.titleID.uppercased() == id })?.url else { queue.problems.append(Problem(title: job?.title ?? builder.title, reason: "It finished, but there is no game where it should be. Its leftovers were kept.", report: builder.report)); reload(); startNext(); return }
+            let quick = builder.skipsPipeline, warned = builder.warnings, place = buildPlace; checkingGame = true
+            DispatchQueue.global(qos: .userInitiated).async {
+                let c = checkGame(app, titleID: id, quick: quick, warned: warned)
+                DispatchQueue.main.async {
+                    self.checkingGame = false
+                    if place.path != Paths.games.path { self.move(app, to: place) { self.settle(job, c) } } else { self.reload(); self.settle(job, c) }
+                }
+            }
         case "Stopped": queue.stopped(); reload()
         default:
             let (t, b) = Notify.text(done: nil, failed: job?.title ?? builder.title, left: queue.waiting.count, problems: 0); Notify.say(t, b)
@@ -448,9 +459,15 @@ final class Model: ObservableObject {
         guard !fetching else { return }; fetching = true; installProblem = nil
         DispatchQueue.global(qos: .userInitiated).async { let r = run("/usr/bin/xcodebuild", ["-downloadComponent", "MetalToolchain"], timeout: 3600); DispatchQueue.main.async { self.fetching = false; if r.code != 0 { self.installProblem = "Apple's download didn't finish. Check your connection and try again." }; self.recheck() } }
     }
-    private func settle(_ j: Job?) {
+    private func settle(_ j: Job?, _ c: GameCheck = GameCheck()) {
+        let g = builder.titleID.flatMap { id in games.first(where: { $0.titleID.uppercased() == id }) }
+        // One that did not pass is converted once more, first in line: the engine keeps what it finished, so only the missing part is redone
+        if !c.ok, c.mendable, let j, j.again != true { var a = j; a.id = UUID(); a.again = true; queue.waiting.insert(a, at: 0); startNext(); return }
+        // A game that still did not pass keeps everything it was made from: nothing is removed, whatever was chosen
+        if !c.ok { queue.problems.append(Problem(title: g?.name ?? builder.title, reason: c.text(again: j?.again == true), report: c.problems.isEmpty ? nil : builder.report)) }
         let (t, b) = Notify.text(done: builder.title, failed: nil, left: queue.waiting.count, problems: queue.problems.count); Notify.say(t, b)
-        guard let id = builder.titleID, let g = games.first(where: { $0.titleID.uppercased() == id }) else { startNext(); return }
+        guard let g else { startNext(); return }
+        if !c.ok { offers.removeAll { $0.id == g.id }; if c.problems.isEmpty { offers.append(g) }; startNext(); return }
         if let j, j.after != .ask { automatic(j, g) } else { offers.removeAll { $0.id == g.id }; offers.append(g); startNext() }
     }
 
@@ -509,10 +526,10 @@ final class Model: ObservableObject {
     @Published var installProblem: String?
 
     func install() {
-        guard let p = bundledPayload, !installing, !builder.running else { return }
+        guard let p = bundledPayload, !installing, !builder.running, !engineBusy else { return }
         installing = true; installProblem = nil
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = Result { try installTools(p, sha: bundledPayloadSHA) }
+            let r = Result { try installTools(p, sha: bundledPayloadSHA) }; Engine.forget()
             DispatchQueue.main.async {
                 self.installing = false
                 if case .failure(let e) = r { self.installProblem = e.localizedDescription }
@@ -607,7 +624,7 @@ final class Model: ObservableObject {
     private func xcodeStart(_ key: String) -> XcodeBuild { try? FileManager.default.createDirectory(at: phoneFolder, withIntermediateDirectories: true); return xcodeBuild(for: key) }
     func startNext() {
         retry?.cancel(); retry = nil
-        guard !builder.running, moving == nil, !removing, !installing, !queue.paused else { return }
+        guard !builder.running, moving == nil, !removing, !installing, !queue.paused, !engineBusy, !checkingGame else { return }
         guard ready else { if !checks.isEmpty, !queue.waiting.isEmpty { queue.paused = true }; return }
         while let j = queue.next(verdict) {
             do {
@@ -667,7 +684,7 @@ final class Model: ObservableObject {
     }
     func installUpdate(_ v: String) {
         guard !updating else { return }
-        guard !builder.running, moving == nil, !removing, !installing else { message = "Docked can update once it has finished its current job."; return }
+        guard !builder.running, moving == nil, !removing, !installing, !engineBusy, !checkingGame else { message = "Docked can update once it has finished its current job."; return }
         updating = true
         Update.fetch(v) { r in
             switch r {
@@ -684,6 +701,53 @@ final class Model: ObservableObject {
             }
         }
     }
+    // ---- engine updates: signed by Docked's maker, put in place only while nothing converts, and the one before is kept ----
+    @Published var engine: EngineInfo?   // a newer engine, ready to install
+    private var engineSigned: (Data, Data)?
+    @Published var engineBusy = false
+    @Published var checkingEngine = false
+    var carriesEngine: Bool { bundledPayload != nil || Paths.unpacked }
+    var engineFree: Bool { !builder.running && queue.current == nil && moving == nil && !removing && !installing && !updating && !checkingGame }
+    func lookForEngine(quiet: Bool = false) {
+        guard !checkingEngine, !engineBusy else { return }
+        guard Paths.unpacked else { if !quiet { message = "Install the conversion tools first. A newer engine can come after that." }; return }
+        checkingEngine = true
+        Engine.check { a, m, s in
+            self.checkingEngine = false
+            switch a {
+            case let .available(i): if let m, let s { self.engine = i; self.engineSigned = (m, s) }
+            case .newest: self.engine = nil; if !quiet { self.message = "You have the newest conversion engine." }
+            case let .needsApp(v): self.engine = nil; if !quiet { self.message = "A newer conversion engine needs Docked \(v). Update Docked first." }
+            case .unknown: if !quiet { self.message = "Docked could not check for a newer engine. Try again later." }
+            }
+        }
+    }
+    func installEngine() {
+        guard !engineBusy, let signed = engineSigned else { return }
+        let (m, s) = signed
+        guard engineFree else { message = "Docked can update its engine once it has finished its current job."; return }
+        engineBusy = true; let day = engine?.when.map(engineDay)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = Result { try Engine.prepare(manifest: m, sig: s) }
+            DispatchQueue.main.async {
+                switch r {
+                case let .failure(e): self.message = e.localizedDescription
+                case let .success(next):
+                    // Nothing can have started meanwhile, but the swap is the one step that must never happen during a conversion
+                    guard self.engineFree else { try? FileManager.default.removeItem(at: next); self.message = "Docked can update its engine once it has finished its current job."; break }
+                    do { try Engine.swapIn(next); self.engine = nil; self.engineSigned = nil; self.message = "The conversion engine is updated" + (day.map { " to the one from \($0)" } ?? "") + ". Games you already converted stay as they are. If a game converts worse than before, Settings can go back to the engine you had." }
+                    catch { self.message = error.localizedDescription }
+                }
+                self.engineBusy = false; self.recheck()
+            }
+        }
+    }
+    func engineBack() {
+        guard !engineBusy else { return }
+        guard engineFree else { message = "Docked can change its engine once it has finished its current job."; return }
+        do { try Engine.goBack(); engine = nil; message = "Docked has switched engines. Settings can switch back." } catch { message = error.localizedDescription }
+        recheck()
+    }
     @Published var checkingUpdate = false
     @Published var update: String?   // a newer version, found at launch
     @Published var updatesAtLaunch = UserDefaults.standard.object(forKey: "updatesAtLaunch") as? Bool ?? true { didSet { UserDefaults.standard.set(updatesAtLaunch, forKey: "updatesAtLaunch") } }
@@ -696,7 +760,7 @@ final class Model: ObservableObject {
         if ProcessInfo.processInfo.environment["DOCKSIDE_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
         else if fullScreen { DispatchQueue.main.async { if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }), !w.styleMask.contains(.fullScreen) { w.collectionBehavior.insert(.fullScreenPrimary); w.toggleFullScreen(nil) } } }
         navigator.act = { [weak self] m, pad in self?.move(m, pad: pad) }; navigator.start()
-        if updatesAtLaunch { checkForUpdate { if case let .available(v) = $0 { self.update = v } } }
+        if updatesAtLaunch { checkForUpdate { if case let .available(v) = $0 { self.update = v } }; if Paths.unpacked, cannotConvert() == nil { lookForEngine(quiet: true) } }
     }
     func lookForUpdate() {
         guard !checkingUpdate else { return }; checkingUpdate = true
@@ -746,10 +810,12 @@ struct ContentView: View {
             }
             if let w = model.retro { Divider(); HStack { if let f = w.fraction { ProgressView(value: f).frame(width: 140).tint(style.accent).accessibilityLabel("Download progress") } else { ProgressView().controlSize(.small) }; Text(w.what).foregroundStyle(style.text); Spacer() }.padding(16) }
             if let m = model.moving { Divider(); HStack { ProgressView().controlSize(.small); Text("Moving \(m)…"); Spacer() }.padding(16) }
+            if model.update == nil, let e = model.engine { Divider(); HStack { Image(systemName: "gearshape.2").foregroundStyle(style.accent).accessibilityHidden(true); VStack(alignment: .leading, spacing: 2) { Text("A newer conversion engine is ready").foregroundStyle(style.text); Text(e.summary.isEmpty ? "From \(e.when.map(engineDay) ?? e.date)." : e.summary).font(.callout).foregroundStyle(style.soft).lineLimit(2) }; Spacer(); if model.engineBusy { ProgressView().controlSize(.small); Text("Updating the engine…").foregroundStyle(style.soft) } else { Button("Update Engine") { model.installEngine() }; Button("Later") { model.engine = nil } } }.padding(.horizontal, 16).padding(.vertical, 10) }
             if let v = model.update { Divider(); HStack { Image(systemName: "arrow.down.circle").foregroundStyle(style.accent).accessibilityHidden(true); Text("Docked \(v) is available. You have \(appVersion).").foregroundStyle(style.text); Spacer(); if model.updating { ProgressView().controlSize(.small); Text("Updating…").foregroundStyle(style.soft) } else { Button("Update and Reopen") { model.installUpdate(v) }; Button("What's New") { NSWorkspace.shared.open(releasePage) }; Button("Later") { model.update = nil } } }.padding(.horizontal, 16).padding(.vertical, 10) }
             if let n = model.xcodeReady.first { Divider(); HStack { VStack(alignment: .leading, spacing: 2) { Text("\(n) is ready for Xcode").font(.headline); Text("Xcode signs it with your Apple account and puts it on your iPhone or iPad.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }; Spacer(); Button("Show Steps") { model.showXcode = true }; Button("Dismiss") { model.xcodeReady.removeFirst() } }.padding(16) }
             if let u = model.phoneReady.first { Divider(); HStack { VStack(alignment: .leading, spacing: 2) { Text("\(u.deletingPathExtension().lastPathComponent) is ready for iPhone and iPad").font(.headline); Text("Install the .ipa file with a sideloading tool, such as AltStore or Sideloadly. If it offers Increased Memory Limit, turn it on.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }; Spacer(); Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([u]) }; Button("Dismiss") { model.phoneReady.removeFirst() } }.padding(16) }
             if model.removing { Divider(); HStack { ProgressView().controlSize(.small); Text("Cleaning up…"); Spacer() }.padding(16) }
+            if model.checkingGame { Divider(); HStack { ProgressView().controlSize(.small); Text("Checking the converted game…"); Spacer() }.padding(16) }
             if !model.queue.waiting.isEmpty || !model.queue.problems.isEmpty { Divider(); QueueBar() }
             if builder.running || builder.error != nil { Divider(); BuildBar() }
         }

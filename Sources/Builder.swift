@@ -12,6 +12,7 @@ final class Builder: ObservableObject {
     @Published var tested: Bool?
     @Published var log: [String] = []
     @Published var error: String?
+    @Published var warnings: [String] = []   // steps that finished without what they make: the game works, but not as well prepared
     private(set) var titleID: String?
     private(set) var output: URL?   // the finished app, as the engine named it
     var onFinish: () -> Void = {}
@@ -36,7 +37,7 @@ final class Builder: ObservableObject {
         guard !running else { return }
         self.title = title; stage = "Starting"; stageIndex = 0; stageCount = 0; frac = nil; eta = nil; tested = nil
         shownSoFar = 0; started = Date(); stageStarted = started; estimator = Estimator.load(); times = []; stepOpen = nil; titleID = nil; output = nil
-        log = []; error = nil; lastRed = ""; stderrTail = ""; cancelled = false
+        log = []; error = nil; warnings = []; lastRed = ""; stderrTail = ""; cancelled = false
         try? FileManager.default.createDirectory(at: Paths.games, withIntermediateDirectories: true)
         let p = Process(), out = Pipe(), err = Pipe()
         p.executableURL = URL(fileURLWithPath: exe); p.arguments = args; p.environment = engineEnvironment()
@@ -75,7 +76,9 @@ final class Builder: ObservableObject {
         case let .stage(k, n, name): endStep(); stageIndex = k; stageCount = n; stage = name; stageStarted = Date(); frac = nil; eta = nil; watchPipeline()
         case let .step(s): frac = nil; eta = nil; if !s.isEmpty { add("  " + s) }
         case let .progress(f, t, _): frac = f; eta = t; etaAt = Date()
-        case .stageEnd: endStep(); frac = 1; eta = nil
+        case let .stageEnd(_, warn, name, summary):
+            endStep(); frac = 1; eta = nil
+            if warn { let n = name.isEmpty ? stage : name; warnings.append(summary.isEmpty ? n : "\(n): \(summary)") }
         case let .game(id, name, out): title = name; titleID = id.uppercased(); tested = isTested(id); output = out.map { URL(fileURLWithPath: $0) }
         case let .say(m):
             if m.hasPrefix("[RED]") || m.contains("] [RED]") { lastRed = m.components(separatedBy: "[RED]").last!.trimmingCharacters(in: .whitespaces) }

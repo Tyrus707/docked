@@ -22,7 +22,7 @@ struct SettingsSheet: View {
             line("Show games as", "") { Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
             flip("Open in full screen", "From the next time Docked opens.", $model.fullScreen)
             flip("Theme music", "Plays a game's own theme while it is selected.", $model.themes)
-            flip("Check for updates at launch", "Asks GitHub for the newest version number. Nothing else is sent.", $model.updatesAtLaunch)
+            flip("Check for updates at launch", "Asks GitHub for the newest version numbers of Docked and its engine. Nothing else is sent.", $model.updatesAtLaunch)
             line("Updates", "") { if model.checkingUpdate { ProgressView().controlSize(.small) }; Button("Check Now") { model.leaveSettings { model.lookForUpdate() } }.disabled(model.checkingUpdate) }
         }
     }
@@ -36,9 +36,20 @@ struct SettingsSheet: View {
             line("Space", "Leftovers, original files and keys you no longer need.") { Button("Clean Up…") { model.leaveSettings { model.cleanUp(nil) } } }
         }
     }
+    // The engine that converts games: newer ones come signed by Docked's maker, and the one before is kept
+    @ViewBuilder var engineRows: some View {
+        let now = Engine.active
+        line("Conversion engine", now.map { e in "From \(engineDay(e.date)), version \(e.commit.prefix(8))." + (model.engine.map { n in " A newer one is ready. \(n.summary)" } ?? "") } ?? "Comes with the conversion tools.") {
+            if model.checkingEngine || model.engineBusy { ProgressView().controlSize(.small) }
+            if model.engine != nil { Button("Update Engine") { model.leaveSettings { model.installEngine() } }.disabled(model.engineBusy) }
+            else { Button("Check Now") { model.leaveSettings { model.lookForEngine() } }.disabled(now == nil || model.checkingEngine || model.engineBusy) }
+        }
+        if now != nil, let p = Engine.installed(Engine.previous) { line("Kept engine", "From \(engineDay(p.date)). Switch to it if a game converts worse with the one in use. You can switch back.") { Button("Switch") { model.leaveSettings { model.engineBack() } }.disabled(model.engineBusy) } }
+    }
     @ViewBuilder var tools: some View {
         VStack(spacing: 14) {
             line("This Mac", cannotConvert() ?? (model.ready ? "Ready to convert Switch games." : model.checks.isEmpty ? "Checking…" : "\(model.checks.filter { !$0.ok }.count) to do: \(nextCheck(model.checks)?.title ?? "")")) { Button("Details…") { model.leaveSettings { model.recheck(); model.showSetup = true } } }
+            if model.carriesEngine { engineRows }
             line("Setup guide", "One step at a time, from the beginning.") { Button("Open Guide…") { model.leaveSettings { model.recheck(); model.showGuide = true } } }
             line("Other consoles", RetroArch.installed ? "RetroArch \(RetroArch.installedVersion ?? "") is set up inside Docked." : "Docked sets up RetroArch the first time you add one of their games.") { Button("Consoles…") { model.leaveSettings { model.showConsoles = true } } }
             line("Games folder", "") { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Paths.games]) } }
