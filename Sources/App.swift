@@ -81,13 +81,67 @@ final class Model: ObservableObject {
             if c.count == 1 { library.addRom(Rom(id: romID(u, c[0].id), name: cleanName(u), console: c[0].id, path: u.path)); added += 1; last = c[0] }
             else if c.count > 1 { ask.append(u); for x in c where !choices.contains(x) { choices.append(x) } }
         }
-        if added > 0 { reload(); if let l = last { section = .console(l.id) } }
+        if added > 0 { reload(); if let l = last { section = .console(l.id) }; getReady(pickRoms(urls).filter { consolesFor($0).count == 1 }) }
         if !ask.isEmpty { asking = (ask, choices) }
         else if added == 0 { message = "Docked doesn't recognise that file. It reads Switch games, and game files for the consoles listed under Consoles in Settings." }
     }
     func answer(_ c: Console) {
-        for u in asking?.files ?? [] where consolesFor(u).contains(c) { library.addRom(Rom(id: romID(u, c.id), name: cleanName(u), console: c.id, path: u.path)) }
-        asking = nil; reload(); section = .console(c.id)
+        let files = (asking?.files ?? []).filter { consolesFor($0).contains(c) }
+        for u in files { library.addRom(Rom(id: romID(u, c.id), name: cleanName(u), console: c.id, path: u.path)) }
+        asking = nil; reload(); section = .console(c.id); getReady(files, as: c)
+    }
+    // ---- RetroArch, set up inside Docked the first time a console's game is added ----
+    @Published var retro: RetroWork?
+    @Published var wantsBios: BiosAsk?
+    private var settingUp: [(console: Console, then: (() -> Void)?)] = []
+    // Right after adding: RetroArch and the core download in the background, and a BIOS is asked for at once.
+    private func getReady(_ files: [URL], as chosen: Console? = nil) {
+        var seen: [Console] = []
+        for u in files { if let c = chosen ?? consolesFor(u).first, !c.native, !seen.contains(c) { seen.append(c); setUpRetro(c) } }
+        if let u = files.first(where: { u in (chosen ?? consolesFor(u).first).map { RetroArch.missingBios($0, rom: u.path) != nil && !biosAsked($0) } ?? false }), let c = chosen ?? consolesFor(u).first { askBios(c) }
+    }
+    func setUpRetro(_ c: Console, then: (() -> Void)? = nil) {
+        if RetroArch.ready(c) { then?(); return }
+        settingUp.append((c, then)); if settingUp.count == 1 { nextRetro() }
+    }
+    private func nextRetro() {
+        guard let c = settingUp.first?.console else { retro = nil; return }
+        retro = RetroWork(what: "Getting \(c.name) games ready…", fraction: nil)
+        var last = Date.distantPast
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = Result { try RetroArch.setUp(c) { w, f in
+                guard Date().timeIntervalSince(last) > 0.25 || f == nil else { return }; last = Date()
+                DispatchQueue.main.async { if self.retro != nil { self.retro = RetroWork(what: w, fraction: f) } }
+            } }
+            DispatchQueue.main.async {
+                let waiting = self.settingUp.filter { $0.console == c }; self.settingUp.removeAll { $0.console == c }
+                switch r {
+                case .success: self.objectWillChange.send(); for w in waiting { w.then?() }
+                case .failure(let e): self.message = "\(c.name) games can't play yet. \(e.localizedDescription)"
+                }
+                self.nextRetro()
+            }
+        }
+    }
+    private func biosAsked(_ c: Console) -> Bool { UserDefaults.standard.bool(forKey: "biosAsked." + c.id) }
+    func askBios(_ c: Console, then: (() -> Void)? = nil) {
+        if sheetUp, then == nil { return }
+        UserDefaults.standard.set(true, forKey: "biosAsked." + c.id)
+        wantsBios = BiosAsk(console: c, then: then)
+    }
+    func biosDone(play: Bool) {
+        let a = wantsBios; wantsBios = nil
+        if play, let t = a?.then { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: t) }
+    }
+    // Files the player chose, checked and kept where the core looks. Returns what to tell them.
+    func addBios(_ c: Console) -> String? {
+        let p = NSOpenPanel(); p.allowsMultipleSelection = true; p.canChooseDirectories = false; p.showsHiddenFiles = true
+        p.message = "Choose the BIOS from your own \(c.name)."
+        guard p.runModal() == .OK else { return nil }
+        var kept: [String] = [], problem: String?
+        for u in p.urls { do { kept.append(try RetroArch.addBios(u, for: c)) } catch { problem = error.localizedDescription } }
+        objectWillChange.send()
+        return kept.isEmpty ? problem : "Docked kept " + kept.joined(separator: " and ") + "."
     }
     func removeRom(_ g: Game) { library.removeRom(g.titleID); reload() }   // its file and its play time stay
     func retitle(_ g: Game, _ n: String) {
@@ -154,6 +208,9 @@ final class Model: ObservableObject {
     private func playRom(_ g: Game, _ r: Rom) {
         guard let c = console(r.console) else { return }
         if let p = RetroArch.problem(c, rom: r.path) { message = p; return }
+        if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r) }; if retro == nil { message = "Docked is getting RetroArch ready for \(c.name). The game starts when it's done." }; return }
+        if let b = RetroArch.missingBios(c, rom: r.path), b.required || !biosAsked(c) { askBios(c) { [weak self] in self?.playRom(g, r) }; return }
+        do { try RetroArch.prepare() } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
         let ra = NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == RetroArch.app.path }
         if let ra { if isRunning(g) { ra.activate() } else { message = "RetroArch is already open. Quit it first, then play \(g.name)." }; return }
         let o = NSWorkspace.OpenConfiguration(); o.arguments = RetroArch.arguments(core: RetroArch.core(c)!, rom: r.path)
@@ -392,7 +449,7 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showConsoles || showXcode || cleaning != nil || editing != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     @Published var guided = UserDefaults.standard.bool(forKey: "guided") { didSet { UserDefaults.standard.set(guided, forKey: "guided") } }
@@ -751,6 +808,7 @@ struct ContentView: View {
                     .overlay(alignment: .bottom) { if let g = model.offers.first, model.chosen == nil { FinishCard(game: g, more: model.offers.count - 1).id(g.id).padding(20).transition(still ? .opacity : .move(edge: .bottom).combined(with: .opacity)) } }
                     .animation(still ? nil : .spring(response: 0.42, dampingFraction: 0.8), value: model.chosen == nil ? model.offers.first?.id : nil)
             }
+            if let w = model.retro { Divider(); HStack { if let f = w.fraction { ProgressView(value: f).frame(width: 140).tint(style.accent).accessibilityLabel("Download progress") } else { ProgressView().controlSize(.small) }; Text(w.what).foregroundStyle(style.text); Spacer() }.padding(16) }
             if let m = model.moving { Divider(); HStack { ProgressView().controlSize(.small); Text("Moving \(m)…"); Spacer() }.padding(16) }
             if model.update == nil, let e = model.engine { Divider(); HStack { Image(systemName: "gearshape.2").foregroundStyle(style.accent).accessibilityHidden(true); VStack(alignment: .leading, spacing: 2) { Text("A newer conversion engine is ready").foregroundStyle(style.text); Text(e.summary.isEmpty ? "From \(e.when.map(engineDay) ?? e.date)." : e.summary).font(.callout).foregroundStyle(style.soft).lineLimit(2) }; Spacer(); if model.engineBusy { ProgressView().controlSize(.small); Text("Updating the engine…").foregroundStyle(style.soft) } else { Button("Update Engine") { model.installEngine() }; Button("Later") { model.engine = nil } } }.padding(.horizontal, 16).padding(.vertical, 10) }
             if let v = model.update { Divider(); HStack { Image(systemName: "arrow.down.circle").foregroundStyle(style.accent).accessibilityHidden(true); Text("Docked \(v) is available. You have \(appVersion).").foregroundStyle(style.text); Spacer(); if model.updating { ProgressView().controlSize(.small); Text("Updating…").foregroundStyle(style.soft) } else { Button("Update and Reopen") { model.installUpdate(v) }; Button("What's New") { NSWorkspace.shared.open(releasePage) }; Button("Later") { model.update = nil } } }.padding(.horizontal, 16).padding(.vertical, 10) }
@@ -777,6 +835,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showSetup) { SetupView() }
         .sheet(isPresented: $model.showXcode) { XcodeStepsView() }
         .sheet(isPresented: $model.showConsoles) { ConsolesView() }
+        .sheet(item: $model.wantsBios) { BiosView(ask: $0) }
         .confirmationDialog("Which console is \(model.asking?.files.first.map { cleanName($0) } ?? "this")\((model.asking?.files.count ?? 1) > 1 ? " and the others" : "") for?", isPresented: .init(get: { model.asking != nil }, set: { if !$0 { model.asking = nil } })) { ForEach(model.asking?.choices ?? []) { c in Button(c.name) { model.answer(c) } } }
         .alert("Rename Game", isPresented: .init(get: { model.retitling != nil }, set: { if !$0 { model.retitling = nil } })) { TextField("Name", text: $newName); Button("Rename") { if let g = model.retitling { model.retitle(g, newName) }; newName = "" }; Button("Cancel", role: .cancel) { newName = "" } }
         .sheet(isPresented: $model.showHelp) { HelpView() }
@@ -801,7 +860,7 @@ struct ContentView: View {
                     card(model.ready ? "checkmark.seal" : "wrench.and.screwdriver", model.ready ? "This Mac is ready" : model.checks.isEmpty ? "Checking this Mac" : "Get this Mac ready", model.ready ? "Everything needed to convert Switch games is in place." : "A few free tools from Apple, one step at a time.", model.ready ? nil : "Continue Setup") { model.showGuide = true }
                     card("wand.and.stars", "Add a Switch game", "Converted once, in 10 to 60 minutes. Then it runs like any Mac app.", "Add Game…") { model.pickGame() }
                 }
-                card("gamecontroller", "Add other consoles", RetroArch.installed ? "Ready to play right away, in RetroArch." : "They play in RetroArch, which is free.", RetroArch.installed ? "Add Games…" : "Get RetroArch") { if RetroArch.installed { model.pickGame() } else { NSWorkspace.shared.open(URL(string: "https://www.retroarch.com/?page=platforms")!) } }
+                card("gamecontroller", "Add other consoles", RetroArch.installed ? "Ready to play right away, in RetroArch." : "They play in RetroArch, free. Docked sets it up inside itself the first time.", "Add Games…") { model.pickGame() }
             }.fixedSize(horizontal: false, vertical: true)
             if let why = cannotConvert() { Text(why).font(.callout).foregroundStyle(style.soft).multilineTextAlignment(.center).frame(maxWidth: 480) }
             Button("How to Use Docked") { model.showHelp = true }.buttonStyle(.plain).foregroundStyle(style.accent)
@@ -864,31 +923,64 @@ struct BuildBar: View {
 }
 
 struct ConsolesView: View {
+    @EnvironmentObject var model: Model
     @Environment(\.dismiss) var dismiss
+    @State private var note: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Consoles").font(.title2.weight(.semibold))
-            Text(RetroArch.installed ? "Switch games run natively. The others play in RetroArch, with its own settings and saves." : "Switch games run natively. The others need RetroArch in your Applications folder.").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(RetroArch.installed ? "Switch games run natively. The others play in RetroArch \(RetroArch.installedVersion ?? ""), which Docked keeps inside its own folder with their saves." : "Switch games run natively. The others play in RetroArch, which Docked downloads and keeps inside its own folder the first time you add one of their games.").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(consoles) { c in
-                        let ok = c.native || RetroArch.core(c) != nil
+                        let ok = c.native || (RetroArch.ready(c) && (RetroArch.bios[c.id].map { !$0.required || !$0.onlyFor.isEmpty } ?? true || RetroArch.hasBios(c)))
                         HStack {
                             Image(systemName: ok ? "checkmark.circle.fill" : "circle").foregroundStyle(ok ? Color(light: 0x1E7A3C, dark: 0x6FCF8A) : Color.secondary).accessibilityLabel(ok ? "Ready" : "Not ready")
-                            VStack(alignment: .leading, spacing: 1) { Text(c.name); Text(detail(c, ok)).font(.caption).foregroundStyle(.secondary) }
+                            VStack(alignment: .leading, spacing: 1) { Text(c.name); Text(detail(c)).font(.caption).foregroundStyle(.secondary) }
                             Spacer()
+                            if RetroArch.bios[c.id] != nil { Button(RetroArch.hasBios(c) ? "Replace BIOS…" : "Add BIOS…") { note = model.addBios(c) }.controlSize(.small) }
                             Text((c.types + c.shared).prefix(5).map { "." + $0 }.joined(separator: " ")).font(.caption).foregroundStyle(.secondary)
                         }.padding(.vertical, 6)
                         Divider()
                     }
                 }
             }.frame(height: 330)
+            if let note { Text(note).font(.callout).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true) }
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button) }
-        }.padding(24).frame(width: 520).background(AllowQuit()).background(Backdrop())
+        }.padding(24).frame(width: 560).background(AllowQuit()).background(Backdrop())
     }
-    func detail(_ c: Console, _ ok: Bool) -> String {
+    func detail(_ c: Console) -> String {
         if c.native { return "Native" }
-        return (ok ? "Ready" : "In RetroArch, download the \(c.cores[0].label) core") + (c.needs.isEmpty ? "" : ". Needs \(c.needs)")
+        let core = RetroArch.core(c).map { u in c.cores.first { u.lastPathComponent == "\($0.file)_libretro.dylib" }?.label ?? "" }
+        var s = core.map { "Plays with \($0)" } ?? "Docked downloads the \(c.cores[0].label) core when you add a game"
+        if RetroArch.bios[c.id] != nil { s += RetroArch.hasBios(c) ? ". BIOS added" : ". Needs \(c.needs)" }
+        return s
+    }
+}
+
+struct RetroWork: Equatable { var what: String; var fraction: Double? }
+struct BiosAsk: Identifiable { let console: Console; let then: (() -> Void)?; var id: String { console.id } }
+
+// Asks for a system file only the player's own console has. Docked never downloads one.
+struct BiosView: View {
+    @EnvironmentObject var model: Model
+    let ask: BiosAsk
+    @State private var note: String?
+    var c: Console { ask.console }
+    var b: Bios { RetroArch.bios[c.id] ?? Bios() }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(b.required ? "\(c.name) games need a BIOS" : "\(c.name) games play best with a BIOS").font(.title2.weight(.semibold))
+            Text("A BIOS is a system file copied from your own \(c.name)\(b.onlyFor.isEmpty ? "" : ", for its CD games"). Docked can't download one for you. Choose it once and Docked keeps a copy inside its RetroArch.").fixedSize(horizontal: false, vertical: true)
+            Text("It takes \(b.names).").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if !b.required { Text("Without one, \(c.name) games start with a free stand-in. Most run, but some don't.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            if let note { Text(note).font(.callout).foregroundStyle(Color(light: 0xB3261E, dark: 0xFF8A80)).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                Button(b.required || ask.then == nil ? "Not Now" : "Play Without") { model.biosDone(play: !b.required) }
+                Button("Choose BIOS…") { note = model.addBios(c); if RetroArch.hasBios(c) { model.biosDone(play: true) } }.keyboardShortcut(.defaultAction).tint(style.button)
+            }
+        }.padding(24).frame(width: 480).background(AllowQuit()).background(Backdrop())
     }
 }
 

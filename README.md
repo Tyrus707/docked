@@ -36,7 +36,11 @@ Docked isn't only for Switch. Bring the games you've kept from older consoles, f
 | **Sony** | PlayStation, PlayStation 2, PSP |
 | **Others** | TurboGrafx-16, Atari 2600 |
 
-These games play through [RetroArch](https://www.retroarch.com), so you'll need it installed for now. A few systems, such as PlayStation, PlayStation 2 and Saturn, also need the BIOS from your own console. *Coming soon:* Docked will set up RetroArch and the right emulator for each console by itself the first time you add a game, so there's nothing to install.
+There's nothing else to install. The first time you add a game for one of these consoles, Docked downloads [RetroArch](https://www.retroarch.com) and the right emulator for that console from libretro, keeps them inside Docked's own folder (not in Applications), and starts your games in it with a click. You never have to open RetroArch yourself.
+
+Docked works out the console from the file. For disc images such as `.iso`, `.cue` and `.chd`, it looks inside the disc, and only asks you when it can't tell. Where emulators differ, Docked picks the most accurate one first, such as bsnes for SNES, SameBoy for Game Boy and Beetle for PlayStation and Saturn.
+
+Saturn and PlayStation 2 need the BIOS from your own console, and PlayStation plays best with one. Docked asks for it when you add the game, checks it, and keeps a copy. It never downloads a BIOS for you.
 
 ## How it works
 
@@ -64,7 +68,7 @@ From then on Docked lets you know when there's a new version and installs it for
 
 | To… | You need |
 |---|---|
-| Use the library and play retro games | macOS 13 or later, Apple chip or Intel |
+| Use the library and play retro games | macOS 13 or later, Apple chip or Intel. RetroArch (about 230 MB) is downloaded the first time |
 | Play converted Switch games | macOS 26.6 or later on an Apple chip |
 | Convert Switch games | The same, plus [Xcode 27.2](https://developer.apple.com/download/all/) |
 
@@ -159,7 +163,7 @@ Bundle/dmg.sh Docked.app        # Docked.dmg: the drag-to-Applications download
 
 ## Your games, your Mac
 
-**Privacy.** Docked has no account and collects nothing. When it opens, it asks GitHub for the newest version numbers of Docked and its engine (you can turn that off in Settings), and it only downloads an update when you press **Update** or **Update Engine**. Covers come from your own games or pictures you pick; nothing is downloaded for them.
+**Privacy.** Docked has no account and collects nothing. When it opens, it asks GitHub for the newest version numbers of Docked and its engine (you can turn that off in Settings), and it only downloads an update when you press **Update** or **Update Engine**. The first time you add a game for another console, it downloads RetroArch and that console's emulator from libretro's own server, `buildbot.libretro.com`, and nothing about you or your games is sent. Covers come from your own games or pictures you pick; nothing is downloaded for them.
 
 **Your own games only.** Use Docked with games and system files from your own console, where your local law allows it. Some file types need your own `prod.keys`; Docked remembers where it is and never copies or sends it. No games, keys, firmware or console files are included with Docked, and please don't post any here.
 
