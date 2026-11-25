@@ -4,7 +4,7 @@
 One tidy library for NES to Switch. Free, open source and light.</p>
 
 <p align="center">
-  <a href="https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip"><b>⬇&nbsp; Download Docked for Mac</b></a>
+  <a href="https://github.com/Tyrus707/docked/releases/latest/download/Docked.dmg"><b>⬇&nbsp; Download Docked for Mac</b></a>
   &nbsp;·&nbsp; about 115 MB<br>
   <sub>Library and retro games: macOS 13 or later. Switch games: macOS 26.6 or later on Apple silicon (<a href="#what-you-need">details</a>).</sub>
 </p>
@@ -52,9 +52,11 @@ The first time you convert, Docked walks you through the one-off setup. The conv
 
 ## Get started
 
-1. [Download **Docked.zip**](https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip), unzip it and open **Docked**.
-2. Docked isn't notarised by Apple yet, so macOS may stop it the first time. Open **System Settings › Privacy & Security** and choose **Open Anyway**.
-3. Docked offers to move itself to Applications. If you already have an older Docked, it updates that one instead and keeps your games, saves and settings.
+1. [Download **Docked.dmg**](https://github.com/Tyrus707/docked/releases/latest/download/Docked.dmg) and open it.
+2. Drag **Docked** onto the **Applications** folder in the window that appears, then open it from Applications. If you already have an older Docked, choose **Replace**: your games, saves and settings stay.
+3. Docked isn't notarised by Apple yet, so macOS stops it the first time. Open **System Settings › Privacy & Security** and choose **Open Anyway**. You only need to do this once.
+
+Prefer a zip? [**Docked.zip**](https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip) has the same app: unzip it, open Docked, and it offers to move itself to Applications.
 
 From then on Docked lets you know when there's a new version and installs it for you, after checking the update really came from this project. Your previous version is kept in `Dockside/Backups` in your home folder, just in case.
 
@@ -121,7 +123,7 @@ This hasn't been tested on a real device yet, so treat it as an early preview.
 
 <br>
 
-Download the new version and open it. Docked offers to replace the old one and keeps your games, saves and settings, with the old version saved in `Dockside/Backups`. You can also drag it to Applications yourself and choose **Replace**.
+Download the new version, open it and drag Docked to Applications, choosing **Replace**. Your games, saves and settings stay. Or open Docked straight from the download: it offers to replace the old one for you and keeps the old version in `Dockside/Backups`.
 
 Versions 1.1 and older can't update themselves, so download the new one by hand once. If macOS blocks an automatic update, allow **Docked** under **System Settings › Privacy & Security › App Management**.
 
@@ -136,9 +138,10 @@ Versions 1.1 and older can't update themselves, so download the new one by hand 
 ./test.sh                       # run the tests (needs Xcode)
 ./build.sh Docked.app           # the app alone; setup.sh then installs the tools with Homebrew
 ./build.sh Docked.app tools.xz  # with the tools inside, made by Bundle/make.sh
+Bundle/dmg.sh Docked.app        # Docked.dmg: the drag-to-Applications download
 ```
 
-`Bundle/make.sh` packs what `setup.sh` installed, with a pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261124) placed in `~/Dockside/python-standalone`. The engine's pinned commit and the fingerprints of its prebuilt tools are in [`ENGINE_PIN`](ENGINE_PIN); the other pinned versions are in those scripts.
+`Bundle/make.sh` packs what `setup.sh` installed, with a pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261124) placed in `~/Dockside/python-standalone`. The engine's pinned commit and the fingerprints of its prebuilt tools are in [`ENGINE_PIN`](ENGINE_PIN); the other pinned versions are in those scripts. A release carries **Docked.dmg** and **Docked.zip** (the same full app) plus **Docked-Update.zip** and its `.sig`, which the built-in updater downloads.
 
 **Moving to a newer engine.** nxnative changes every day, and its game profiles decide which games work, so Docked follows it in reviewed steps:
 

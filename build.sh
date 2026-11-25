@@ -10,6 +10,8 @@ B=$(mktemp -d); for a in arm64 x86_64; do swiftc -swift-version 5 -O -whole-modu
 lipo -create "$B/arm64" "$B/x86_64" -output "$APP/Contents/MacOS/Docked"
 strip -x "$APP/Contents/MacOS/Docked"
 cp Info.plist "$APP/Contents/"; cp "Art/${LOGO:-docked}.icns" "$APP/Contents/Resources/AppIcon.icns"
+# The licence texts and the GPL source travel inside the app, as THIRD-PARTY.md promises.
+cp LICENSE THIRD-PARTY.md "$APP/Contents/Resources/"; cp -R Licences GPL-source "$APP/Contents/Resources/"
 if [ -n "$PAYLOAD" ]; then
   cp "$PAYLOAD" "$APP/Contents/Resources/tools.tar.xz"
   plutil -insert DSPayloadSHA256 -string "$(shasum -a 256 "$PAYLOAD" | cut -c1-64)" "$APP/Contents/Info.plist"
