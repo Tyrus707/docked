@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-// The conversion tools carried inside the app, unpacked once into the Dockside folder.
+// The conversion tools carried inside the app, unpacked once into the Docked folder.
 enum InstallError: LocalizedError, Equatable {
     case damaged, spaces, noSpace, failed(String)
     var errorDescription: String? {

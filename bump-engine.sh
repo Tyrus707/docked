@@ -1,11 +1,11 @@
 #!/bin/zsh
 # bump-engine.sh [commit or branch, default main]: moves Docked to a newer nxnative, after showing what changed. For Docked's maker, not for players.
-# It fetches the commit into ~/Dockside/engine, lists the new and changed game profiles, stops if a prebuilt tool changed (look at it, then run again with
+# It fetches the commit into ~/Docked/engine, lists the new and changed game profiles, stops if a prebuilt tool changed (look at it, then run again with
 # ACCEPT_TOOLS=1), updates the Python packages if the engine asks for others, writes ENGINE_PIN and the copy in Sources/Core.swift, and runs ./test.sh.
 # Then convert one or two of your own games with a Docked built here (./build.sh), and publish it to players with ./engine-release.sh.
 set -eu
 cd "$(dirname "$0")"
-WANT="${1:-main}"; E="$HOME/Dockside/engine"; G=(git -c core.hooksPath=/dev/null -C "$E")
+WANT="${1:-main}"; E="$HOME/Docked/engine"; G=(git -c core.hooksPath=/dev/null -C "$E")
 [ -d "$E/.git" ] || { echo "No engine checkout at $E. Run setup.sh once first."; exit 1; }
 OLD=$(awk '$1=="commit"{print $2}' ENGINE_PIN)
 $G fetch -q --depth 1 https://github.com/seedds/nxnative.git "$OLD"
@@ -29,11 +29,11 @@ if [ -n "$moved$others" ]; then
   [ "${ACCEPT_TOOLS:-}" = 1 ] || { echo "Look at upstream's notes for them, then run again with ACCEPT_TOOLS=1."; exit 1; }
   for f in ${(f)others}; do lines+="tool $f $($G show "$NEW:$f" | shasum -a 256 | cut -c1-64)\n"; done   # recorded from now on, like the others
 fi
-# The engine in ~/Dockside/engine, and its Python packages if they changed
+# The engine in ~/Docked/engine, and its Python packages if they changed
 $G checkout -q --detach "$NEW"
 if ! $G diff --quiet "$OLD" "$NEW" -- .github/requirements/tools.txt; then
-  echo "\nThe engine wants other Python packages. Installing them in ~/Dockside/venv. Players need a full Docked release (Bundle/make.sh) for this engine; engine-release.sh will refuse it."
-  "$HOME/Dockside/venv/bin/python3" -m pip install --disable-pip-version-check --only-binary :all: -r "$E/.github/requirements/tools.txt"
+  echo "\nThe engine wants other Python packages. Installing them in ~/Docked/venv. Players need a full Docked release (Bundle/make.sh) for this engine; engine-release.sh will refuse it."
+  "$HOME/Docked/venv/bin/python3" -m pip install --disable-pip-version-check --only-binary :all: -r "$E/.github/requirements/tools.txt"
 fi
 # ENGINE_PIN and the app's copy
 { sed -n '/^#/p' ENGINE_PIN; echo "commit $NEW"; echo "date $DATE"; printf "$lines"; } > ENGINE_PIN.new && mv ENGINE_PIN.new ENGINE_PIN

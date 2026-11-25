@@ -2,7 +2,7 @@
 # Stand-in for the engine: reports like it, makes a build folder and an app. What the dump says decides how it goes.
 import json, os, plistlib, re, shutil, signal, subprocess, sys, time
 if '-I' in sys.argv[:2] or '--help' in sys.argv: sys.exit(0)   # Docked's check of the Python tools, and of a new engine
-root = os.environ['DOCKSIDE_ROOT']; a = sys.argv; src = a[a.index('--progress') - 3]; work = a[a.index('--work-dir') + 1]
+root = os.environ['DOCKED_ROOT']; a = sys.argv; src = a[a.index('--progress') - 3]; work = a[a.index('--work-dir') + 1]
 def say(**k): print(json.dumps(k), flush=True)
 def log(s): open(root + '/engine.log', 'a').write(s + '\n')
 f = next(n for n in os.listdir(src) if n.endswith('.nsp')); tid = re.search(r'\[([0-9A-F]{16})\]', f).group(1); mode = open(os.path.join(src, f)).read(); name = f.split(' [')[0]

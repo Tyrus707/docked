@@ -5,7 +5,7 @@ import Foundation
 struct SourceFile: Codable, Equatable { var path: String; var size: Int64 }
 
 struct Originals: Equatable {
-    var links: [URL] = []        // Dockside's own links
+    var links: [URL] = []        // Docked's own links
     var files: [URL] = []        // the player's files, confirmed to be the ones that were converted
     var bytes: Int64 = 0
     var isEmpty: Bool { links.isEmpty && files.isEmpty }
@@ -32,7 +32,7 @@ func findOriginals(links: [URL], sources: [SourceFile]) -> Originals {
 }
 
 // Returns the files that could not be moved. A link is dropped only once the file it stands for is in the Trash;
-// where Dockside's link is the last copy, the link itself goes to the Trash.
+// where Docked's link is the last copy, the link itself goes to the Trash.
 func trashOriginals(_ o: Originals, trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) -> [URL] {
     var failed: [URL] = []
     var linked: [(URL, [URL])] = o.links.map { l in (l, o.files.filter { sameFile(l, $0) }) }

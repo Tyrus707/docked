@@ -24,7 +24,7 @@ let helpTopics: [HelpTopic] = [
     HelpTopic(title: "About prod.keys", symbol: "key", lines: [
         "They belong to the Switch system, not to a game. One file works for many games.",
         "They must be at least as new as the game needs. If a new game or update can't be unlocked, dump your keys again after updating your Switch.",
-        "Keep the file private. Some of its keys belong only to your console. Docked remembers where it is and never copies it. A prod.keys file in the Dockside folder in your home folder is found automatically.",
+        "Keep the file private. Some of its keys belong only to your console. Docked remembers where it is and never copies it. A prod.keys file in the Docked folder in your home folder is found automatically.",
     ]),
     HelpTopic(title: "Play", symbol: "gamecontroller", lines: [
         "A controller works best: connect it in System Settings > Bluetooth before you start the game.",
@@ -43,7 +43,7 @@ let helpTopics: [HelpTopic] = [
         "When you add a game, choose iPhone or iPad beside Make it for. Then choose how to install it.",
         "Needs an \(phoneNeeds)",
         "Xcode: Docked prepares a project, and Xcode signs it with your Apple account and installs it. The steps are in Settings, under Converting. If Xcode asks you to prepare the game again, add the game again in Docked.",
-        ".ipa file: Docked makes it in the iPhone folder, inside the Dockside folder. You install it with a sideloading tool, such as AltStore or Sideloadly. Many can't install a file as big as these games.",
+        ".ipa file: Docked makes it in the iPhone folder, inside the Docked folder. You install it with a sideloading tool, such as AltStore or Sideloadly. Many can't install a file as big as these games.",
         "With a free Apple account, apps stop opening after 7 days and have to be renewed.",
     ]),
     HelpTopic(title: "If something goes wrong", symbol: "wrench.and.screwdriver", lines: [
