@@ -8,3 +8,12 @@
 *.nsz
 *.xcz
 *.nup
+*.xz
+*.ipa
+*.sig
+# Signing material never belongs here
+*.pem
+*.p8
+*.p12
+*.key
+*.private

@@ -25,5 +25,7 @@ find "$P" -type f \( -perm +111 -o -name '*.so' -o -name '*.dylib' \) ! -name 'g
 bad=$(find "$P/python" "$P/bin" "$P/lib" -type f \( -perm +111 -o -name '*.so' -o -name '*.dylib' \) -exec sh -c 'file -b "$1" | grep -q Mach-O && otool -L "$1" | tail -n +2 | grep -E "/opt/homebrew|/Users/" && echo "^ $1"' _ {} \;)
 [ -z "$bad" ] || { echo "$bad"; echo "still refers to this Mac"; exit 1; }
 if grep -rlE '^(master_key|titlekek|bis_key)_[0-9a-f]{2} *=' "$P" --include='*.keys' --include='*.txt'; then echo "keys found"; exit 1; fi
-du -sh "$P"; XZ_OPT="-6 -T4" tar -cJf "$OUT" --options 'xz:compression-level=6,xz:threads=4' -C "$W" tools 2>/dev/null || tar -cJf "$OUT" -C "$W" tools
+# No owner names (they would carry this Mac's account name) and no macOS metadata or ._ files in the archive.
+export COPYFILE_DISABLE=1; ANON=(--uid 0 --gid 0 --uname root --gname wheel --no-xattrs --no-mac-metadata)
+du -sh "$P"; XZ_OPT="-6 -T4" tar "${ANON[@]}" -cJf "$OUT" --options 'xz:compression-level=6,xz:threads=4' -C "$W" tools 2>/dev/null || tar "${ANON[@]}" -cJf "$OUT" -C "$W" tools
 ls -la "$OUT" | awk '{print $5" bytes"}'; shasum -a 256 "$OUT" | cut -c1-64
