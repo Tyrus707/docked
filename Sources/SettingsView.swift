@@ -4,14 +4,14 @@ struct SettingsSheet: View {
     @EnvironmentObject var model: Model
     @EnvironmentObject var builder: Builder
     @Environment(\.dismiss) var dismiss
-    enum Tab: String, CaseIterable { case general = "General", converting = "Converting", tools = "Setup" }
+    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", tools = "Setup" }
     @State private var tab = Tab.general
     private let phoneGames = xcodeGames()
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
-            Group { switch tab { case .general: general; case .converting: converting; case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
+            Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
             HStack { Button("How to Use Docked") { model.leaveSettings { model.showHelp = true } }; Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button) }
         }.padding(24).frame(width: 520).background(AllowQuit()).background(Backdrop())
     }
@@ -30,7 +30,8 @@ struct SettingsSheet: View {
     @ViewBuilder var converting: some View {
         VStack(spacing: 14) {
             line("Keys file", findKeys(model.keys).map { ($0 as NSString).lastPathComponent } ?? "Not chosen. Needed for .nsp, .xci, .nsz and .xcz games.") { Button(findKeys(model.keys) == nil ? "Choose…" : "Change…") { _ = model.pickKeys() } }
-            line("New games go to", model.destination.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) { Button("Change…") { if let u = model.pickFolder(model.destination) { model.destination = u } } }
+            if model.organized { line("New games go to", "The Switch folder in your library. Change it under Library.") { Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([model.consoleFolder("switch")]) } } }
+            else { line("New games go to", model.destination.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) { Button("Change…") { if let u = model.pickFolder(model.destination) { model.destination = u } } } }
             line("When a game is done", "You can change this for each game.") { Picker("When a game is done", selection: $model.after) { ForEach(After.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
             flip("Skip the pipeline step", "Faster to convert, slower to start the first time.", $model.quick)
             if !phoneGames.isEmpty { line("Games for iPhone and iPad", phoneGames.map(\.name).joined(separator: ", ")) { Button("Open Steps…") { model.leaveSettings { model.showXcode = true } } } }
@@ -53,7 +54,7 @@ struct SettingsSheet: View {
             if model.carriesEngine { engineRows }
             line("Setup guide", "One step at a time, from the beginning.") { Button("Open Guide…") { model.leaveSettings { model.recheck(); model.showGuide = true } } }
             line("Other consoles", RetroArch.installed ? "RetroArch \(RetroArch.installedVersion ?? "") is set up inside Docked." : "Docked sets up RetroArch the first time you add one of their games.") { Button("Consoles…") { model.leaveSettings { model.showConsoles = true } } }
-            line("Games folder", "") { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Paths.games]) } }
+            line("Docked's folder", "Its tools, RetroArch, covers and leftovers.") { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Paths.root]) } }
         }
     }
 }

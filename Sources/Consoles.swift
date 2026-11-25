@@ -79,12 +79,13 @@ func romID(_ url: URL, _ console: String) -> String {
 }
 
 // A disc's .bin files come with its .cue (and several .cue with an .m3u): only the one that stands for the game is kept.
+// Game files among what was chosen: folders are looked through, and files that are only part of another game are left out.
 func pickRoms(_ urls: [URL]) -> [URL] {
     let files = urls.flatMap { u -> [URL] in
         var d: ObjCBool = false
         guard FileManager.default.fileExists(atPath: u.path, isDirectory: &d) else { return [] }
-        guard d.boolValue else { return [u] }
-        return ((try? FileManager.default.contentsOfDirectory(at: u, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []).sorted { $0.path < $1.path }
+        guard d.boolValue, u.pathExtension.lowercased() != "app" else { return [u] }
+        return Discover.files(in: [u]).sorted { $0.path < $1.path }   // folders inside folders too, as emulators sort games by console
     }
     let listed = Set(files.filter { $0.pathExtension.lowercased() == "m3u" }.flatMap { m in
         ((try? String(contentsOf: m, encoding: .utf8)) ?? "").split(whereSeparator: \.isNewline).map { m.deletingLastPathComponent().appendingPathComponent(String($0)).standardizedFileURL.path }

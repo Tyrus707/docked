@@ -35,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             CommandGroup(after: .appInfo) { Button("Check for Updates…") { model.lookForUpdate() }.disabled(model.checkingUpdate) }
             CommandGroup(replacing: .newItem) {
                 Button("Add Game…") { model.pickGame() }.keyboardShortcut("o")
+                Button("Find Games on This Mac…") { model.findGames() }.keyboardShortcut("f", modifiers: [.command, .shift])
+                Button("Organize Library…") { model.planTidy() }.disabled(!model.organized)
                 Menu("Add Update or DLC") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.addTo(g) } } }.disabled(model.games.isEmpty)
                 Button("Clean Up…") { model.cleanUp(nil) }
                 Menu("Move Game to Folder") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.moveGame(g) } } }.disabled(model.games.isEmpty)
@@ -79,30 +81,32 @@ final class Model: ObservableObject {
     @Published var finding = Set<String>()
     var waitingLookUp: [String] = [], picks: [Picking] = []
 
-    // Games for other consoles are kept where they are; only their place is remembered.
+    // Games for other consoles, and converted games, chosen or dropped: looked through off the main thread, then brought in (Library.swift).
     func addRoms(_ urls: [URL]) {
-        var ask: [URL] = [], choices: [Console] = [], added = 0, last: Console?, new: [String] = []
-        for u in pickRoms(urls) {
-            let c = consolesFor(u)
-            if c.count == 1 { let id = romID(u, c[0].id); library.addRom(Rom(id: id, name: cleanName(u), console: c[0].id, path: u.path)); new.append(id); added += 1; last = c[0] }
-            else if c.count > 1 { ask.append(u); for x in c where !choices.contains(x) { choices.append(x) } }
+        filing = "Looking…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = Discover.look(urls, source: "Added", known: [])
+            DispatchQueue.main.async {
+                self.filing = nil
+                let ready = found.filter { if case .choose = $0.kind { return false }; return true }
+                let ask = found.compactMap { f -> (URL, [String])? in if case let .choose(c) = f.kind { return (f.url, c) }; return nil }
+                if !ready.isEmpty { self.bringIn(ready) }
+                if !ask.isEmpty { self.asking = (ask.map(\.0), consoles.filter { c in ask.contains { $0.1.contains(c.id) } }) }
+                else if ready.isEmpty { self.message = "Docked doesn't recognise that. It reads Switch games, games Docked converted, and game files for the consoles listed under Consoles in Settings." }
+            }
         }
-        if added > 0 { reload(); if let l = last { section = .console(l.id) }; getReady(pickRoms(urls).filter { consolesFor($0).count == 1 }); lookUpAdded(new) }
-        if !ask.isEmpty { asking = (ask, choices) }
-        else if added == 0 { message = "Docked doesn't recognise that file. It reads Switch games, and game files for the consoles listed under Consoles in Settings." }
     }
     func answer(_ c: Console) {
         let files = (asking?.files ?? []).filter { consolesFor($0).contains(c) }
-        let ids = files.map { romID($0, c.id) }
-        for (u, id) in zip(files, ids) { library.addRom(Rom(id: id, name: cleanName(u), console: c.id, path: u.path)) }
-        asking = nil; reload(); section = .console(c.id); getReady(files, as: c); lookUpAdded(ids)
+        asking = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.bringIn(files.map { Found(url: $0, name: cleanName($0), kind: .rom(c.id), source: "Added") }) }
     }
     // ---- RetroArch, set up inside Docked the first time a console's game is added ----
     @Published var retro: RetroWork?
     @Published var wantsBios: BiosAsk?
     private var settingUp: [(console: Console, then: (() -> Void)?)] = []
     // Right after adding: RetroArch and the core download in the background, and a BIOS is asked for at once.
-    private func getReady(_ files: [URL], as chosen: Console? = nil) {
+    func getReady(_ files: [URL], as chosen: Console? = nil) {
         var seen: [Console] = []
         for u in files { if let c = chosen ?? consolesFor(u).first, !c.native, !seen.contains(c) { seen.append(c); setUpRetro(c) } }
         if let u = files.first(where: { u in (chosen ?? consolesFor(u).first).map { RetroArch.missingBios($0, rom: u.path) != nil && !biosAsked($0) } ?? false }), let c = chosen ?? consolesFor(u).first { askBios(c) }
@@ -151,6 +155,7 @@ final class Model: ObservableObject {
         return kept.isEmpty ? problem : "Docked kept " + kept.joined(separator: " and ") + "."
     }
     func removeRom(_ g: Game) { library.removeRom(g.titleID); reload() }   // its file and its play time stay
+    func forget(_ g: Game) { if g.rom != nil { removeRom(g) } else { library.removeApp(g.url.path); reload() } }   // the same for a converted game; its file stays
     func retitle(_ g: Game, _ n: String) {
         let t = String(n.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)); guard !t.isEmpty, let i = library.roms.firstIndex(where: { $0.id == g.titleID }) else { return }
         library.roms[i].name = t; reload()
@@ -168,7 +173,7 @@ final class Model: ObservableObject {
     func forgetArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers[g.id] = nil; reload() }
     // Dropped on a game: a picture becomes its cover, sound its theme, anything else is added as usual.
     func dropped(_ urls: [URL], on g: Game) { if urls.count == 1, pictureTypes.contains(urls[0].pathExtension.lowercased()) { setArt(g, urls[0]) } else if urls.count == 1, soundTypes.contains(urls[0].pathExtension.lowercased()) { setTheme(g, urls[0]) } else { add(urls) } }
-    private var covers: [String: NSImage] = [:]
+    var covers: [String: NSImage] = [:]
     private var making = Set<String>()
     @Published private var coverTick = 0
     // Made in the background the first time it is wanted; the tile waits with a plain one.
@@ -254,12 +259,27 @@ final class Model: ObservableObject {
         AppDelegate.moving = { [weak self] in self?.moving != nil }
         AppDelegate.waiting = { [weak self] in self?.queue.waiting.count ?? 0 }
         builder.onFinish = { [weak self] in self?.finished() }
-        DispatchQueue.global(qos: .utility).async { finishRemovals(); Engine.tidy() }
+        let hide = organized
+        DispatchQueue.global(qos: .utility).async { finishRemovals(); Engine.tidy(); if hide { Organize.hideBuildFolders() } }
         reload(); trackPlay(); recheck(first: true)
     }
 
+    // ---- the library folder: one folder per console (Organize.swift, Library.swift) ----
+    @Published var libraryFolder = UserDefaults.standard.string(forKey: "libraryFolder").map { URL(fileURLWithPath: Paths.now($0)) } ?? Paths.games { didSet { UserDefaults.standard.set(libraryFolder.path, forKey: "libraryFolder"); reload() } }
+    @Published var organized = UserDefaults.standard.object(forKey: "organized") as? Bool ?? true { didSet { UserDefaults.standard.set(organized, forKey: "organized") } }
+    @Published var addMode = AddMode(rawValue: UserDefaults.standard.string(forKey: "addMode") ?? "") { didSet { UserDefaults.standard.set(addMode?.rawValue, forKey: "addMode") } }   // nil: ask each time
+    @Published var naming = Naming(rawValue: UserDefaults.standard.string(forKey: "naming") ?? "") ?? .game { didSet { UserDefaults.standard.set(naming.rawValue, forKey: "naming") } }
+    @Published var watched = UserDefaults.standard.stringArray(forKey: "watchedFolders") ?? [] { didSet { UserDefaults.standard.set(watched, forKey: "watchedFolders") } }
+    @Published var importing: Importing?
+    @Published var tidying: [Tidy]?
+    @Published var askingMode: PendingAdd?
+    @Published var filing: String?
+    @Published var newlyAdded: String?
+    @Published var missingGame: Game?
+    var lastWatch = Date.distantPast, skipped = Set<String>()
+
     // Folders games have been saved to, besides Docked's own, so the library still shows them.
-    private var folders: [String] {
+    var folders: [String] {
         get { (UserDefaults.standard.stringArray(forKey: "gameFolders") ?? []).map { Paths.now($0) } }
         set { UserDefaults.standard.set(newValue, forKey: "gameFolders") }
     }
@@ -279,7 +299,7 @@ final class Model: ObservableObject {
     @Published var converting = false   // kept apart from the builder, whose every progress report would redraw the library
     var arrivingIcon: NSImage? { builder.titleID.flatMap { id in games.first { $0.titleID.uppercased() == id } }.map { icon($0) } }
     @Published var offers: [Game] = []   // just finished: what is left over can go
-    private var icons: [String: NSImage] = [:]
+    var icons: [String: NSImage] = [:]
 
     func icon(_ g: Game) -> NSImage {
         if let i = icons[g.id] { return i }
@@ -391,12 +411,16 @@ final class Model: ObservableObject {
         }
     }
 
+    // Every game Docked knows: converted games in its folders and wherever they were added from, games for other consoles where they are kept.
+    // One that can't be found stays, marked missing, so a drive that is unplugged takes nothing out of the library.
     func reload() {
-        var seen = Set<String>()
-        games = ([Paths.games] + folders.map { URL(fileURLWithPath: $0) }).flatMap { scanLibrary($0) }.filter { seen.insert($0.id).inserted }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        games += library.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0) }
-        library.meet(games); offers = offers.filter { o in games.contains { $0.id == o.id } }; if let s = selected, !games.contains(where: { $0.id == s }) { selected = nil }
+        var seen = Set<String>(), l = library
+        let dirs = ([Paths.games, libraryFolder] + folders.map { URL(fileURLWithPath: $0) }).flatMap(libraryFolders)
+        var found = (dirs.flatMap { scanLibrary($0) } + l.apps.keys.compactMap { p in seen.contains(p) ? nil : gameAt(URL(fileURLWithPath: p)) }).filter { seen.insert($0.id).inserted && !l.removed.contains($0.url.path) }
+        found += l.settle(found: found)
+        games = found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        games += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !FileManager.default.fileExists(atPath: $0.path)) }
+        l.meet(games); if l != library { library = l }; offers = offers.filter { o in games.contains { $0.id == o.id } }; if let s = selected, !games.contains(where: { $0.id == s }) { selected = nil }
     }
 
     private func finished() {
@@ -456,7 +480,7 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     @Published var guided = UserDefaults.standard.bool(forKey: "guided") { didSet { UserDefaults.standard.set(guided, forKey: "guided") } }
@@ -517,7 +541,7 @@ final class Model: ObservableObject {
 
     // A game already converted is replaced where it is; a new one goes where the last one was saved.
     private func setReviewPlace() {
-        let own = existing.map { $0.url.deletingLastPathComponent() } ?? destination
+        let own = existing.map { $0.url.deletingLastPathComponent() } ?? (organized ? consoleFolder(review.family.map(consoleOf) ?? "switch") : destination)
         reviewPlace = placeProblem(own) == nil ? own : Paths.games
     }
 
@@ -604,7 +628,7 @@ final class Model: ObservableObject {
             let kept = Set(review.family.map { keptFiles($0).map(\.path) } ?? []), before = review.family.flatMap { sources[$0] } ?? []
             let now = review.parts.filter { !kept.contains($0.url.path) && packageTypes.union(["nup"]).contains($0.url.pathExtension.lowercased()) }.map { SourceFile(path: $0.url.path, size: $0.bytes) }
             let job = Job(title: existing?.name ?? jobTitle, family: review.family, parts: parts.map(\.path), place: reviewPlace.path, quick: quick, after: forXcode ? .ask : after, bytes: parts.reduce(0) { $0 + folderSize($1) }, needsKeys: packages, sources: before.filter { b in !now.contains { $0.path == b.path } } + now, target: target, viaXcode: forXcode ? true : nil)
-            if existing == nil { destination = reviewPlace }
+            if existing == nil, !organized { destination = reviewPlace }
             let idle = queue.current == nil && queue.waiting.isEmpty
             // With nothing ahead of it, a problem is said here and now; otherwise it is checked again when its turn comes.
             if idle, !builder.running { switch verdict(job) { case let .no(why): reviewNote = why; return false; case .wait where existing.map(isOpen) == true: reviewNote = "Save and quit \(existing!.name) first."; return false; default: break } }
@@ -763,7 +787,10 @@ final class Model: ObservableObject {
     // Once, when the window first appears. A failed look says nothing: being offline is not a problem worth a message.
     func windowAppeared() {
         guard !launched else { return }; launched = true
-        for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate() } } }
+        for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched() } } }
+        // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
+        for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers = [:]; self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
+        lookInWatched(force: true)
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
         // Fills the screen the way the green button does with Option held: still a window on the desktop, no Space of its own. Control-Command-F still gives true full screen.
         else if fullScreen { DispatchQueue.main.async { if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }), !w.styleMask.contains(.fullScreen), let s = w.screen ?? NSScreen.main { w.setFrame(s.visibleFrame, display: true) } } }
@@ -785,6 +812,7 @@ final class Model: ObservableObject {
 
     func play(_ g: Game, settings: Bool = false) {
         theme.stop(0.3)
+        if g.missing { missingGame = g; return }
         if let r = g.rom { playRom(g, r); return }
         if isRunning(g), let a = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.path == g.url.path }) { a.activate(); return }
         if let why = g.cannot { message = "\(g.name) cannot run here. \(why)."; return }
@@ -796,7 +824,7 @@ final class Model: ObservableObject {
     }
 
     func trash(_ u: URL) {
-        do { try FileManager.default.trashItem(at: u, resultingItemURL: nil) } catch { message = error.localizedDescription }
+        do { try FileManager.default.trashItem(at: u, resultingItemURL: nil); library.removeApp(u.path) } catch { message = error.localizedDescription }
         reload()
     }
 }
@@ -818,6 +846,8 @@ struct ContentView: View {
             }
             if let w = model.retro { Divider(); HStack { if let f = w.fraction { ProgressView(value: f).frame(width: 140).tint(style.accent).accessibilityLabel("Download progress") } else { ProgressView().controlSize(.small) }; Text(w.what).foregroundStyle(style.text); Spacer() }.padding(16) }
             if let m = model.moving { Divider(); HStack { ProgressView().controlSize(.small); Text("Moving \(m)…"); Spacer() }.padding(16) }
+            if let f = model.filing { Divider(); HStack { ProgressView().controlSize(.small); Text(f).foregroundStyle(style.text); Spacer() }.padding(16) }
+            if let n = model.newlyAdded { Divider(); HStack { Image(systemName: "tray.and.arrow.down").foregroundStyle(style.accent).accessibilityHidden(true); Text(n).foregroundStyle(style.text); Spacer(); Button("Show") { model.section = .all; model.sort = .added; model.newlyAdded = nil }; Button("OK") { model.newlyAdded = nil } }.padding(.horizontal, 16).padding(.vertical, 10) }
             if model.update == nil, let e = model.engine { Divider(); HStack { Image(systemName: "gearshape.2").foregroundStyle(style.accent).accessibilityHidden(true); VStack(alignment: .leading, spacing: 2) { Text("A newer conversion engine is ready").foregroundStyle(style.text); Text(e.summary.isEmpty ? "From \(e.when.map(engineDay) ?? e.date)." : e.summary).font(.callout).foregroundStyle(style.soft).lineLimit(2) }; Spacer(); if model.engineBusy { ProgressView().controlSize(.small); Text("Updating the engine…").foregroundStyle(style.soft) } else { Button("Update Engine") { model.installEngine() }; Button("Later") { model.engine = nil } } }.padding(.horizontal, 16).padding(.vertical, 10) }
             if let v = model.update { Divider(); HStack { Image(systemName: "arrow.down.circle").foregroundStyle(style.accent).accessibilityHidden(true); Text("Docked \(v) is available. You have \(appVersion).").foregroundStyle(style.text); Spacer(); if model.updating { ProgressView().controlSize(.small); Text("Updating…").foregroundStyle(style.soft) } else { Button("Update and Reopen") { model.installUpdate(v) }; Button("What's New") { NSWorkspace.shared.open(releasePage) }; Button("Later") { model.update = nil } } }.padding(.horizontal, 16).padding(.vertical, 10) }
             if let n = model.xcodeReady.first { Divider(); HStack { VStack(alignment: .leading, spacing: 2) { Text("\(n) is ready for Xcode").font(.headline); Text("Xcode signs it with your Apple account and puts it on your iPhone or iPad.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }; Spacer(); Button("Show Steps") { model.showXcode = true }; Button("Dismiss") { model.xcodeReady.removeFirst() } }.padding(16) }
@@ -844,6 +874,12 @@ struct ContentView: View {
         .sheet(isPresented: $model.showXcode) { XcodeStepsView() }
         .sheet(isPresented: $model.showConsoles) { ConsolesView() }
         .sheet(item: $model.wantsBios) { BiosView(ask: $0) }
+        .sheet(isPresented: .init(get: { model.importing != nil }, set: { if !$0 { model.importing = nil } })) { ImportView() }
+        .sheet(isPresented: .init(get: { model.tidying != nil }, set: { if !$0 { model.tidying = nil } })) { TidyView() }
+        .sheet(item: $model.askingMode) { AddModeView(pending: $0) }
+        .alert(model.missingGame.map { "\($0.name) can't be found" } ?? "", isPresented: .init(get: { model.missingGame != nil }, set: { if !$0 { model.missingGame = nil } }), presenting: model.missingGame) { g in
+            Button("Locate…") { model.locate(g) }; Button("Remove from Library") { model.forget(g) }; Button("Cancel", role: .cancel) {}
+        } message: { g in Text(drive(of: g.url.path).map { !$0.connected ? "It's on \($0.name). Connect the drive and it plays as before." : "It was in \($0.name), but isn't there now. If you moved it, show Docked where it is." } ?? "It was in \(FileManager.default.displayName(atPath: g.url.deletingLastPathComponent().path)), but isn't there now. If you moved it, show Docked where it is.") }
         .confirmationDialog("Which console is \(model.asking?.files.first.map { cleanName($0) } ?? "this")\((model.asking?.files.count ?? 1) > 1 ? " and the others" : "") for?", isPresented: .init(get: { model.asking != nil }, set: { if !$0 { model.asking = nil } })) { ForEach(model.asking?.choices ?? []) { c in Button(c.name) { model.answer(c) } } }
         .alert("Rename Game", isPresented: .init(get: { model.retitling != nil }, set: { if !$0 { model.retitling = nil } })) { TextField("Name", text: $newName); Button("Rename") { if let g = model.retitling { model.retitle(g, newName) }; newName = "" }; Button("Cancel", role: .cancel) { newName = "" } }
         .alert("Find covers and details for your games?", isPresented: .init(get: { model.askLookUp && model.wantsBios == nil }, set: { if !$0 { model.askLookUp = false } })) { Button("Find Them") { model.allowLookUp(true) }; Button("Not Now", role: .cancel) { model.allowLookUp(false) } } message: { Text(Lookup.consent) }
@@ -871,6 +907,7 @@ struct ContentView: View {
                     card("wand.and.stars", "Add a Switch game", "Converted once, in 10 to 60 minutes. Then it runs like any Mac app.", "Add Game…") { model.pickGame() }
                 }
                 card("gamecontroller", "Add other consoles", RetroArch.installed ? "Ready to play right away, in RetroArch." : "They play in RetroArch, free. Docked sets it up inside itself the first time.", "Add Games…") { model.pickGame() }
+                card("magnifyingglass", "Bring in games you have", "Converted games, and games in OpenEmu, RetroArch, Ryujinx or on a drive.", "Find Games…") { model.findGames() }
             }.fixedSize(horizontal: false, vertical: true)
             if let why = cannotConvert() { Text(why).font(.callout).foregroundStyle(style.soft).multilineTextAlignment(.center).frame(maxWidth: 480) }
             Button("How to Use Docked") { model.showHelp = true }.buttonStyle(.plain).foregroundStyle(style.accent)

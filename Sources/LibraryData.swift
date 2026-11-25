@@ -49,6 +49,8 @@ struct LibraryData: Codable, Equatable {
     var collections: [String] = []
     var roms: [Rom] = []
     var smart: [SmartCollection] = []
+    var apps: [String: String] = [:]   // every converted game's place, to its title ID, so one that goes missing stays in the library
+    var removed: [String] = []         // games taken out of the library by hand, which a watched folder must not bring back
 
     init() {}
     // A library saved by an earlier version has no emulated games yet.
@@ -58,13 +60,32 @@ struct LibraryData: Codable, Equatable {
         collections = try c.decodeIfPresent([String].self, forKey: .collections) ?? []
         roms = try c.decodeIfPresent([Rom].self, forKey: .roms) ?? []
         smart = (try? c.decodeIfPresent([SmartCollection].self, forKey: .smart)) ?? []
+        apps = (try? c.decodeIfPresent([String: String].self, forKey: .apps)) ?? [:]
+        removed = (try? c.decodeIfPresent([String].self, forKey: .removed)) ?? []
     }
 
     // The same game again, or moved, updates where it is.
     mutating func addRom(_ r: Rom) {
+        removed.removeAll { $0 == r.path }
         if let i = roms.firstIndex(where: { $0.id == r.id }) { roms[i].path = r.path } else { roms.append(r) }
     }
-    mutating func removeRom(_ id: String) { roms.removeAll { $0.id == id } }
+    mutating func removeRom(_ id: String) { for r in roms where r.id == id { forget(r.path) }; roms.removeAll { $0.id == id } }
+    mutating func addApp(_ path: String, _ titleID: String) { removed.removeAll { $0 == path }; apps[path] = titleID.uppercased() }
+    mutating func removeApp(_ path: String) { if apps.removeValue(forKey: path) != nil { forget(path) } }
+    private mutating func forget(_ path: String) { if !removed.contains(path) { removed.append(path); if removed.count > 5000 { removed.removeFirst(removed.count - 5000) } } }
+
+    // The converted games found now, and the ones known before that can't be found. One found somewhere else has moved, and its old place is dropped.
+    mutating func settle(found: [Game], exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [Game] {
+        for g in found { apps[g.url.path] = g.titleID.uppercased() }
+        let here = Set(found.map { $0.titleID.uppercased() }), paths = Set(found.map(\.url.path))
+        var gone: [Game] = []
+        for (p, id) in apps where !paths.contains(p) {
+            if exists(p) { continue }   // read again next time
+            if here.contains(id) { apps[p] = nil; continue }
+            gone.append(Game(url: URL(fileURLWithPath: p), name: URL(fileURLWithPath: p).deletingPathExtension().lastPathComponent, titleID: id, needs: gameMinimum, missing: true))
+        }
+        return gone.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
 
     func entry(_ id: String) -> Entry { entries[id.uppercased()] ?? Entry(added: .distantPast) }
 

@@ -208,16 +208,26 @@ struct Game: Identifiable, Equatable {
     var version = ""
     var rom: Rom?
     var needs = ""   // the macOS a converted game asks for
-    var cannot: String? { rom == nil ? cannotPlay(needs: needs) : nil }
+    var missing = false   // its file is gone, or on a drive that isn't connected
+    var cannot: String? { missing ? whereMissing(url.path) : rom == nil ? cannotPlay(needs: needs) : nil }
+}
+
+// A converted game, read from its app
+func gameAt(_ u: URL) -> Game? {
+    guard u.pathExtension == "app", let p = NSDictionary(contentsOf: u.appendingPathComponent("Contents/Info.plist")), let tid = p["DMTitleID"] as? String else { return nil }
+    return Game(url: u, name: p["CFBundleName"] as? String ?? u.deletingPathExtension().lastPathComponent, titleID: tid, version: p["CFBundleShortVersionString"] as? String ?? "", needs: p["LSMinimumSystemVersion"] as? String ?? gameMinimum)
 }
 
 func scanLibrary(_ dir: URL = Paths.games) -> [Game] {
     let items = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-    return items.compactMap { u in
-        guard u.pathExtension == "app", let p = NSDictionary(contentsOf: u.appendingPathComponent("Contents/Info.plist")),
-              let tid = p["DMTitleID"] as? String else { return nil }
-        return Game(url: u, name: p["CFBundleName"] as? String ?? u.deletingPathExtension().lastPathComponent, titleID: tid, version: p["CFBundleShortVersionString"] as? String ?? "", needs: p["LSMinimumSystemVersion"] as? String ?? gameMinimum)
-    }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    return items.compactMap(gameAt).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+}
+
+// A library folder and the console folders in it
+func libraryFolders(_ dir: URL) -> [URL] {
+    let subs = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)) ?? [])
+        .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true && $0.pathExtension.lowercased() != "app" && !$0.lastPathComponent.hasSuffix("_build") }
+    return [dir] + subs
 }
 
 // A profile in the engine's repository means someone tested the game; without one the build is a best guess.

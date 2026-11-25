@@ -190,11 +190,11 @@ struct Tile: View {
     var row = ""
     var body: some View {
         let e = model.library.entry(game.titleID)
-        let note = model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
+        let note = game.missing ? whereMissing(game.url.path) : model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
         Group {
             if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
             else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
-        }.onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
+        }.opacity(game.missing ? 0.5 : 1).onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
     }
 }
 
@@ -204,7 +204,8 @@ struct GameActions: View {
     @Binding var deleting: Game?
     var body: some View {
         let e = model.library.entry(game.titleID)
-        Button("Play") { model.play(game) }
+        if game.missing { Button("Locate…") { model.locate(game) }; Button("Remove from Library") { model.forget(game) }; Divider() }
+        Button("Play") { model.play(game) }.disabled(game.missing)
         if game.rom == nil { Button("Play with Settings…") { model.play(game, settings: true) } }
         Divider()
         Button(e.favorite ? "Remove from Favorites" : "Favorite") { model.edit(game) { $0.favorite.toggle() } }
@@ -218,9 +219,11 @@ struct GameActions: View {
         if game.rom == nil { Button("Add Update or DLC…") { model.addTo(game) }; Button("Move to Folder…") { model.moveGame(game) } }
         else { Button("Rename…") { model.retitling = game }; if let r = game.rom { Button(r.info == nil ? "Find Cover and Details…" : "Find Details Again…") { model.find(r.id, byHand: true) }.disabled(model.finding.contains(r.id)) } }
         Button("Choose Cover…") { model.pickArt(game) }; if model.hasArt(game) { Button("Use Original Cover") { model.clearArt(game) } }
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) }
-        Divider()
-        if game.rom == nil { Button("Clean Up…") { model.cleanUp(game) }; Button("Move Game to Trash…") { deleting = game } }
-        else { Button("Remove from Library") { model.removeRom(game) } }
+        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) }.disabled(game.missing)
+        if !game.missing {
+            Divider()
+            if game.rom == nil { Button("Clean Up…") { model.cleanUp(game) }; if !model.inLibrary(game.url) { Button("Remove from Library") { model.forget(game) } }; Button("Move Game to Trash…") { deleting = game } }
+            else { Button("Remove from Library") { model.removeRom(game) } }
+        }
     }
 }
