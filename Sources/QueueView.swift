@@ -2,12 +2,12 @@ import SwiftUI
 
 struct CleanItem: Identifiable {
     enum Kind { case leftovers(Leftovers), originals(Originals), keys(String) }
-    let id = UUID(); var kind: Kind, game: Game? = nil, name: String, bytes: Int64, on: Bool, blocked: String? = nil
+    let id = UUID(); var kind: Kind, game: Game? = nil, name: String, bytes: Int64, on: Bool, blocked: String? = nil, xcode = false
     var title: String { switch kind { case .leftovers: return "Conversion leftovers"; case .originals: return "Original game files"; case .keys: return "Your keys file, \(name)" } }
     var detail: String {
         if let b = blocked { return b }
         switch kind {
-        case .leftovers: return game == nil ? "From a game that is no longer in Docked. Deleted for good." : "Made while converting. Deleted for good. Adding an update later takes the full time."
+        case .leftovers: return xcode ? "Xcode needs these to install this game on an iPhone or iPad. Deleted for good." : game == nil ? "From a game that is no longer in Docked. Deleted for good." : "Made while converting. Deleted for good. Adding an update later takes the full time."
         case let .originals(o): return (o.files.isEmpty ? o.links : o.files).prefix(3).map(\.lastPathComponent).joined(separator: ", ") + ((o.files.isEmpty ? o.links : o.files).count > 3 ? " and more" : "") + ". To the Trash. You need these to convert again or add an update."
         case .keys: return "To the Trash. You need it to convert .nsp and .xci games. Keep a copy somewhere."
         }
@@ -79,7 +79,7 @@ struct QueueBar: View {
                                 HStack {
                                     Text("\(n + 1)").font(.callout.monospacedDigit()).foregroundStyle(.secondary).frame(width: 18)
                                     Text(j.title).lineLimit(1); Spacer()
-                                    Text(shortTime(builder.whole(quick: j.quick))).font(.caption).foregroundStyle(.secondary)
+                                    Text(shortTime(builder.whole(quick: j.quick, phone: j.phone, xcode: j.xcode))).font(.caption).foregroundStyle(.secondary)
                                     Button { model.queue.up(j.id) } label: { Image(systemName: "arrow.up") }.buttonStyle(.plain).disabled(n == 0).accessibilityLabel("Move \(j.title) up")
                                     Button { model.queue.remove(j.id) } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Remove \(j.title) from the queue")
                                 }

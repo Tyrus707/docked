@@ -18,23 +18,24 @@ final class Builder: ObservableObject {
 
     var started = Date(), stageStarted = Date()
     private var estimator = Estimator.load(), times: [(String, Double)] = [], etaAt = Date()
-    private(set) var skipsPipeline = false
+    private(set) var skipsPipeline = false, forPhone = false, forXcode = false
     @Published var parts: (done: Int, total: Int)?   // the pipeline step's own progress
-    private var work: URL?, watch: DispatchSourceTimer?, partsAt: (count: Int, at: Date)?
+    private(set) var work: URL?
+    private var watch: DispatchSourceTimer?, partsAt: (count: Int, at: Date)?
     private var proc: Process?
     private var activity: NSObjectProtocol?
     private(set) var failedAt = ""
     private var lastRed = "", stderrTail = "", cancelled = false
 
-    func start(_ input: BuildInput, keys: String?, quick: Bool = false) {
-        skipsPipeline = quick; work = Paths.games.appendingPathComponent(input.key + "_build")
-        launch(exe: Paths.python.path, args: buildArguments(input, keys: keys, quick: quick), title: input.title)
+    func start(_ input: BuildInput, keys: String?, quick: Bool = false, phone: URL? = nil, xcode: XcodeBuild? = nil) {
+        skipsPipeline = quick; forPhone = phone != nil || xcode != nil; forXcode = xcode != nil; work = Paths.games.appendingPathComponent(input.key + "_build")
+        launch(exe: Paths.python.path, args: buildArguments(input, keys: keys, quick: quick, phone: phone, xcode: xcode), title: input.title)
     }
 
     func launch(exe: String, args: [String], title: String) {
         guard !running else { return }
         self.title = title; stage = "Starting"; stageIndex = 0; stageCount = 0; frac = nil; eta = nil; tested = nil
-        started = Date(); stageStarted = started; estimator = Estimator.load(); times = []; stepOpen = nil; titleID = nil; output = nil
+        shownSoFar = 0; started = Date(); stageStarted = started; estimator = Estimator.load(); times = []; stepOpen = nil; titleID = nil; output = nil
         log = []; error = nil; lastRed = ""; stderrTail = ""; cancelled = false
         try? FileManager.default.createDirectory(at: Paths.games, withIntermediateDirectories: true)
         let p = Process(), out = Pipe(), err = Pipe()
@@ -116,11 +117,18 @@ final class Builder: ObservableObject {
     // The engine's own figure counts down between its reports.
     func remaining(_ now: Date = Date()) -> Double? {
         guard running else { return nil }
-        return estimator.remaining(step: stageCount > 0 ? stage : "", elapsed: now.timeIntervalSince(stageStarted), engineETA: eta.map { max(0, $0 - now.timeIntervalSince(etaAt)) }, quick: skipsPipeline, pipelineLeft: pipelineLeft(now))
+        return estimator.remaining(step: stageCount > 0 ? stage : "", elapsed: now.timeIntervalSince(stageStarted), engineETA: eta.map { max(0, $0 - now.timeIntervalSince(etaAt)) }, quick: skipsPipeline, pipelineLeft: pipelineLeft(now), phone: forPhone, xcode: forXcode)
     }
 
     var report: String { let v = ProcessInfo.processInfo.operatingSystemVersion; return makeReport(title: titleID.map { "\(title) [\($0)]" } ?? title, step: failedAt, error: error ?? "", log: log, version: appVersion, os: "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)", chip: chipName(), space: freeSpace()) }
-    func whole(quick: Bool) -> Double { estimator.whole(quick: quick) }
+    // The whole conversion, 0 to 1. Estimates get better as it goes, so it may pause, but it never runs backwards.
+    private var shownSoFar = 0.0
+    func overall(_ now: Date = Date()) -> Double {
+        guard running, let left = remaining(now) else { return shownSoFar }
+        let gone = max(0, now.timeIntervalSince(started)), f = gone + left > 0 ? gone / (gone + left) : 0
+        shownSoFar = min(0.99, max(shownSoFar, f)); return shownSoFar
+    }
+    func whole(quick: Bool, phone: Bool = false, xcode: Bool = false) -> Double { estimator.whole(quick: quick, phone: phone, xcode: xcode) }
     private func add(_ s: String) { log.append(s); if log.count > 300 { log.removeFirst(log.count - 200) } }
 
     private func finished(_ code: Int32) {

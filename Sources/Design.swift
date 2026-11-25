@@ -97,10 +97,7 @@ struct ArrivingTile: View {
     @EnvironmentObject var model: Model
     private var known: NSImage? { model.arrivingIcon }
 
-    var level: Double {
-        guard builder.stageCount > 0 else { return 0.03 }
-        return min(1, max(0.03, (Double(builder.stageIndex - 1) + (builder.frac ?? 0)) / Double(builder.stageCount)))
-    }
+    var level: Double { max(0.03, builder.overall()) }
 
     var body: some View {
         VStack(spacing: 8) {

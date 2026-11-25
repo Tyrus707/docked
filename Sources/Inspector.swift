@@ -29,8 +29,18 @@ struct Inspector: View {
                         fact("Size", model.size(game).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Measuring…"); if let r = game.rom { fact("Plays in", RetroArch.core(console(r.console) ?? consoles[0]) == nil ? "RetroArch, core needed" : "RetroArch") }
                         fact("In", FileManager.default.displayName(atPath: game.url.deletingLastPathComponent().path)); if !e.collections.isEmpty { fact("Collections", e.collections.joined(separator: ", ")) }
                     }.padding(12).background(style.tile, in: RoundedRectangle(cornerRadius: 10))
+                    if game.rom == nil, FileManager.default.fileExists(atPath: GameNotes.file(game.titleID).path) {
+                        let notes = model.notes(game)
+                        VStack(alignment: .leading, spacing: 7) {
+                            if !notes.isEmpty { Text("Known issues").font(.callout.weight(.semibold)).foregroundStyle(style.text).accessibilityAddTraits(.isHeader); ForEach(notes, id: \.self) { n in HStack(alignment: .firstTextBaseline, spacing: 7) { Circle().fill(style.accent).frame(width: 4, height: 4).offset(y: -3).accessibilityHidden(true); Text(n).font(.caption).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) } } }
+                            Button(notes.isEmpty ? "Engine notes for this game" : "All engine notes") { NSWorkspace.shared.open(GameNotes.page(game.titleID)) }.buttonStyle(.plain).font(.caption).foregroundStyle(style.accent)
+                        }
+                    }
                     VStack(alignment: .leading, spacing: 6) {
                         link("Choose Cover…", "photo") { model.pickArt(game) }
+                        if model.addingTheme { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Adding music…").font(.callout).foregroundStyle(style.soft) } }
+                        else if model.hasTheme(game) { link("Change Theme Music…", "music.note") { model.pickTheme(game) }; link("Remove Theme Music", "minus.circle") { model.clearTheme(game) }; link(model.themes ? "Turn Theme Music Off" : "Turn Theme Music On", model.themes ? "speaker.slash" : "speaker.wave.2") { model.themes.toggle() } }
+                        else { link("Choose Theme Music…", "music.note") { model.pickTheme(game) } }
                         if game.rom == nil { link("Play with Settings…", "slider.horizontal.3") { model.play(game, settings: true) }; link("Add Update or DLC…", "plus.square.on.square") { model.addTo(game) }; link("Clean Up…", "sparkles") { model.cleanUp(game) } }
                         link("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) }
                     }
@@ -41,4 +51,3 @@ struct Inspector: View {
     func fact(_ a: String, _ b: String) -> some View { HStack(alignment: .firstTextBaseline) { Text(a).foregroundStyle(style.soft); Spacer(minLength: 12); Text(b).foregroundStyle(style.text).multilineTextAlignment(.trailing) }.font(.callout).accessibilityElement(children: .combine) }
     func link(_ t: String, _ s: String, _ f: @escaping () -> Void) -> some View { Button(action: f) { Label(t, systemImage: s).font(.callout).foregroundStyle(style.accent).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain) }
 }
-extension String { var firstCapital: String { prefix(1).uppercased() + dropFirst() } }

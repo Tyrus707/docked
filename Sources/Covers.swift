@@ -74,6 +74,7 @@ struct Carousel: View {
             ScrollViewReader { p in
                 ScrollView(.horizontal, showsIndicators: false) { LazyHStack(spacing: 12) { ForEach(games) { g in Hero(game: g).frame(width: w).id(g.id) } }.paged() }
                     .pagedScroll($at)
+                    .whenChanged(model.cursor) { if let k = model.cursor, k.row == "recent", let i = games.firstIndex(where: { $0.id == k.game }) { go(i, p) } }
                     .overlay(alignment: .leading) { if over, index > 0 { arrow("chevron.left", "Previous game") { go(index - 1, p) }.padding(.leading, 10) } }
                     .overlay(alignment: .trailing) { if over, index < games.count - 1 { arrow("chevron.right", "Next game") { go(index + 1, p) }.padding(.trailing, 10) } }
                     .overlay(alignment: .bottom) { if games.count > 1 { HStack(spacing: 7) { ForEach(Array(games.enumerated()), id: \.element.id) { n, g in Button { go(n, p) } label: { Capsule().fill(.white.opacity(n == index ? 0.95 : 0.42)).frame(width: n == index ? 18 : 7, height: 7).padding(.vertical, 6).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel("Show \(g.name)") } }.animation(still ? nil : .easeOut(duration: 0.2), value: index).padding(.bottom, 4) } }

@@ -144,10 +144,12 @@ func resolveInput(_ urls: [URL], family: String? = nil, inputsRoot: URL = Paths.
     return BuildInput(path: stage, key: key, title: title, needsKeys: true, bytes: bytes)
 }
 
-func buildArguments(_ input: BuildInput, keys: String?, quick: Bool = false) -> [String] {
-    var a = ["-u", Paths.script.path, input.path.path, "--platform", "mac-app", "--progress", "json",
+func buildArguments(_ input: BuildInput, keys: String?, quick: Bool = false, phone out: URL? = nil, xcode: XcodeBuild? = nil) -> [String] {
+    var a = ["-u", Paths.script.path, input.path.path, "--platform", out == nil && xcode == nil ? "mac-app" : "ios", "--progress", "json",
              "--work-dir", Paths.games.appendingPathComponent(input.key + "_build").path]
     if input.needsKeys, let keys { a += ["-k", keys] }
+    if let x = xcode { a += ["--prepare-xcode", "--xcode-workspace", x.workspace.path]; if let b = x.bundle { a += ["--bundle-id", b] }; if quick { a += ["--gpu", "none"] }; return a }
+    if let out { a += ["-o", out.path]; if quick { a += ["--gpu", "none"] }; return a }
     if quick { a += ["--gpu", "none", "--no-prebake"] }   // the game builds its pipelines itself, on first start
     return a
 }
@@ -234,7 +236,7 @@ struct MacKind { var version: [Int]; var appleChip: Bool
     func atLeast(_ need: String) -> Bool { let n = need.split(separator: ".").map { Int($0) ?? 0 }; for i in 0..<max(n.count, version.count) { let a = i < version.count ? version[i] : 0, b = i < n.count ? n[i] : 0; if a != b { return a > b } }; return true }
 }
 let gameMinimum = "26.6"      // what the engine's games and Xcode 27.2 both need
-var toolsMinimum: String { Bundle.main.object(forInfoDictionaryKey: "DSToolsMinimum") as? String ?? gameMinimum }   // what the carried tools were built for
+var toolsMinimum: String { if Paths.unpacked { return (try? String(contentsOf: Paths.tools.appendingPathComponent(".tools-minimum"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "27.0" }; return Bundle.main.object(forInfoDictionaryKey: "DSToolsMinimum") as? String ?? gameMinimum }   // what the carried tools were built for
 func laterOf(_ a: String, _ b: String) -> String { MacKind(version: a.split(separator: ".").map { Int($0) ?? 0 }, appleChip: true).atLeast(b) ? a : b }
 func cannotConvert(_ m: MacKind = .this, tools: String = toolsMinimum) -> String? {
     if !m.appleChip { return "Converting Switch games needs a Mac with an Apple chip (M1 or later). Games for other consoles work here." }

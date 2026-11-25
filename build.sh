@@ -13,6 +13,7 @@ if [ -n "$PAYLOAD" ]; then
   plutil -insert DSPayloadSHA256 -string "$(shasum -a 256 "$PAYLOAD" | cut -c1-64)" "$APP/Contents/Info.plist"
   # What the carried tools were really built for decides where converting works; the rest of Docked goes further back.
   M=$(xz -dc "$PAYLOAD" | tar -xOf - tools/.tools-minimum 2>/dev/null || echo 27.0); plutil -insert DSToolsMinimum -string "$M" "$APP/Contents/Info.plist"
+elif [ "${SLIM:-}" = 1 ]; then cp setup.sh "$APP/Contents/Resources/"   # an update for a Mac that already has the tools
 else cp setup.sh "$APP/Contents/Resources/"; fi
 codesign --force --sign - "$APP"
 du -sh "$APP"

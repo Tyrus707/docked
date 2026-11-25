@@ -8,6 +8,10 @@ enum After: String, Codable, CaseIterable {
 struct Job: Codable, Equatable, Identifiable {
     var id = UUID()
     var title: String, family: String?, parts: [String], place: String, quick: Bool, after: After, bytes: Int64, needsKeys: Bool, sources: [SourceFile]
+    var target: Target? = nil
+    var viaXcode: Bool? = nil   // for iPhone: a project for Xcode, not an .ipa file
+    var phone: Bool { target == .phone }
+    var xcode: Bool { phone && viaXcode == true }
     var urls: [URL] { parts.map { URL(fileURLWithPath: $0) } }
     var placeURL: URL { URL(fileURLWithPath: place) }
 }
@@ -19,7 +23,7 @@ struct Queue: Codable, Equatable {
     var isEmpty: Bool { current == nil && waiting.isEmpty && problems.isEmpty }
 
     // The same game twice would build in the same folder
-    func holds(_ j: Job) -> Bool { all.contains { $0.family != nil && $0.family == j.family || Set($0.parts) == Set(j.parts) } }
+    func holds(_ j: Job) -> Bool { all.contains { $0.phone == j.phone && $0.xcode == j.xcode && ($0.family != nil && $0.family == j.family || Set($0.parts) == Set(j.parts)) } }
     mutating func add(_ j: Job) -> Bool { if holds(j) { return false }; waiting.append(j); return true }
     mutating func remove(_ id: UUID) { waiting.removeAll { $0.id == id } }
     mutating func up(_ id: UUID) { if let i = waiting.firstIndex(where: { $0.id == id }), i > 0 { waiting.swapAt(i, i - 1) } }

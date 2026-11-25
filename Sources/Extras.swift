@@ -31,7 +31,7 @@ func makeReport(title: String, step: String, error: String, log: [String], versi
 }
 func chipName() -> String { var n = 0; guard sysctlbyname("machdep.cpu.brand_string", nil, &n, nil, 0) == 0, n > 0 else { return "unknown chip" }; var b = [CChar](repeating: 0, count: n); sysctlbyname("machdep.cpu.brand_string", &b, &n, nil, 0); return String(cString: b) }
 
-// ---- updates: looked for only when asked ----
+// ---- updates: looked for once at launch, unless switched off, and when asked. Only the newest version number is read; nothing is sent but the request itself ----
 let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
 let releasePage = URL(string: "https://github.com/Tyrus707/docked/releases/latest")!
 func newer(_ a: String, than b: String) -> Bool {

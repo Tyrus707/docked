@@ -12,11 +12,21 @@ struct Shell: View {
                 Pane(deleting: $deleting).frame(maxWidth: .infinity)
                 if wide, let g { line; Inspector(game: g, deleting: $deleting).transition(.move(edge: .trailing)) }
             }
+            .overlay(alignment: .bottom) { if model.padUsed { PadHints(open: g != nil) } }
             .overlay(alignment: .trailing) { if !wide, let g { HStack(spacing: 0) { line; Inspector(game: g, deleting: $deleting) }.shadow(color: .black.opacity(0.35), radius: 16, x: -4).transition(.move(edge: .trailing)) } }
-            .clipped().animation(still ? nil : .easeOut(duration: 0.2), value: g?.id)
+            .clipped().animation(still ? nil : .easeOut(duration: 0.11), value: g?.id)
         }.onExitCommand { model.selected = nil }
     }
     var line: some View { Rectangle().fill(style.line.opacity(0.6)).frame(width: 1) }
+}
+
+struct PadHints: View {
+    let open: Bool
+    var body: some View {
+        HStack(spacing: 18) { hint("A", open ? "Play" : "Details"); hint("B", "Back"); hint("Y", "Favorite"); hint("L R", "Sections"); hint("+", "Play") }
+            .padding(.horizontal, 18).padding(.vertical, 9).background(Color.black.opacity(0.72), in: Capsule()).padding(.bottom, 14).allowsHitTesting(false).accessibilityHidden(true)
+    }
+    func hint(_ b: String, _ t: String) -> some View { HStack(spacing: 6) { Text(b).font(.caption.weight(.bold)).padding(.horizontal, 7).padding(.vertical, 2).background(Color.white.opacity(0.22), in: Capsule()); Text(t).font(.callout) }.foregroundStyle(.white) }
 }
 
 // ---- sidebar ----
@@ -32,14 +42,15 @@ struct Sidebar: View {
                 row(.home); row(.all); row(.favorites)
                 head("Consoles"); ForEach(model.consolesShown, id: \.id) { row(.console($0.id)) }
                 head("Progress"); row(.status(.playing)); row(.status(.finished)); row(.status(.aside)); row(.status(.none))
-                HStack { head("Collections"); Spacer(); Button { name = ""; naming = true } label: { Image(systemName: "plus").frame(width: 22, height: 22).contentShape(Rectangle()) }.buttonStyle(.plain).foregroundStyle(style.soft).help("New Collection").accessibilityLabel("New Collection").padding(.top, 12) }
+                HStack { head("Collections"); Spacer(); Menu { Button("New Collection…") { name = ""; naming = true }; Button("New Smart Collection…") { model.editing = SmartCollection(name: "") } } label: { Image(systemName: "plus").frame(width: 22, height: 22).contentShape(Rectangle()) }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().foregroundStyle(style.soft).help("New Collection").accessibilityLabel("New Collection").padding(.top, 12) }
                 ForEach(model.library.collections, id: \.self) { c in
                     row(.collection(c)).contextMenu {
                         Button("Rename…") { model.renaming = c }
                         Button("Remove Collection") { model.removeCollection(c) }
                     }
                 }
-                if model.library.collections.isEmpty { Text("Group games your way").font(.caption).foregroundStyle(style.soft).padding(.leading, 10) }
+                ForEach(model.library.smart) { c in row(.smart(c)).contextMenu { Button("Edit…") { model.editing = c }; Button("Remove Collection") { if model.section == .smart(c) { model.section = .home }; model.library.smart.removeAll { $0.id == c.id } } } }
+                if model.library.collections.isEmpty && model.library.smart.isEmpty { Text("Group games your way").font(.caption).foregroundStyle(style.soft).padding(.leading, 10) }
             }.padding(.horizontal, 10).padding(.vertical, 12)
         }
         .frame(width: 216)
@@ -66,6 +77,7 @@ struct Pane: View {
     @Binding var deleting: Game?
     var body: some View {
         ZStack { if model.section == .home && model.search.isEmpty { Home(deleting: $deleting).transition(.opacity) } else { Grid(deleting: $deleting).id(model.search.isEmpty ? model.section : .all).transition(.opacity) } }
+            .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle()).onTapGesture { model.selected = nil }   // blank space; games and buttons take their own clicks
     }
 }
 
@@ -73,25 +85,27 @@ struct Home: View {
     @EnvironmentObject var model: Model
     @Binding var deleting: Game?
     var body: some View {
-        ScrollView {
+        ScrollViewReader { p in ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 let recent = Array(model.shown(.all, by: .recent).prefix(5))
-                if !recent.isEmpty { Carousel(games: recent) }
+                if !recent.isEmpty { Carousel(games: recent).id("recent") }
                 if model.converting { Shelf(title: "Converting") { ArrivingTile().frame(width: 164) } }
                 let fav = model.shown(.favorites)
                 if !fav.isEmpty { shelf("Favorites", .favorites, fav) }
                 ForEach(model.consolesShown, id: \.id) { c in let l = model.shown(.console(c.id)); if !l.isEmpty { shelf(c.name, .console(c.id), l) } }
                 ForEach(model.library.collections, id: \.self) { c in let l = model.shown(.collection(c)); if !l.isEmpty { shelf(c, .collection(c), l) } }
             }.padding(22)
-        }
+        }.whenChanged(model.cursor) { if let c = model.cursor { withAnimation(.easeOut(duration: 0.15)) { p.scrollTo(c.row) } } } }
     }
     func shelf(_ t: String, _ s: Section, _ l: [Game]) -> some View {
-        Shelf(title: t, count: l.count, all: { model.section = s }) { ForEach(l) { g in Tile(game: g, deleting: $deleting).frame(width: 164) } }
+        Shelf(title: t, count: l.count, all: { model.section = s }) { ForEach(l) { g in Tile(game: g, deleting: $deleting, row: t).frame(width: 164).id("\(t)|\(g.id)") } }.id(t)
     }
 }
 
 struct Shelf<C: View>: View {
+    @EnvironmentObject var model: Model
     let title: String; var count = 0; var all: (() -> Void)?
+    private var cursor: Cursor? { model.cursor }
     @ViewBuilder var content: () -> C
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -100,7 +114,7 @@ struct Shelf<C: View>: View {
                 Spacer()
                 if let all, count > 3 { Button("See All") { all() }.buttonStyle(.plain).font(.callout).foregroundStyle(style.accent) }
             }
-            ScrollView(.horizontal, showsIndicators: false) { LazyHStack(alignment: .top, spacing: 8) { content() } }
+            ScrollViewReader { p in ScrollView(.horizontal, showsIndicators: false) { LazyHStack(alignment: .top, spacing: 8) { content() } }.whenChanged(cursor) { if let c = cursor, c.row == title { withAnimation(.easeOut(duration: 0.15)) { p.scrollTo("\(c.row)|\(c.game)") } } } }
         }
     }
 }
@@ -123,7 +137,7 @@ struct Hero: View {
         }
         .padding(20).frame(maxWidth: .infinity, minHeight: 196, alignment: .leading)
         .background { ZStack { Color(hex: 0x14242B); Image(nsImage: model.wash(game)).resizable().interpolation(.high).scaledToFill(); LinearGradient(colors: [.black.opacity(0.76), .black.opacity(0.44)], startPoint: .leading, endPoint: .trailing) } }
-        .clipShape(RoundedRectangle(cornerRadius: 18)).contentShape(RoundedRectangle(cornerRadius: 18)).onTapGesture { model.select(game) }
+        .clipShape(RoundedRectangle(cornerRadius: 18)).overlay { if model.cursor == Cursor(row: "recent", game: game.id) { RoundedRectangle(cornerRadius: 18).strokeBorder(style.accent, lineWidth: 4) } }.contentShape(RoundedRectangle(cornerRadius: 18)).onTapGesture { model.select(game) }
     }
 }
 
@@ -132,7 +146,7 @@ struct Grid: View {
     @Binding var deleting: Game?
     var body: some View {
         let list = model.shown(model.section == .home ? .all : model.section, by: model.sort)
-        ScrollView {
+        GeometryReader { geo in ScrollViewReader { p in ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(model.search.isEmpty ? model.section.title : "Search").font(.title2.weight(.semibold)).foregroundStyle(style.text).accessibilityAddTraits(.isHeader)
@@ -143,11 +157,13 @@ struct Grid: View {
                 if list.isEmpty && !(model.converting && model.section == .all) { blank }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 156, maximum: 200), spacing: 10, alignment: .top)], alignment: .leading, spacing: 10) {
                     if model.converting && model.section == .all && model.search.isEmpty { ArrivingTile() }
-                    ForEach(list) { Tile(game: $0, deleting: $deleting) }
+                    ForEach(list) { Tile(game: $0, deleting: $deleting, row: "grid").id($0.id) }
                 }
             }.padding(22)
-        }
+        }.whenChanged(model.cursor) { if let c = model.cursor, c.row == "grid" { withAnimation(.easeOut(duration: 0.15)) { p.scrollTo(c.game) } } } }
+            .onAppear { model.columns = perRow(geo.size.width) }.whenChanged(geo.size.width) { model.columns = perRow(geo.size.width) } }
     }
+    func perRow(_ w: CGFloat) -> Int { max(1, Int((w - 44 + 10) / (156 + 10))) }   // as the grid folds
     var blank: some View {
         VStack(spacing: 8) {
             DPad().fill(style.line).frame(width: 34, height: 34).accessibilityHidden(true)
@@ -161,6 +177,7 @@ struct Grid: View {
         case .favorites: return "Open a game's ••• menu and choose Favorite."
         case .collection: return "Open a game's ••• menu, then Collections, to add it."
         case .status: return "Open a game's ••• menu, then Progress, to mark it."
+        case .smart: return "No game matches its rules now. Right-click it in the sidebar to change them."
         default: return "Drop a game in this window to add it."
         }
     }
@@ -170,12 +187,13 @@ struct Tile: View {
     @EnvironmentObject var model: Model
     let game: Game
     @Binding var deleting: Game?
+    var row = ""
     var body: some View {
         let e = model.library.entry(game.titleID)
         let note = model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
         Group {
-            if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.selected == game.id, select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
-            else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.selected == game.id, select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
+            if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
+            else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
         }.onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
     }
 }

@@ -11,6 +11,16 @@ if os.path.exists(root + '/busy'): log('overlap')
 open(root + '/busy', 'w').close(); log('start ' + tid); os.makedirs(work + '/extract', exist_ok=True); open(work + '/extract/x', 'w').write('y' * 5000)
 app = os.path.join(root, 'Games', name + '.app'); say(ev='game', title_id=tid, name=name, out=app); say(ev='stage', k=1, n=2, name='Mac shaders'); time.sleep(3 if mode == 'slow' else 0.6)
 if mode == 'fail': say(ev='say', msg='[RED] broken on purpose'); os.remove(root + '/busy'); sys.exit(1)
+if '--prepare-xcode' in a:
+    p = work + '/xcode/DmIOS.xcodeproj'; w = a[a.index('--xcode-workspace') + 1]; old = os.path.exists(p + '/project.pbxproj')
+    log('xcode ' + (a[a.index('--bundle-id') + 1] if '--bundle-id' in a else 'kept' if old else 'none'))
+    if mode != 'noapp':
+        os.makedirs(p, exist_ok=True); open(p + '/project.pbxproj', 'w').write('x'); os.makedirs(w, exist_ok=True); c = w + '/contents.xcworkspacedata'; s = open(c).read() if os.path.exists(c) else '<Workspace version="1.0"></Workspace>'
+        if p not in s: open(c, 'w').write(s.replace('</Workspace>', '<Group location="container:" name="%s"><FileRef location="absolute:%s"/></Group></Workspace>' % (name, os.path.realpath(p))))
+    say(ev='stage_end', k=1, name='Mac shaders', ok=True); os.remove(root + '/busy'); log('end ' + tid); sys.exit(0)
+if '-o' in a:
+    if mode != 'noapp': open(a[a.index('-o') + 1], 'wb').write(b'PK\x03\x04' + (b'not an app' if mode == 'tiny' else bytes(9000)))
+    log('phone ' + a[a.index('--platform') + 1]); say(ev='stage_end', k=1, name='Mac shaders', ok=True); os.remove(root + '/busy'); log('end ' + tid); sys.exit(0)
 os.makedirs(app + '/Contents/MacOS', exist_ok=True); open(app + '/Contents/MacOS/dmhost', 'w').write('x'); os.chmod(app + '/Contents/MacOS/dmhost', 0o755)
 plistlib.dump({'DMTitleID': tid, 'CFBundleName': name, 'CFBundleShortVersionString': '1.0.0', 'LSMinimumSystemVersion': '13.0'}, open(app + '/Contents/Info.plist', 'wb'))
 if mode == 'linked' and not os.path.lexists(app + '/Contents/msl'): os.symlink(work + '/extract', app + '/Contents/msl')

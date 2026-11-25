@@ -5,6 +5,12 @@ import Foundation
 struct Estimator: Codable, Equatable {
     // Steps a quick conversion leaves out
     static let pipeline: Set<String> = ["Pipeline archive", "Prewarm pipelines", "Pipeline prebuild"]
+    // An iPhone conversion shares the first steps, then compiles every shader for the phone. Times measured with one large game.
+    static let phoneSteps: [(String, Double)] = [("extract", 6), ("rewrite", 20), ("shader split", 12), ("iOS shaders", 600), ("app build", 30), ("IPA pack", 290)]
+    // For Xcode, the project takes the place of the app and its package
+    static let xcodeSteps: [(String, Double)] = phoneSteps.prefix(4) + [("prepare Xcode", 15)]
+    static func steps(xcode: Bool) -> [(String, Double)] { xcode ? xcodeSteps : phoneSteps }
+    private static func usual(_ n: String) -> Double? { (phoneSteps + xcodeSteps).first { $0.0 == n }?.1 }
     var order = ["extract", "rewrite", "shader split", "Mac shaders", "Mac host", "Pipeline archive", "Prewarm pipelines", "Mac app"]
     var seconds: [String: Double] = ["extract": 6, "rewrite": 20, "shader split": 12, "Mac shaders": 300, "Mac host": 25, "Pipeline archive": 480, "Prewarm pipelines": 2, "Mac app": 35]
 
@@ -16,10 +22,10 @@ struct Estimator: Codable, Equatable {
     }
 
     // Seconds left for the whole conversion, every step included. engineETA is the engine's own count for the current step, pipelineLeft Docked's count of its parts.
-    func remaining(step: String, elapsed: Double, engineETA: Double?, quick: Bool = false, pipelineLeft: Double? = nil) -> Double {
-        let k = Self.kind(step), steps = order.filter { !quick || !Self.pipeline.contains($0) }
+    func remaining(step: String, elapsed: Double, engineETA: Double?, quick: Bool = false, pipelineLeft: Double? = nil, phone: Bool = false, xcode: Bool = false) -> Double {
+        let k = Self.kind(step), steps = phone ? Self.steps(xcode: xcode).map(\.0) : order.filter { !quick || !Self.pipeline.contains($0) }
         guard !step.isEmpty else { return total(steps[...]) }
-        let usual = seconds[k], now: Double
+        let usual = seconds[k] ?? Self.usual(k), now: Double
         if k == "Pipeline archive", let p = pipelineLeft { now = p }
         else if let e = engineETA, e >= 0, e.isFinite { now = e }
         else if let u = usual, u > elapsed { now = u - elapsed }
@@ -27,9 +33,9 @@ struct Estimator: Codable, Equatable {
         if let i = steps.firstIndex(of: k) { return now + total(steps[(i + 1)...]) }
         return now + total(steps[(steps.firstIndex(of: "rewrite") ?? 0)...])   // a step not in the usual order (DLC, captures) comes before the shaders
     }
-    func whole(quick: Bool) -> Double { remaining(step: "", elapsed: 0, engineETA: nil, quick: quick) }
+    func whole(quick: Bool, phone: Bool = false, xcode: Bool = false) -> Double { remaining(step: "", elapsed: 0, engineETA: nil, quick: quick, phone: phone, xcode: xcode) }
 
-    private func total(_ steps: ArraySlice<String>) -> Double { steps.reduce(0) { $0 + (seconds[$1] ?? 0) } }
+    private func total(_ steps: ArraySlice<String>) -> Double { steps.reduce(0) { sum, n in sum + (seconds[n] ?? Self.usual(n) ?? 0) } }
 
     // Reused steps take a moment and would spoil the next estimate, so only real work counts.
     mutating func learn(_ times: [(String, Double)]) {

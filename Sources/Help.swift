@@ -19,7 +19,7 @@ let helpTopics: [HelpTopic] = [
         "To add an update or DLC later, open the game's ••• menu and choose Add Update or DLC (also in the File menu). It converts again, reusing what it can, and keeps your save.",
         "Choose where the game is saved before you convert, or open its ••• menu later and choose Move to Folder. Use Docked to move it, so it stays in the window.",
         "Add more games while one converts: they wait in a queue and start by themselves. Docked remembers the queue if you quit.",
-        "To save space, choose Clean Up from a game's ••• menu or the Options menu, and pick what to remove. Docked keeps a link to each original file, so deleting one in Finder alone doesn't free its space.",
+        "To save space, choose Clean Up from a game's ••• menu, or in Settings, and pick what to remove. Docked keeps a link to each original file, so deleting one in Finder alone doesn't free its space.",
     ]),
     HelpTopic(title: "About prod.keys", symbol: "key", lines: [
         "They belong to the Switch system, not to a game. One file works for many games.",
@@ -30,16 +30,27 @@ let helpTopics: [HelpTopic] = [
         "A controller works best: connect it in System Settings > Bluetooth before you start the game.",
         "Keyboard: WASD moves, Shift and the arrow keys turn the camera, the arrow keys alone are the D-pad.",
         "J K U I are A B X Y. Q E are L R. Z C are ZL ZR. Return is +, Tab is −, F and G press the sticks, Space shakes.",
-        "To change a game's cover, drop a picture on it or choose Choose Cover from its ••• menu. Covers or Icons is in the Options menu.",
+        "Move around with a controller or the arrow keys: A or Return opens a game's details, and again plays it. B or Escape goes back, L and R change section.",
+        "To give a game theme music, drop a sound file on it or choose Choose Theme Music in its details. It plays while the game is selected. Theme music in Settings turns it off everywhere.",
+        "A smart collection fills itself. Choose + beside Collections, then New Smart Collection.",
+        "Docked opens in full screen and looks for a new version once at launch. Both can be switched off in Settings.",
+        "To change a game's cover, drop a picture on it or choose Choose Cover from its ••• menu. Covers or Icons is in Settings.",
         "Full screen: Control-Command-F. Quit: Command-Q, or hold the controller's Home button for 2 seconds. Save in the game first.",
         "Open a game's ••• menu and choose Play with Settings to change frame rate, resolution or language.",
+    ]),
+    HelpTopic(title: "iPhone and iPad", symbol: "iphone", lines: [
+        "When you add a game, choose iPhone or iPad beside Make it for. Then choose how to install it.",
+        "Needs an \(phoneNeeds)",
+        "Xcode: Docked prepares a project, and Xcode signs it with your Apple account and installs it. The steps are in Settings, under Converting. If Xcode asks you to prepare the game again, add the game again in Docked.",
+        ".ipa file: Docked makes it in the iPhone folder, inside the Dockside folder. You install it with a sideloading tool, such as AltStore or Sideloadly. Many can't install a file as big as these games.",
+        "With a free Apple account, apps stop opening after 7 days and have to be renewed.",
     ]),
     HelpTopic(title: "If something goes wrong", symbol: "wrench.and.screwdriver", lines: [
         "Conversion stopped: choose Details to see why. Adding the same game again continues from the finished steps.",
         "\"Nobody has tested this game yet\": Docked makes a best guess, and the game may not start.",
         "Some games can't work at all, such as older 32-bit games. Online play and amiibo aren't supported.",
         "The game opens and then closes: its log is in your Library folder, under Logs > nxnative.",
-        "Low on space: choose Clean Up from the Options menu. Your games and saves stay.",
+        "Low on space: choose Clean Up in Settings, under Converting. Your games and saves stay.",
     ]),
 ]
 

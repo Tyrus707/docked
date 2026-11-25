@@ -14,7 +14,7 @@ struct Entry: Codable, Equatable {
 enum SortBy: String, CaseIterable { case recent = "Recently Played", name = "Name", added = "Recently Added", played = "Most Played" }
 
 enum Section: Hashable {
-    case home, all, favorites, console(String), status(Entry.Status), collection(String)
+    case home, all, favorites, console(String), status(Entry.Status), collection(String), smart(SmartCollection)
     var title: String {
         switch self {
         case .home: return "Home"
@@ -23,6 +23,7 @@ enum Section: Hashable {
         case .console(let c): return consoleName(c)
         case .status(let s): return s.rawValue
         case .collection(let c): return c
+        case .smart(let s): return s.name
         }
     }
     var symbol: String {
@@ -36,6 +37,7 @@ enum Section: Hashable {
         case .status(.aside): return "pause.circle"
         case .status: return "circle.dashed"
         case .collection: return "folder"
+        case .smart: return "sparkle.magnifyingglass"
         }
     }
 }
@@ -46,6 +48,7 @@ struct LibraryData: Codable, Equatable {
     var entries: [String: Entry] = [:]
     var collections: [String] = []
     var roms: [Rom] = []
+    var smart: [SmartCollection] = []
 
     init() {}
     // A library saved by an earlier version has no emulated games yet.
@@ -54,6 +57,7 @@ struct LibraryData: Codable, Equatable {
         entries = try c.decode([String: Entry].self, forKey: .entries)
         collections = try c.decodeIfPresent([String].self, forKey: .collections) ?? []
         roms = try c.decodeIfPresent([Rom].self, forKey: .roms) ?? []
+        smart = (try? c.decodeIfPresent([SmartCollection].self, forKey: .smart)) ?? []
     }
 
     // The same game again, or moved, updates where it is.
@@ -95,6 +99,12 @@ struct LibraryData: Codable, Equatable {
         for k in entries.keys { if let j = entries[k]?.collections.firstIndex(of: old) { entries[k]?.collections[j] = n } }
     }
 
+    // A name already taken is refused; saving an existing one replaces it
+    mutating func keepSmart(_ s: SmartCollection) -> Bool {
+        var s = s; s.name = String(s.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)); guard !s.name.isEmpty, !s.empty, smart.count < 50, !smart.contains(where: { $0.id != s.id && $0.name.localizedCaseInsensitiveCompare(s.name) == .orderedSame }) else { return false }
+        if let i = smart.firstIndex(where: { $0.id == s.id }) { smart[i] = s } else { smart.append(s) }; smart.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }; return true
+    }
+
     func has(_ g: Game, _ s: Section) -> Bool {
         let e = entry(g.titleID)
         switch s {
@@ -103,6 +113,7 @@ struct LibraryData: Codable, Equatable {
         case .console(let c): return consoleOf(g.titleID) == c
         case .status(let x): return e.status == x
         case .collection(let c): return e.collections.contains(c)
+        case .smart(let s): return s.holds(g, e)
         }
     }
 
