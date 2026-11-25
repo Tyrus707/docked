@@ -1,7 +1,7 @@
-<p align="center"><img src="Art/hero.png" alt="Docked: your Switch games as real Mac apps, all in one library"></p>
+<p align="center"><img src="Art/hero.png" alt="Docked: your Switch games as real Mac apps, plus 20 classic consoles, all in one library"></p>
 
-<p align="center"><b>Docked turns the Switch games you own into real Mac apps, and keeps them in one tidy library.</b><br>
-Free, open source and small. No emulator window, no fiddly setup.</p>
+<p align="center"><b>Docked turns the Switch games you own into real Mac apps, and puts your retro classics right beside them.</b><br>
+One tidy library for NES to Switch. Free, open source and small.</p>
 
 <p align="center">
   <a href="https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip"><b>⬇&nbsp; Download Docked for Mac</b></a>
@@ -20,15 +20,32 @@ Free, open source and small. No emulator window, no fiddly setup.</p>
 
 Playing your Switch games on a Mac usually means an emulator, a pile of settings and a window that never quite feels at home. Docked takes a different route. It hands each game to [nxnative](https://github.com/seedds/nxnative), which converts the game's own code and graphics, and what comes out is an ordinary Mac app. You open it from the Dock like anything else.
 
-Docked does the bookkeeping around that. It works out which file is the game, which is the update and which is the DLC, tells you before you start if something is missing, and lines up as many games as you like. When it's done, your games sit together with their covers, saves and play time. It even looks after your other consoles.
+Docked does the bookkeeping around that. It works out which file is the game, which is the update and which is the DLC, tells you before you start if something is missing, and lines up as many games as you like. When it's done, your games sit together with their covers, saves and play time.
 
 It's built to stay out of your way: a small native app that opens fast, follows your Mac's light or dark mode, and works just as well with a controller from the sofa.
 
+## Your classics, too
+
+Docked isn't only for Switch. Bring the games you've kept from older consoles, from the NES and Game Boy to the PlayStation 2 and Wii, and they share the same shelf: same covers, same favourites, same "pick up where you left off". Your whole collection, one place, one controller.
+
+| | |
+|---|---|
+| **Nintendo** | NES, SNES, Nintendo 64, Game Boy, Game Boy Color, Game Boy Advance, DS, 3DS, GameCube, Wii |
+| **Sega** | Master System, Genesis, Game Gear, Saturn, Dreamcast |
+| **Sony** | PlayStation, PlayStation 2, PSP |
+| **Others** | TurboGrafx-16, Atari 2600 |
+
+These games play through [RetroArch](https://www.retroarch.com), so you'll need it installed for now. A few systems, such as PlayStation, PlayStation 2 and Saturn, also need the BIOS from your own console. *Coming soon:* Docked will set up RetroArch and the right emulator for each console by itself the first time you add a game, so there's nothing to install.
+
 ## How it works
+
+For Switch games:
 
 1. **Drop in your games.** Drag your own `.nsp`, `.xci`, `.nsz`, `.xcz` or `.nup` files, or a dump folder, onto Docked.
 2. **Press Convert.** Docked checks everything first, then converts the games one after another with a single progress bar and time estimate. If you quit, the queue is still there next time.
 3. **Play.** Each game becomes its own Mac app in your library, ready to launch with a click or a controller.
+
+For retro games, just drag them in. Docked works out the console from the file (and simply asks if it could be more than one), then adds the game to your library.
 
 The first time you convert, Docked walks you through the one-off setup. The conversion tools come inside the app; you only need to install Apple's Xcode yourself.
 
@@ -44,7 +61,7 @@ From then on Docked lets you know when there's a new version and installs it for
 
 | To… | You need |
 |---|---|
-| Use the library and play other consoles | macOS 13 or later, Apple chip or Intel |
+| Use the library and play retro games | macOS 13 or later, Apple chip or Intel |
 | Play converted Switch games | macOS 26.6 or later on an Apple chip |
 | Convert Switch games | The same, plus [Xcode 27.2](https://developer.apple.com/download/all/) |
 
@@ -82,22 +99,6 @@ A converted game's graphics are prepared for the Mac that made it. On a differen
 - **Favourites and collections.** Smart collections fill themselves, such as games you haven't played in a month.
 - **Easy on the eyes.** Follows your Mac's light or dark mode and respects Reduce Motion.
 - **Clean Up** shows what each game left behind and how much room it takes. You choose what goes. Your original files only ever go to the Trash, and your games and saves stay put.
-
-</details>
-
-<details>
-<summary><b>Your other consoles</b></summary>
-
-<br>
-
-Add your own games for 20 more systems and they sit right beside your Switch games. They play through [RetroArch](https://www.retroarch.com), if you have it installed.
-
-| | |
-|---|---|
-| **Nintendo** | NES, SNES, Nintendo 64, Game Boy, Game Boy Color, Game Boy Advance, DS, 3DS, GameCube, Wii |
-| **Sega** | Master System, Genesis, Game Gear, Saturn, Dreamcast |
-| **Sony** | PlayStation, PlayStation 2, PSP |
-| **Others** | TurboGrafx-16, Atari 2600 |
 
 </details>
 
