@@ -1,11 +1,12 @@
 <p align="center"><img src="Art/hero.png" alt="Docked: your Switch games as real Mac apps, plus 20 classic consoles, all in one library"></p>
 
 <p align="center"><b>Docked turns the Switch games you own into real Mac apps, and puts your retro classics right beside them.</b><br>
-One tidy library for NES to Switch. Free, open source and small.</p>
+One tidy library for NES to Switch. Free, open source and light.</p>
 
 <p align="center">
   <a href="https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip"><b>⬇&nbsp; Download Docked for Mac</b></a>
-  &nbsp;·&nbsp; about 115 MB &nbsp;·&nbsp; macOS 13 or later
+  &nbsp;·&nbsp; about 115 MB<br>
+  <sub>Library and retro games: macOS 13 or later. Switch games: macOS 26.6 or later on Apple silicon (<a href="#what-you-need">details</a>).</sub>
 </p>
 
 <p align="center">
@@ -22,7 +23,7 @@ Playing your Switch games on a Mac usually means an emulator, a pile of settings
 
 Docked does the bookkeeping around that. It works out which file is the game, which is the update and which is the DLC, tells you before you start if something is missing, and lines up as many games as you like. When it's done, your games sit together with their covers, saves and play time.
 
-It's built to stay out of your way: a small native app that opens fast, follows your Mac's light or dark mode, and works just as well with a controller from the sofa.
+It's built to stay out of your way: a light native app that opens fast, follows your Mac's light or dark mode, and works just as well with a controller from the sofa.
 
 ## Your classics, too
 
