@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main struct DocksideApp: App {
+@main struct DockedApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = Model()
     var body: some Scene {
@@ -56,7 +56,7 @@ final class Model: ObservableObject {
     @Published var showReview = false
     @Published var review = Review(parts: [])
     @Published var reviewNote: String?   // shown on the review sheet, where the window's own alert can't appear
-    @Published var keys: String? = UserDefaults.standard.string(forKey: "keysPath") {
+    @Published var keys: String? = UserDefaults.standard.string(forKey: "keysPath").map({ Paths.now($0) }) {
         didSet { UserDefaults.standard.set(keys, forKey: "keysPath") }   // only the location; the keys are never copied
     }
     // ---- library ----
@@ -265,7 +265,7 @@ final class Model: ObservableObject {
     }
 
     // ---- the library folder: one folder per console (Organize.swift, Library.swift) ----
-    @Published var libraryFolder = UserDefaults.standard.string(forKey: "libraryFolder").map { URL(fileURLWithPath: $0) } ?? Paths.games { didSet { UserDefaults.standard.set(libraryFolder.path, forKey: "libraryFolder"); reload() } }
+    @Published var libraryFolder = UserDefaults.standard.string(forKey: "libraryFolder").map { URL(fileURLWithPath: Paths.now($0)) } ?? Paths.games { didSet { UserDefaults.standard.set(libraryFolder.path, forKey: "libraryFolder"); reload() } }
     @Published var organized = UserDefaults.standard.object(forKey: "organized") as? Bool ?? true { didSet { UserDefaults.standard.set(organized, forKey: "organized") } }
     @Published var addMode = AddMode(rawValue: UserDefaults.standard.string(forKey: "addMode") ?? "") { didSet { UserDefaults.standard.set(addMode?.rawValue, forKey: "addMode") } }   // nil: ask each time
     @Published var naming = Naming(rawValue: UserDefaults.standard.string(forKey: "naming") ?? "") ?? .game { didSet { UserDefaults.standard.set(naming.rawValue, forKey: "naming") } }
@@ -278,12 +278,12 @@ final class Model: ObservableObject {
     @Published var missingGame: Game?
     var lastWatch = Date.distantPast, skipped = Set<String>()
 
-    // Folders games have been saved to, besides Dockside's own, so the library still shows them.
+    // Folders games have been saved to, besides Docked's own, so the library still shows them.
     var folders: [String] {
-        get { UserDefaults.standard.stringArray(forKey: "gameFolders") ?? [] }
+        get { (UserDefaults.standard.stringArray(forKey: "gameFolders") ?? []).map { Paths.now($0) } }
         set { UserDefaults.standard.set(newValue, forKey: "gameFolders") }
     }
-    @Published var destination = UserDefaults.standard.string(forKey: "destination").map { URL(fileURLWithPath: $0) } ?? Paths.games {
+    @Published var destination = UserDefaults.standard.string(forKey: "destination").map { URL(fileURLWithPath: Paths.now($0)) } ?? Paths.games {
         didSet { UserDefaults.standard.set(destination.path, forKey: "destination") }
     }
     @Published var reviewPlace = Paths.games   // where the game on the review screen will go
@@ -335,7 +335,7 @@ final class Model: ObservableObject {
 
     // Where each game's files came from: title ID -> files.
     private var sources: [String: [SourceFile]] {
-        get { UserDefaults.standard.data(forKey: "sources").flatMap { try? JSONDecoder().decode([String: [SourceFile]].self, from: $0) } ?? [:] }
+        get { UserDefaults.standard.data(forKey: "sources").flatMap { try? JSONDecoder().decode([String: [SourceFile]].self, from: $0) }?.mapValues { $0.map { SourceFile(path: Paths.now($0.path), size: $0.size) } } ?? [:] }
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "sources") }
     }
     private var buildSources: [SourceFile] = []
@@ -791,7 +791,7 @@ final class Model: ObservableObject {
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers = [:]; self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
         lookInWatched(force: true)
-        if ProcessInfo.processInfo.environment["DOCKSIDE_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
+        if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
         // Fills the screen the way the green button does with Option held: still a window on the desktop, no Space of its own. Control-Command-F still gives true full screen.
         else if fullScreen { DispatchQueue.main.async { if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }), !w.styleMask.contains(.fullScreen), let s = w.screen ?? NSScreen.main { w.setFrame(s.visibleFrame, display: true) } } }
         navigator.act = { [weak self] m, pad in self?.move(m, pad: pad) }; navigator.start()

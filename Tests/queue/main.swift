@@ -1,4 +1,4 @@
-// The real app model with a stand-in engine: queueing, failing, stopping, restarting, cleaning up. Run by test.sh with DOCKSIDE_ROOT set to a throwaway folder.
+// The real app model with a stand-in engine: queueing, failing, stopping, restarting, cleaning up. Run by test.sh with DOCKED_ROOT set to a throwaway folder.
 import SwiftUI
 import AVFoundation
 var np = 0, nf = 0

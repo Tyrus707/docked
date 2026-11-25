@@ -3,7 +3,7 @@ import CryptoKit
 
 // ---- RetroArch, inside Docked ----
 // Docked doesn't carry RetroArch. The first time a game for another console is added, Docked downloads the official
-// RetroArch from libretro's buildbot and keeps it in its own folder (~/Dockside/RetroArch), never in Applications.
+// RetroArch from libretro's buildbot and keeps it in its own folder (~/Docked/RetroArch), never in Applications.
 // Each console's core is downloaded from the same place when it is first needed. Docked starts the game in that
 // RetroArch with its own settings file, so the player never has to open RetroArch or set anything up there.
 struct RetroError: LocalizedError { let text: String; init(_ t: String) { text = t }; var errorDescription: String? { text } }

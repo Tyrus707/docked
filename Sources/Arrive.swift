@@ -37,5 +37,5 @@ enum Arrive {
         }
     }
     static func title(_ o: Offer) -> String { switch o { case let .update(_, has): return "Update Docked \(has) to \(appVersion)?"; case .move: return "Move Docked to Applications?" } }
-    static func text(_ o: Offer) -> String { switch o { case let .update(a, has): return "Docked \(has) is in \(a.deletingLastPathComponent().lastPathComponent). This copy is newer and can take its place. Your games, saves and settings stay, and the old version is kept in the Dockside folder, in Backups."; case .move: return "It opens from there from now on. You can delete the download afterwards." } }
+    static func text(_ o: Offer) -> String { switch o { case let .update(a, has): return "Docked \(has) is in \(a.deletingLastPathComponent().lastPathComponent). This copy is newer and can take its place. Your games, saves and settings stay, and the old version is kept in the Docked folder, in Backups."; case .move: return "It opens from there from now on. You can delete the download afterwards." } }
 }

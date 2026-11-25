@@ -83,7 +83,7 @@ struct Review: Equatable {
     }
 }
 
-// The files a game was converted from, which Dockside keeps links to, so an update or DLC can be added later.
+// The files a game was converted from, which Docked keeps links to, so an update or DLC can be added later.
 func keptFiles(_ titleID: String, games: URL = Paths.games, inputs: URL = Paths.inputs) -> [URL] {
     let fm = FileManager.default, dir = inputs.appendingPathComponent(buildFolderKey(titleID, games: games))
     return ((try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])

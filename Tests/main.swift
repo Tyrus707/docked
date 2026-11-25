@@ -6,7 +6,7 @@ func check(_ ok: Bool, _ what: String) { if ok { passed += 1 } else { failed += 
 func fails2(_ what: String, _ f: () throws -> Void) { do { try f(); check(false, what) } catch { check(error is RetroError, what) } }
 func fails(_ e: InputError, _ what: String, _ f: () throws -> Void) { do { try f(); check(false, what) } catch { check(error as? InputError == e, what) } }
 let fm = FileManager.default
-let tmp = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DOCKSIDE_ROOT"]!)   // a temporary folder
+let tmp = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DOCKED_ROOT"]!)   // a temporary folder
 func mk(_ p: String, _ s: String = "x") -> URL { let u = tmp.appendingPathComponent(p); try! fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true); try! Data(s.utf8).write(to: u); return u }
 
 // events
@@ -606,5 +606,19 @@ check(pickRoms([tmp.appendingPathComponent("org/find")]).contains { $0.lastPathC
 let lpl = mk("org/ra/playlists/Nintendo - Game Boy.lpl", "{\"version\":\"1.5\",\"items\":[{\"path\":\"\(tmp.path)/org/find/Nintendo - Game Boy/Puzzle.gb\"},{\"path\":\"\(tmp.path)/org/gone.gb\"},{\"path\":\"\(tmp.path)/org/find/Disc.cue#inside\"}]}")
 check(Discover.retroArchGames(lpl.deletingLastPathComponent()).map(\.lastPathComponent) == ["Puzzle.gb", "Disc.cue"], "games RetroArch knows, from its playlists")
 let ryu = mk("org/ryu/Config.json", "{\"game_dirs\":[\"/Volumes/SSD/Switch\"]}"); check(Discover.ryujinxFolders(ryu).map(\.path) == ["/Volumes/SSD/Switch"], "Ryujinx's game folders")
+// the folder's old name
+func link(_ u: URL) -> String? { try? fm.destinationOfSymbolicLink(atPath: u.path) }
+do {
+    let h = tmp.appendingPathComponent("home1"); _ = mk("home1/Dockside/library.json", "lib"); _ = mk("home1/Dockside/Games/a")
+    let a = Paths.home(h); check(a.lastPathComponent == "Docked" && (try? String(contentsOf: a.appendingPathComponent("library.json"), encoding: .utf8)) == "lib", "folder renamed whole")
+    check(link(h.appendingPathComponent("Dockside")) == "Docked" && fm.fileExists(atPath: h.path + "/Dockside/Games/a"), "old name still works")
+    check(Paths.home(h) == a && link(h.appendingPathComponent("Docked")) == nil, "renamed once only")
+    try! fm.removeItem(at: h.appendingPathComponent("Dockside")); check(Paths.home(h) == a && link(h.appendingPathComponent("Dockside")) == "Docked", "link made again if cut short")
+    let b = tmp.appendingPathComponent("home2"); _ = mk("home2/Dockside/library.json", "lib"); _ = mk("home2/Docked/mine.txt")
+    check(Paths.home(b).lastPathComponent == "Dockside" && fm.fileExists(atPath: b.path + "/Docked/mine.txt") && fm.fileExists(atPath: b.path + "/Dockside/library.json"), "never merged into another Docked folder")
+    let c = tmp.appendingPathComponent("home3"); try! fm.createDirectory(at: c, withIntermediateDirectories: true); check(Paths.home(c).lastPathComponent == "Docked" && link(c.appendingPathComponent("Dockside")) == nil, "new player gets no link")
+    let n = URL(fileURLWithPath: "/Users/x/Docked")
+    check(Paths.now("/Users/x/Dockside/Games", root: n, home: "/Users/x") == "/Users/x/Docked/Games" && Paths.now("/Users/x/Docksider/a", root: n, home: "/Users/x") == "/Users/x/Docksider/a" && Paths.now("/Users/x/Dockside/a", root: URL(fileURLWithPath: "/Users/x/Dockside"), home: "/Users/x") == "/Users/x/Dockside/a", "saved paths follow the folder")
+}
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
