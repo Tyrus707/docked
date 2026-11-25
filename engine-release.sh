@@ -1,6 +1,6 @@
 #!/bin/zsh
 # engine-release.sh: publishes the engine in ENGINE_PIN to players as a signed engine update, so every Docked can update its engine without a new app.
-# For Docked's maker, after bump-engine.sh and a conversion or two. Needs: the engine checked out at ~/Dockside/engine, gh signed in, and the signing key
+# For Docked's maker, after bump-engine.sh and a conversion or two. Needs: the engine checked out at ~/Docked/engine, gh signed in, and the signing key
 # in DOCKED_SIGNING_KEY or in the Keychain (security add-generic-password -s docked-signing-key -a docked -w <key>). The key never goes in the repository.
 # It uploads to one release, tagged "engine" and marked as a pre-release so GitHub's "latest" stays the newest Docked:
 #   engine-<commit>.tar.xz              the whole engine, for any Docked
@@ -11,8 +11,8 @@ set -eu
 cd "$(dirname "$0")"; HERE=$PWD
 PIN=$(awk '$1=="commit"{print $2}' ENGINE_PIN); DATE=$(awk '$1=="date"{print $2}' ENGINE_PIN)
 MINAPP="${MINAPP:-$(plutil -extract CFBundleShortVersionString raw Info.plist)}"
-E="$HOME/Dockside/engine"; G=(git -c core.hooksPath=/dev/null -C "$E")
-[ "$($G rev-parse HEAD)" = "$PIN" ] || { echo "~/Dockside/engine is not at ${PIN:0:8}. Run bump-engine.sh first."; exit 1; }
+E="$HOME/Docked/engine"; G=(git -c core.hooksPath=/dev/null -C "$E")
+[ "$($G rev-parse HEAD)" = "$PIN" ] || { echo "~/Docked/engine is not at ${PIN:0:8}. Run bump-engine.sh first."; exit 1; }
 KEY="${DOCKED_SIGNING_KEY:-$(security find-generic-password -s docked-signing-key -w 2>/dev/null || true)}"; [ -n "$KEY" ] || { echo "No signing key: set DOCKED_SIGNING_KEY or add it to the Keychain."; exit 1; }
 PUB=$(sed -n 's/.*static let publicKey = "\(.*\)".*/\1/p' Sources/Update.swift)
 [ "$(DOCKED_SIGNING_KEY="$KEY" swift Bundle/sign.swift --public)" = "$PUB" ] || { echo "That key is not the one whose public half is in Sources/Update.swift."; exit 1; }

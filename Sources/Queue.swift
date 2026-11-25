@@ -52,6 +52,7 @@ struct Queue: Codable, Equatable {
     static func load(_ u: URL = file) -> Queue {
         guard let d = try? Data(contentsOf: u), var q = try? JSONDecoder().decode(Queue.self, from: d) else { return Queue() }
         if let c = q.current { q.current = nil; q.waiting.insert(c, at: 0) }
+        for i in q.waiting.indices { q.waiting[i].parts = q.waiting[i].parts.map { Paths.now($0) }; q.waiting[i].place = Paths.now(q.waiting[i].place); q.waiting[i].sources = q.waiting[i].sources.map { SourceFile(path: Paths.now($0.path), size: $0.size) } }
         if !q.waiting.isEmpty { q.paused = true } else { q.paused = false }   // never starts heavy work just because the app was opened
         return q
     }

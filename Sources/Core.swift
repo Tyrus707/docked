@@ -1,8 +1,28 @@
 import Foundation
 
-// Where everything lives. The engine's build tools cannot handle spaces in paths, so this is ~/Dockside.
+// Where everything lives. The engine's build tools cannot handle spaces in paths, so this is ~/Docked.
 enum Paths {
-    static let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DOCKSIDE_ROOT"] ?? NSHomeDirectory() + "/Dockside")
+    static let root: URL = ProcessInfo.processInfo.environment["DOCKED_ROOT"].map { URL(fileURLWithPath: $0) } ?? home(URL(fileURLWithPath: NSHomeDirectory()))
+    // Up to 1.4 the folder was called Dockside. It is renamed once, whole, and a hidden link keeps its old name working: games and build folders hold full paths, and so may an older Docked put back from Backups.
+    // Nothing is ever merged or replaced: if there is already something called Docked, or the rename is refused, the old folder stays in use.
+    static func home(_ h: URL) -> URL {
+        let new = h.appendingPathComponent("Docked", isDirectory: true), old = h.appendingPathComponent("Dockside", isDirectory: true)
+        var s = stat(); guard lstat(old.path, &s) == 0, s.st_mode & S_IFMT == S_IFDIR else {
+            if lstat(old.path, &s) != 0, lstat(new.path, &s) == 0, s.st_mode & S_IFMT == S_IFDIR, isOurs(new) { link(old, new) }   // cut short between the two steps
+            return new
+        }
+        try? Data().write(to: old.appendingPathComponent(renamedMark))   // first, so a rename cut short is known for what it is
+        guard renamex_np(old.path, new.path, UInt32(RENAME_EXCL)) == 0 else { return old }
+        link(old, new); return new
+    }
+    private static func isOurs(_ d: URL) -> Bool { FileManager.default.fileExists(atPath: d.appendingPathComponent(renamedMark).path) }
+    private static let renamedMark = ".renamed-from-dockside"
+    private static func link(_ old: URL, _ new: URL) { if symlink("Docked", old.path) == 0 { lchflags(old.path, UInt32(UF_HIDDEN)) } }
+    // A saved path that starts in the folder's old name, as it is now
+    static func now(_ path: String, root: URL = Paths.root, home: String = NSHomeDirectory()) -> String {
+        let old = home + "/Dockside"; guard root.path == home + "/Docked", path == old || path.hasPrefix(old + "/") else { return path }
+        return root.path + path.dropFirst(old.count)
+    }
     // The tools the app carries, once unpacked; else a separate setup's.
     static var tools: URL { root.appendingPathComponent("tools") }
     // The engine Docked was built with, or a signed engine update (Engine.swift).
@@ -172,7 +192,7 @@ func freeSpace() -> Int64 {
     return v?.volumeAvailableCapacityForImportantUsage ?? 0
 }
 
-// The player's own prod.keys, found on its own when it is in the Dockside folder or beside the app. Never inside the app.
+// The player's own prod.keys, found on its own when it is in the Docked folder or beside the app. Never inside the app.
 func findKeys(_ saved: String?, beside: URL = Bundle.main.bundleURL.deletingLastPathComponent()) -> String? {
     let places: [String?] = [saved, Paths.root.appendingPathComponent("prod.keys").path, beside.appendingPathComponent("prod.keys").path]
     return places.compactMap { $0 }.first { FileManager.default.isReadableFile(atPath: $0) }
@@ -213,7 +233,7 @@ struct Check: Identifiable {
     var ok: Bool
     var detail: String
     var fix: String   // a Terminal command, or "" when there is none
-    var installs = false   // Dockside puts this in place itself
+    var installs = false   // Docked puts this in place itself
 }
 
 @discardableResult
