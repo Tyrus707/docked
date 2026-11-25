@@ -227,7 +227,7 @@ final class Model: ObservableObject {
         if let ra { if isRunning(g) { ra.activate() } else { message = "RetroArch is already open. Quit it first, then play \(g.name)." }; return }
         let o = NSWorkspace.OpenConfiguration(); o.arguments = RetroArch.arguments(core: RetroArch.core(c)!, rom: r.path)
         NSWorkspace.shared.openApplication(at: RetroArch.app, configuration: o) { a, e in
-            DispatchQueue.main.async { if let e { self.message = e.localizedDescription } else if let a { self.tracker.adopt(a, as: g.titleID.uppercased()) } }
+            DispatchQueue.main.async { if let e { self.message = e.localizedDescription } else if let a { self.tracker.adopt(a, as: g.titleID.uppercased()); self.stepAside() } }
         }
     }
 
@@ -246,9 +246,21 @@ final class Model: ObservableObject {
         tracker.identify = { [weak self] u in self?.games.first { u.path == $0.url.path || u.path.hasPrefix($0.url.path + "/") }?.titleID.uppercased() }
         tracker.countedUntil = { [weak self] id in self?.library.entry(id).lastPlayed }
         AppDelegate.leaving = { [weak self] in self?.tracker.flush() }
-        tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b) }
+        tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack() }
         tracker.changed = { [weak self] in guard let s = self else { return }; s.runningIDs = s.tracker.running; s.themeUpdate() }
         tracker.start()
+    }
+
+    // ---- while a game plays, Docked steps aside; when the last game closes, the library is back in front ----
+    @Published var hideWhilePlaying = UserDefaults.standard.object(forKey: "hideWhilePlaying") as? Bool ?? true { didSet { UserDefaults.standard.set(hideWhilePlaying, forKey: "hideWhilePlaying") } }
+    private var asideForGame = false
+    func stepAside() { guard hideWhilePlaying else { return }; asideForGame = true; NSApp.hide(nil) }
+    private func comeBack() {
+        guard asideForGame, tracker.running.isEmpty else { return }
+        asideForGame = false
+        NSApp.unhide(nil)
+        if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
+        NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
     }
 
     let builder = Builder()
@@ -819,7 +831,7 @@ final class Model: ObservableObject {
         let c = NSWorkspace.OpenConfiguration()
         if !settings { c.environment = ["DM_LAUNCHER": "0"] }   // straight into the game
         NSWorkspace.shared.openApplication(at: g.url, configuration: c) { _, e in
-            if let e { DispatchQueue.main.async { self.message = e.localizedDescription } }
+            DispatchQueue.main.async { if let e { self.message = e.localizedDescription } else { self.stepAside() } }
         }
     }
 
