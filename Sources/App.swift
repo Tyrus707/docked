@@ -225,10 +225,23 @@ final class Model: ObservableObject {
         do { try RetroArch.prepare() } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
         let ra = NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == RetroArch.app.path }
         if let ra { if isRunning(g) { ra.activate() } else { message = "RetroArch is already open. Quit it first, then play \(g.name)." }; return }
-        let o = NSWorkspace.OpenConfiguration(); o.arguments = RetroArch.arguments(core: RetroArch.core(c)!, rom: r.path)
-        NSWorkspace.shared.openApplication(at: RetroArch.app, configuration: o) { a, e in
-            DispatchQueue.main.async { if let e { self.message = e.localizedDescription } else if let a { self.tracker.adopt(a, as: g.titleID.uppercased()) } }
-        }
+        do {
+            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path) { [weak self] in self?.backFromGame() }
+            adoptRetro(pid, as: g.titleID.uppercased(), tries: 20)
+        } catch { message = "RetroArch couldn't start. \(error.localizedDescription)" }
+    }
+    // RetroArch is known to the system a moment after it starts; play time counts from then.
+    private func adoptRetro(_ pid: pid_t, as id: String, tries: Int) {
+        if let a = NSRunningApplication(processIdentifier: pid) { tracker.adopt(a, as: id); return }
+        guard tries > 0, kill(pid, 0) == 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.adoptRetro(pid, as: id, tries: tries - 1) }
+    }
+    // A RetroArch game closed: back to the library.
+    func backFromGame() {
+        NSApp.unhide(nil)
+        for w in NSApp.windows where w.isMiniaturized { w.deminiaturize(nil) }
+        if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
+        NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
     }
 
     func shown(_ s: Section, by: SortBy = .name) -> [Game] { library.show(games, in: s, search: search, by: by) }
@@ -260,7 +273,7 @@ final class Model: ObservableObject {
         AppDelegate.waiting = { [weak self] in self?.queue.waiting.count ?? 0 }
         builder.onFinish = { [weak self] in self?.finished() }
         let hide = organized
-        DispatchQueue.global(qos: .utility).async { finishRemovals(); Engine.tidy(); if hide { Organize.hideBuildFolders() } }
+        DispatchQueue.global(qos: .utility).async { finishRemovals(); Engine.tidy(); RetroArch.hideEarlier(); if hide { Organize.hideBuildFolders() } }
         reload(); trackPlay(); recheck(first: true)
     }
 
