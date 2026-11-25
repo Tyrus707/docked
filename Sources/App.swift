@@ -758,7 +758,8 @@ final class Model: ObservableObject {
         guard !launched else { return }; launched = true
         for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate() } } }
         if ProcessInfo.processInfo.environment["DOCKSIDE_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
-        else if fullScreen { DispatchQueue.main.async { if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }), !w.styleMask.contains(.fullScreen) { w.collectionBehavior.insert(.fullScreenPrimary); w.toggleFullScreen(nil) } } }
+        // Fills the screen the way the green button does with Option held: still a window on the desktop, no Space of its own. Control-Command-F still gives true full screen.
+        else if fullScreen { DispatchQueue.main.async { if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }), !w.styleMask.contains(.fullScreen), let s = w.screen ?? NSScreen.main { w.setFrame(s.visibleFrame, display: true) } } }
         navigator.act = { [weak self] m, pad in self?.move(m, pad: pad) }; navigator.start()
         if updatesAtLaunch { checkForUpdate { if case let .available(v) = $0 { self.update = v } }; if Paths.unpacked, cannotConvert() == nil { lookForEngine(quiet: true) } }
     }
