@@ -709,7 +709,7 @@ final class Model: ObservableObject {
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").filter { $0.processIdentifier != getpid() }; others.forEach { $0.activate(options: []); $0.terminate() }
         DispatchQueue.global(qos: .userInitiated).async {
             let end = Date().addingTimeInterval(60); while others.contains(where: { !$0.isTerminated }), Date() < end { Thread.sleep(forTimeInterval: 0.3) }
-            let r = Result { if others.contains(where: { !$0.isTerminated }) { throw UpdateError("The older Docked is still open. Quit it, then open this one again.") }; try Arrive.go(Bundle.main.bundleURL, o, backups: Paths.root.appendingPathComponent("Backups")) }
+            let r = Result { if others.contains(where: { !$0.isTerminated }) { throw UpdateError("The older Docked is still open. Quit it, then open this one again.") }; try Arrive.go(Bundle.main.bundleURL, o) }
             DispatchQueue.main.async { self.updating = false; switch r { case let .failure(e): self.message = e.localizedDescription; case .success: Update.reopen(o.app); NSApp.terminate(nil) } }
         }
     }
@@ -722,7 +722,7 @@ final class Model: ObservableObject {
             case let .failure(e): self.updating = false; self.message = e.localizedDescription + " You can get it from the Docked page."
             case let .success((z, g)):
                 DispatchQueue.global(qos: .userInitiated).async {
-                    let r = Result { try Update.install(z, g, version: v, over: Bundle.main.bundleURL, backups: Paths.root.appendingPathComponent("Backups")) }
+                    let r = Result { try Update.install(z, g, version: v, over: Bundle.main.bundleURL) }
                     DispatchQueue.main.async {
                         self.updating = false
                         switch r { case let .failure(e): self.message = e.localizedDescription
@@ -791,7 +791,7 @@ final class Model: ObservableObject {
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers = [:]; self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
         lookInWatched(force: true)
-        if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil { DispatchQueue.global(qos: .utility).async { Update.settle(Paths.root.appendingPathComponent("Backups")) } }
+        if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil { DispatchQueue.global(qos: .utility).async { Update.clearBackups(Paths.root.appendingPathComponent("Backups")) } }
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
         // Fills the screen the way the green button does with Option held: still a window on the desktop, no Space of its own. Control-Command-F still gives true full screen.
         else if fullScreen { DispatchQueue.main.async { if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }), !w.styleMask.contains(.fullScreen), let s = w.screen ?? NSScreen.main { w.setFrame(s.visibleFrame, display: true) } } }

@@ -3,7 +3,7 @@ import Foundation
 // Where everything lives. The engine's build tools cannot handle spaces in paths, so this is ~/Docked.
 enum Paths {
     static let root: URL = ProcessInfo.processInfo.environment["DOCKED_ROOT"].map { URL(fileURLWithPath: $0) } ?? home(URL(fileURLWithPath: NSHomeDirectory()))
-    // Up to 1.4 the folder was called Dockside. It is renamed once, whole, and a hidden link keeps its old name working: games and build folders hold full paths, and so may an older Docked put back from Backups.
+    // Up to 1.4 the folder was called Dockside. It is renamed once, whole, and a hidden link keeps its old name working: games and build folders hold full paths.
     // Nothing is ever merged or replaced: if there is already something called Docked, or the rename is refused, the old folder stays in use.
     static func home(_ h: URL) -> URL {
         let new = h.appendingPathComponent("Docked", isDirectory: true), old = h.appendingPathComponent("Dockside", isDirectory: true)
