@@ -11,6 +11,20 @@ struct LaunchSetting: Decodable, Equatable, Identifiable {
     var id: String { env }
     var basic: Bool { level == "basic" }
 
+    // "note" and "default" may be left out of launcher.json; the automatic decoder would reject the whole list for that
+    private enum CodingKeys: String, CodingKey { case env, kind, section, label, note, `default`, level, needs, options, on, off, min, max, step }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        env = try c.decode(String.self, forKey: .env); kind = try c.decode(Kind.self, forKey: .kind)
+        section = try c.decode(String.self, forKey: .section); label = try c.decode(String.self, forKey: .label)
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""; `default` = try c.decodeIfPresent(String.self, forKey: .default) ?? ""
+        level = try c.decodeIfPresent(String.self, forKey: .level); needs = try c.decodeIfPresent(String.self, forKey: .needs)
+        options = try c.decodeIfPresent([[String]].self, forKey: .options)
+        on = try c.decodeIfPresent(String.self, forKey: .on); off = try c.decodeIfPresent(String.self, forKey: .off)
+        min = try c.decodeIfPresent(Double.self, forKey: .min); max = try c.decodeIfPresent(Double.self, forKey: .max)
+        step = try c.decodeIfPresent(Double.self, forKey: .step)
+    }
+
     // A range's value as text, with as many decimals as its step has: 1.0, 0.05
     func text(_ v: Double) -> String {
         let s = step ?? 0.1, d = s >= 1 ? 0 : Swift.min(4, Int((-log10(s)).rounded(.up)))
