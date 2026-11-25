@@ -43,6 +43,8 @@ Add your own games for 20 more systems and they sit beside your Switch games. Th
 - **Favourites, progress and collections.** Smart collections fill themselves, such as games you haven't played for a month.
 - **Clean Up** shows what each game left behind and how big it is. You choose what goes. Your original files only ever go to the Trash, and games and saves stay.
 - **One-click updates.** Docked checks that an update is genuine before installing it, and keeps the old version.
+- **A newer conversion engine without a new Docked.** New game profiles and fixes arrive as engine updates, signed like Docked's own. Docked checks every file of the new engine, tries it, and only swaps it in while nothing is converting. The one before is kept: **Settings > Setup** can switch back.
+- **Each game is checked before it is called done.** Docked makes sure the finished app is whole, holds everything it needs and has a signature that matches. If its graphics were only partly prepared, it says so, and keeps what is needed to convert it again quickly.
 
 No games, keys, firmware or console files are included, and none may be posted here.
 
@@ -76,7 +78,7 @@ Docked is not affiliated with, endorsed by or connected to Nintendo or any other
 
 ## Privacy
 
-Docked collects nothing and has no account. It asks GitHub for the newest version number once when it opens, which you can switch off in Settings, and when you choose **Check for Updates**. An update is downloaded only when you press **Update**. Help and setup links open in your browser. Covers come from your own games or pictures you choose; none are downloaded. **Copy Report** takes out your name, folders, addresses and anything like a key, but read a report before you post it.
+Docked collects nothing and has no account. It asks GitHub for the newest version numbers of Docked and its engine once when it opens, which you can switch off in Settings, and when you choose **Check for Updates**. An update is downloaded only when you press **Update**. Help and setup links open in your browser. Covers come from your own games or pictures you choose; none are downloaded. **Copy Report** takes out your name, folders, addresses and anything like a key, but read a report before you post it.
 
 ## Build it yourself
 
@@ -86,7 +88,19 @@ Docked collects nothing and has no account. It asks GitHub for the newest versio
 ./build.sh Docked.app tools.xz  # with the tools inside, made by Bundle/make.sh
 ```
 
-`Bundle/make.sh` packs what `setup.sh` installed, with a pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261124) placed in `~/Dockside/python-standalone`. Every pinned version and fingerprint is in those scripts.
+`Bundle/make.sh` packs what `setup.sh` installed, with a pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261124) placed in `~/Dockside/python-standalone`. The engine's pinned commit and the fingerprints of its prebuilt tools are in [`ENGINE_PIN`](ENGINE_PIN); the other pinned versions are in those scripts.
+
+### Moving to a newer engine
+
+nxnative changes every day, and its game profiles decide which games work, so Docked follows it in reviewed steps:
+
+```
+./bump-engine.sh [commit]   # shows new and changed game profiles, stops if a prebuilt tool changed, writes ENGINE_PIN, runs the tests
+./build.sh Docked.app       # then convert one or two of your own games with it
+./engine-release.sh         # signs the engine and publishes it to every Docked as an engine update
+```
+
+`engine-release.sh` uploads to one pre-release tagged `engine`: the whole engine, and smaller packs with only what changed since engines players are likely to have. It signs `engine.json`, which names the engine's commit, date and the SHA-256 of its every file, with the same key as Docked's own updates (from `DOCKED_SIGNING_KEY` or the Keychain, never the repository). Docked uses an engine only if that signature holds, the files match, it is newer than the one Docked was built with, and the engine starts. An engine that needs other Python packages can't go out this way; it needs a full Docked release.
 
 ## Help
 

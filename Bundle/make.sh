@@ -3,8 +3,10 @@
 # Everything is copied from what is already installed and reviewed here; nothing is downloaded. Reads only.
 set -eu
 OUT="$1"; HERE="$(cd "$(dirname "$0")" && pwd)"
-PIN=01439b0fe923929d275e2fd4337cbdf08b54fcfd
+PIN=$(awk '$1=="commit"{print $2}' "$HERE/../ENGINE_PIN")
 [ "$(git -C "$HOME/Dockside/engine" rev-parse HEAD)" = "$PIN" ] || { echo "engine is not the reviewed version"; exit 1; }
+# The prebuilt tools are the ones reviewed with it
+awk '$1=="tool"{print $2, $3}' "$HERE/../ENGINE_PIN" | while read -r f h; do [ "$(git -C "$HOME/Dockside/engine" show "$PIN:$f" | shasum -a 256 | cut -c1-64)" = "$h" ] || { echo "fingerprint mismatch: $f"; exit 1; }; done
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT; P="$W/tools"; mkdir -p "$P/bin" "$P/lib"
 # The engine exactly as committed (not the working copy, which builds write into).
 mkdir "$P/engine"; git -C "$HOME/Dockside/engine" archive "$PIN" | tar -xf - -C "$P/engine"; rm -rf "$P/engine/docs/images" "$P/engine/.github"

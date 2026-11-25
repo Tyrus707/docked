@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # Stand-in for the engine: reports like it, makes a build folder and an app. What the dump says decides how it goes.
-import json, os, plistlib, re, signal, sys, time
-if '-I' in sys.argv[:2]: sys.exit(0)   # Docked's check of the Python tools
+import json, os, plistlib, re, shutil, signal, subprocess, sys, time
+if '-I' in sys.argv[:2] or '--help' in sys.argv: sys.exit(0)   # Docked's check of the Python tools, and of a new engine
 root = os.environ['DOCKSIDE_ROOT']; a = sys.argv; src = a[a.index('--progress') - 3]; work = a[a.index('--work-dir') + 1]
 def say(**k): print(json.dumps(k), flush=True)
 def log(s): open(root + '/engine.log', 'a').write(s + '\n')
@@ -21,7 +21,9 @@ if '--prepare-xcode' in a:
 if '-o' in a:
     if mode != 'noapp': open(a[a.index('-o') + 1], 'wb').write(b'PK\x03\x04' + (b'not an app' if mode == 'tiny' else bytes(9000)))
     log('phone ' + a[a.index('--platform') + 1]); say(ev='stage_end', k=1, name='Mac shaders', ok=True); os.remove(root + '/busy'); log('end ' + tid); sys.exit(0)
-os.makedirs(app + '/Contents/MacOS', exist_ok=True); open(app + '/Contents/MacOS/dmhost', 'w').write('x'); os.chmod(app + '/Contents/MacOS/dmhost', 0o755)
-plistlib.dump({'DMTitleID': tid, 'CFBundleName': name, 'CFBundleShortVersionString': '1.0.0', 'LSMinimumSystemVersion': '13.0'}, open(app + '/Contents/Info.plist', 'wb'))
+os.makedirs(app + '/Contents/MacOS', exist_ok=True); shutil.copy('/usr/bin/true', app + '/Contents/MacOS/dmhost'); os.chmod(app + '/Contents/MacOS/dmhost', 0o755)
+plistlib.dump({'DMTitleID': tid, 'CFBundleName': name, 'CFBundleExecutable': 'dmhost', 'CFBundleShortVersionString': '1.0.0', 'LSMinimumSystemVersion': '13.0'}, open(app + '/Contents/Info.plist', 'wb'))
+if mode != 'unsigned': subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', app], check=True, capture_output=True)   # as the real engine signs its apps
+if mode == 'warn': say(ev='stage_end', k=1, name='Pipeline archive', ok=True, warn=True, summary='failed, the app is packed without one')
 if mode == 'linked' and not os.path.lexists(app + '/Contents/msl'): os.symlink(work + '/extract', app + '/Contents/msl')
 open(app + '.key', 'w').write('k'); say(ev='stage_end', k=1, name='Mac shaders', ok=True); os.remove(root + '/busy'); log('end ' + tid)
