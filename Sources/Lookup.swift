@@ -47,8 +47,14 @@ final class GameList {
             if let s = x.serial { for k in Lookup.serialKeys(s) { bySerial[k, default: []].append(i) } }
             if !x.name.isEmpty { let k = Lookup.titleKey(x.name); if !k.isEmpty { byTitle[k, default: []].append(i) } }
         }
-        for k in byTitle.keys { words[k] = Set(k.split(separator: " ").map(String.init)) }
+        // Searched by name: titles with a known-good dump. A title's main part, before " - " or ":", counts nearly as much as all of it.
+        for x in e where !x.name.isEmpty && !x.name.contains("[") {
+            let k = Lookup.titleKey(x.name); guard !k.isEmpty, words[k] == nil else { continue }
+            words[k] = Set(k.split(separator: " ").map(String.init))
+            if let r = cleanTitle(x.name).range(of: #" - |: "#, options: .regularExpression) { let m = Lookup.titleKey(String(cleanTitle(x.name)[..<r.lowerBound])); if m != k, m.contains(" ") { mains[k] = m } }
+        }
     }
+    private var mains: [String: String] = [:]
     func candidate(_ key: String, how: String, region: [String] = [], score: Double = 1) -> Candidate? {
         guard let ids = byTitle[key], !ids.isEmpty else { return nil }
         // Versions with a known-good dump first (TOSEC's hacks and bad dumps carry [tags] and have no covers)
@@ -77,8 +83,11 @@ final class GameList {
         let k = Lookup.titleKey(q), w = Set(k.split(separator: " ").map(String.init))
         guard !w.isEmpty else { return [] }
         var out: [(key: String, score: Double)] = []
+        let numbers = w.filter { $0.allSatisfy(\.isNumber) }
         for (t, tw) in words {
             var s = t == k ? 1 : 2 * Double(w.intersection(tw).count) / Double(w.count + tw.count)
+            if s < 1, numbers != tw.filter({ $0.allSatisfy(\.isNumber) }) { s *= 0.6 }   // Final Fantasy 3 isn't Final Fantasy 2
+            if s < 1, mains[t] == k { s = max(s, 0.9) }                                   // "Donkey Kong Country 2" for "... 2 - Diddy's Kong Quest"
             if s < 1, t.hasPrefix(k + " ") { s = max(s, 0.6) }   // the start of a longer name, as typed in a search
             if s >= floor { out.append((t, s)) }
         }
@@ -197,7 +206,8 @@ enum Lookup {
         var t = cleanTitle(s).folding(options: [.diacriticInsensitive, .caseInsensitive, .widthInsensitive], locale: nil).lowercased()
         t = t.replacingOccurrences(of: "&", with: " and ").replacingOccurrences(of: "'", with: "").replacingOccurrences(of: "’", with: "")
         let roman = ["ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8", "ix": "9", "x": "10", "xi": "11", "xii": "12", "xiii": "13"]
-        let w = t.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { !["the", "a", "an"].contains($0) }
+        var w = t.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { !["the", "a", "an"].contains($0) }
+        if w.count > 2, w[w.count - 2] == "rev" { w.removeLast(2) }   // "Super Mario Bros. 3 Rev PRG1", outside the brackets
         return w.enumerated().map { i, x in i > 0 ? roman[x] ?? x : x }.joined(separator: " ")
     }
     static func regions(_ file: String) -> [String] {
