@@ -87,7 +87,8 @@ final class GameList {
         for (t, tw) in words {
             var s = t == k ? 1 : 2 * Double(w.intersection(tw).count) / Double(w.count + tw.count)
             if s < 1, numbers != tw.filter({ $0.allSatisfy(\.isNumber) }) { s *= 0.6 }   // Final Fantasy 3 isn't Final Fantasy 2
-            if s < 1, mains[t] == k { s = max(s, 0.9) }                                   // "Donkey Kong Country 2" for "... 2 - Diddy's Kong Quest"
+            // "Donkey Kong Country 2" is "... 2 - Diddy's Kong Quest"; "Final Fantasy" alone could be "... - Mystic Quest" or any other, so it is only offered
+            if s < 1, mains[t] == k { s = max(s, k.split(separator: " ").last?.allSatisfy(\.isNumber) == true ? 0.9 : 0.75) }
             if s < 1, t.hasPrefix(k + " ") { s = max(s, 0.6) }   // the start of a longer name, as typed in a search
             if s >= floor { out.append((t, s)) }
         }
