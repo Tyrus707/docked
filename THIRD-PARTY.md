@@ -1,11 +1,12 @@
 # What is inside the download
 
-Docked's download carries these, unchanged except that library paths were made relative. Each keeps its own licence; the texts are in [Licences](Licences) and in the download.
+Docked itself is under the [MIT licence](LICENSE). Its download carries the parts below, unchanged except that library paths were made relative. Each keeps its own licence. The texts are in [Licences](Licences) here, and inside the app in `Docked.app/Contents/Resources/Licences` (from the release after 1.7; earlier downloads carry only the licences that came inside each part).
 
 | Part | Version | Licence | Source |
 |---|---|---|---|
 | nxnative (the conversion engine, and its own [third-party parts](https://github.com/seedds/nxnative/blob/01439b0fe923929d275e2fd4337cbdf08b54fcfd/dm/third_party/README.md)) | 01439b0fe923 | MIT | https://github.com/seedds/nxnative |
-| Python (python-build-standalone, with OpenSSL, SQLite and others) | 3.14.10+20261124 | PSF and others | https://github.com/astral-sh/python-build-standalone |
+| Python (python-build-standalone, with OpenSSL, SQLite, libffi, zlib and others) | 3.14.10+20261124 | PSF; OpenSSL is Apache-2.0, and each other part keeps its own licence (listed in that release) | https://github.com/astral-sh/python-build-standalone |
+| SPIRV-Cross (prebuilt, part of nxnative) | as pinned by nxnative | Apache-2.0 (text in the engine's `dm/gfx/tools/spirv_cross_bin`) | https://github.com/KhronosGroup/SPIRV-Cross |
 | glslang | 16.6.0 | BSD, MIT, Apache-2.0, GPL-3.0-or-later | https://github.com/KhronosGroup/glslang |
 | SPIRV-Tools | 1.4.363.0 | Apache-2.0 | https://github.com/KhronosGroup/SPIRV-Tools |
 | Zstandard | | BSD-3-Clause or GPL-2.0 | https://github.com/facebook/zstd |
@@ -27,6 +28,8 @@ Docked's download carries these, unchanged except that library paths were made r
 | zbic (Python) | 1.0.1.post1 | GPLv2 | https://pypi.org/project/zbic/1.0.1.post1/ |
 | zstandard (Python) | 0.25.0 | BSD-3-Clause | https://pypi.org/project/zstandard/0.25.0/ |
 
-The complete source of zbic (GPL version 2), as used, is in [GPL-source](GPL-source) here and in the download.
+The complete source of zbic (GPL version 2), as used, is in [GPL-source](GPL-source) here and, from the release after 1.7, inside the app in `Contents/Resources/GPL-source`.
 
-RetroArch is not included. The icon was made for Docked.
+The nxnative engine is carried whole at the pinned commit, including its own per-game notes and data. Its authors state that nothing from any game is in it, and no keys or firmware are.
+
+RetroArch and its cores are not included. Docked only opens the RetroArch you installed yourself, so their GPL-3.0 licence does not extend to Docked, and Docked's MIT licence stays compatible with it either way. The icon and artwork were made for Docked.
