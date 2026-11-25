@@ -791,6 +791,7 @@ final class Model: ObservableObject {
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers = [:]; self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
         lookInWatched(force: true)
+        if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil { DispatchQueue.global(qos: .utility).async { Update.settle(Paths.root.appendingPathComponent("Backups")) } }
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
         // Fills the screen the way the green button does with Option held: still a window on the desktop, no Space of its own. Control-Command-F still gives true full screen.
         else if fullScreen { DispatchQueue.main.async { if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }), !w.styleMask.contains(.fullScreen), let s = w.screen ?? NSScreen.main { w.setFrame(s.visibleFrame, display: true) } } }

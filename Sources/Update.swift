@@ -16,7 +16,7 @@ enum Update {
     private static func run(_ tool: String, _ a: [String]) throws { let p = Process(); p.executableURL = URL(fileURLWithPath: tool); p.arguments = a; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice; try p.run(); p.waitUntilExit(); if p.terminationStatus != 0 { throw UpdateError("The update could not be prepared.") } }
 
     // Checks the update, builds the new app beside the old one, and swaps them in one step. Returns where the old one was kept.
-    @discardableResult static func install(_ zip: Data, _ sig: Data, version: String, over app: URL, backups: URL, current: String = appVersion, key: String = publicKey) throws -> URL {
+    @discardableResult static func install(_ zip: Data, _ sig: Data, version: String, over app: URL, backups: URL, current: String = appVersion, key: String = publicKey) throws -> URL? {
         let fm = FileManager.default
         guard version.range(of: #"^\d+(\.\d+){0,3}$"#, options: .regularExpression) != nil, newer(version, than: current) else { throw UpdateError("That is not a newer version.") }
         guard zip.count < limit, genuine(zip, sig, version: version, key: key) else { throw UpdateError("The update could not be verified, so nothing was changed. Download it from the Docked page instead.") }
@@ -38,13 +38,39 @@ enum Update {
         }
         return try swap(new, app, was: current, backups: backups)
     }
-    // The old one is kept, then both change places in one step
-    @discardableResult static func swap(_ new: URL, _ app: URL, was current: String, backups: URL) throws -> URL {
-        let fm = FileManager.default
-        try fm.createDirectory(at: backups, withIntermediateDirectories: true); let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd HHmmss"; let keep = backups.appendingPathComponent("Docked \(current) before \(f.string(from: Date())).app")
-        if clonefile(app.path, keep.path, 0) != 0 { try fm.copyItem(at: app, to: keep) }
-        guard renamex_np(new.path, app.path, UInt32(RENAME_SWAP)) == 0 else { try? fm.removeItem(at: keep); throw UpdateError(errno == EPERM || errno == EACCES ? "macOS did not allow Docked to replace itself. In System Settings, open Privacy & Security, then App Management, and turn on Docked." : "Docked could not be replaced. Nothing was changed.") }
+    // Both change places in one step, then the old one is kept as a single zip. Only one earlier version is ever kept, and never as an .app: macOS lists every .app it finds, so a pile of old ones looked like many Dockeds.
+    @discardableResult static func swap(_ new: URL, _ app: URL, was current: String, backups: URL) throws -> URL? {
+        guard renamex_np(new.path, app.path, UInt32(RENAME_SWAP)) == 0 else { throw UpdateError(errno == EPERM || errno == EACCES ? "macOS did not allow Docked to replace itself. In System Settings, open Privacy & Security, then App Management, and turn on Docked." : "Docked could not be replaced. Nothing was changed.") }
+        return keepOne(new, version: current, in: backups)   // the old app now sits where the new one was; the caller's work folder goes after
+    }
+    // Best effort: the update has already happened, so a backup that cannot be made does not undo it
+    @discardableResult static func keepOne(_ old: URL, version: String, in backups: URL) -> URL? {
+        let fm = FileManager.default; try? fm.createDirectory(at: backups, withIntermediateDirectories: true)
+        let keep = backups.appendingPathComponent("Docked \(version) (previous version).zip"), part = backups.appendingPathComponent(".docked-backup-\(UUID().uuidString).zip")
+        guard (try? run("/usr/bin/ditto", ["-c", "-k", "--keepParent", old.path, part.path])) != nil else { try? fm.removeItem(at: part); return nil }
+        tidy(backups, except: part.lastPathComponent)
+        guard (try? fm.moveItem(at: part, to: keep)) != nil else { try? fm.removeItem(at: part); return nil }
         return keep
+    }
+    // Up to 1.5 every update left a whole old app in Backups. The newest of them becomes the one zip; the rest go.
+    static func settle(_ backups: URL) {
+        let fm = FileManager.default, names = (try? fm.contentsOfDirectory(atPath: backups.path)) ?? []
+        let olds = names.filter { $0.hasPrefix("Docked ") && $0.contains(" before ") && $0.hasSuffix(".app") }.map { backups.appendingPathComponent($0) }
+        guard !olds.isEmpty else { return }
+        var kept = names.first(where: { $0.hasSuffix("(previous version).zip") })
+        func ver(_ a: URL) -> String { (NSDictionary(contentsOf: a.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String) ?? "0" }
+        if kept == nil, let newest = olds.max(by: { newer(ver($1), than: ver($0)) || (ver($0) == ver($1) && $0.lastPathComponent < $1.lastPathComponent) }) {
+            let v = ver(newest)
+            let part = backups.appendingPathComponent(".docked-backup-\(UUID().uuidString).zip")
+            kept = "Docked \(v) (previous version).zip"
+            guard (try? run("/usr/bin/ditto", ["-c", "-k", "--keepParent", newest.path, part.path])) != nil, (try? fm.moveItem(at: part, to: backups.appendingPathComponent(kept!))) != nil else { try? fm.removeItem(at: part); return }
+        }
+        tidy(backups, except: kept ?? "")
+    }
+    // Earlier copies Docked itself left there: old "Docked … before ….app" folders and older zips. Nothing else in the folder is touched.
+    static func tidy(_ backups: URL, except: String = "") {
+        let fm = FileManager.default
+        for n in (try? fm.contentsOfDirectory(atPath: backups.path)) ?? [] where n != except && n.hasPrefix("Docked ") && ((n.contains(" before ") && n.hasSuffix(".app")) || n.hasSuffix("(previous version).zip")) { try? fm.removeItem(at: backups.appendingPathComponent(n)) }
     }
     static func fetch(_ version: String, _ done: @escaping (Result<(Data, Data), Error>) -> Void) {
         let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil; c.timeoutIntervalForResource = 300; let s = URLSession(configuration: c), at = base + "v\(version)/Docked-Update.zip"

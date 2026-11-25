@@ -32,10 +32,10 @@ enum Arrive {
         guard p.terminationStatus == 0 else { throw UpdateError("This copy of Docked is damaged. Download it again. Nothing was changed.") }
         guard offer(me: me, places: [dir]) == o else { throw UpdateError("The Docked in \(dir.lastPathComponent) has changed, so nothing was replaced.") }
         switch o {
-        case let .update(_, has): try Update.swap(new, app, was: has, backups: backups)
+        case let .update(_, has): _ = try Update.swap(new, app, was: has, backups: backups)
         case .move: guard renamex_np(new.path, app.path, UInt32(RENAME_EXCL)) == 0 else { throw UpdateError("Docked could not be moved. Drag it to \(dir.lastPathComponent) yourself.") }
         }
     }
     static func title(_ o: Offer) -> String { switch o { case let .update(_, has): return "Update Docked \(has) to \(appVersion)?"; case .move: return "Move Docked to Applications?" } }
-    static func text(_ o: Offer) -> String { switch o { case let .update(a, has): return "Docked \(has) is in \(a.deletingLastPathComponent().lastPathComponent). This copy is newer and can take its place. Your games, saves and settings stay, and the old version is kept in the Docked folder, in Backups."; case .move: return "It opens from there from now on. You can delete the download afterwards." } }
+    static func text(_ o: Offer) -> String { switch o { case let .update(a, has): return "Docked \(has) is in \(a.deletingLastPathComponent().lastPathComponent). This copy is newer and can take its place. Your games, saves and settings stay, and the old version is kept as one zip in the Docked folder, in Backups."; case .move: return "It opens from there from now on. You can delete the download afterwards." } }
 }
