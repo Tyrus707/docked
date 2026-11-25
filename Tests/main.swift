@@ -414,7 +414,8 @@ check(!checkGame(fakeGame("Other"), titleID: "0100000000020000", quick: false, w
 let half = whole.filter { $0.key != "prebuilt.tsv" }; check(gc(fakeGame("Half", pso: half)).problems.isEmpty && gc(fakeGame("Half", pso: half)).notes.contains { $0.contains("incomplete") }, "a partly built archive is noticed")
 var some = whole; some["archive.tsv"] = "failed\t12 bases, 3 compute pipelines (x)\n"; check(gc(fakeGame("Some", pso: some)).notes.contains { $0.hasPrefix("15 of") }, "pipelines the compiler left out are counted")
 check(gc(fakeGame("Warned"), warned: ["Pipeline archive: failed"]).notes.count == 1 && gc(fakeGame("Quick"), quick: true).ok, "a step that warned is noticed; a quick conversion has no archive to check")
-check(gc(fakeGame("Half", pso: half)).text.contains("leftovers were kept") && gc(fakeGame("Unsigned"), signed: false).text.hasPrefix("Converted, but"), "said plainly")
+check(gc(fakeGame("Half", pso: half)).text().contains("leftovers were kept") && gc(fakeGame("Unsigned"), signed: false).text().hasPrefix("Converted, but") && gc(fakeGame("Unsigned"), signed: false).text(again: true).contains("second time"), "said plainly")
+check(gc(fakeGame("Half", pso: half)).mendable && gc(fakeGame("Unsigned"), signed: false).mendable && !checkGame(fakeGame("Other"), titleID: "0100000000020000", quick: false, warned: [], verify: { _ in true }).mendable, "converting again is tried only where it can help")
 let realApp = fakeGame("Real"); let cs = run("/usr/bin/codesign", ["--force", "--sign", "-", realApp.path]); check(cs.code != 0 || signatureHolds(realApp) == true, "codesign agrees with a signed app")
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)

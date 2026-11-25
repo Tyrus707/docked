@@ -4,17 +4,19 @@ import Foundation
 struct GameCheck: Equatable {
     var problems: [String] = []   // it may not open, or not as it should
     var notes: [String] = []      // it opens, but its graphics are not all prepared, so the first play stutters while the Mac makes the rest
+    var mendable = true   // converting again can fix it: the engine redoes only what is missing, and signs the app again
     var ok: Bool { problems.isEmpty && notes.isEmpty }
-    var text: String {
-        if !problems.isEmpty { return "Converted, but " + problems.joined(separator: ", and ") + ". Its leftovers were kept, so converting it again is quicker." }
-        return "Ready to play, but " + notes.joined(separator: ", and ") + ", so the first play may stutter. Its leftovers were kept, so converting it again only redoes that part."
+    func text(again: Bool = false) -> String {
+        let tried = again ? " Docked already converted it a second time to fix this, and it happened again." : ""
+        if !problems.isEmpty { return "Converted, but " + problems.joined(separator: ", and ") + "." + tried + " Its leftovers were kept, so converting it again is quicker." }
+        return "Ready to play, but " + notes.joined(separator: ", and ") + ", so the first play may stutter." + tried + " Its leftovers were kept, so converting it again only redoes that part."
     }
 }
 
 // warned: the steps the engine said finished without what they make. verify: whether the app's signature holds (codesign; a test passes its own).
 func checkGame(_ app: URL, titleID: String, quick: Bool, warned: [String], verify: (URL) -> Bool? = signatureHolds) -> GameCheck {
     var c = GameCheck()
-    guard selfContained(app, titleID: titleID) else { c.problems.append("it is missing a part it needs, or still uses files outside itself"); return c }
+    guard selfContained(app, titleID: titleID) else { c.problems.append("it is missing a part it needs, or still uses files outside itself"); c.mendable = false; return c }
     if verify(app) == false { c.problems.append("its signature does not match what is inside it, so macOS may refuse to open it") }
     for w in warned { c.notes.append("one step did not finish (\(w))") }
     guard !quick else { return c }   // the game builds its pipelines itself on its first start, as chosen

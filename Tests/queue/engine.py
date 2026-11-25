@@ -23,7 +23,9 @@ if '-o' in a:
     log('phone ' + a[a.index('--platform') + 1]); say(ev='stage_end', k=1, name='Mac shaders', ok=True); os.remove(root + '/busy'); log('end ' + tid); sys.exit(0)
 os.makedirs(app + '/Contents/MacOS', exist_ok=True); shutil.copy('/usr/bin/true', app + '/Contents/MacOS/dmhost'); os.chmod(app + '/Contents/MacOS/dmhost', 0o755)
 plistlib.dump({'DMTitleID': tid, 'CFBundleName': name, 'CFBundleExecutable': 'dmhost', 'CFBundleShortVersionString': '1.0.0', 'LSMinimumSystemVersion': '13.0'}, open(app + '/Contents/Info.plist', 'wb'))
-if mode != 'unsigned': subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', app], check=True, capture_output=True)   # as the real engine signs its apps
+once = mode == 'flaky' and not os.path.exists(root + '/flaky-' + tid)   # unsigned the first time only
+if once: open(root + '/flaky-' + tid, 'w').close()
+if mode != 'unsigned' and not once: subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', app], check=True, capture_output=True)   # as the real engine signs its apps
 if mode == 'warn': say(ev='stage_end', k=1, name='Pipeline archive', ok=True, warn=True, summary='failed, the app is packed without one')
 if mode == 'linked' and not os.path.lexists(app + '/Contents/msl'): os.symlink(work + '/extract', app + '/Contents/msl')
 open(app + '.key', 'w').write('k'); say(ev='stage_end', k=1, name='Mac shaders', ok=True); os.remove(root + '/busy'); log('end ' + tid)

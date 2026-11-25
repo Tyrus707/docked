@@ -404,8 +404,10 @@ final class Model: ObservableObject {
     }
     private func settle(_ j: Job?, _ c: GameCheck = GameCheck()) {
         let g = builder.titleID.flatMap { id in games.first(where: { $0.titleID.uppercased() == id }) }
-        // A game that did not pass keeps everything it was made from: nothing is removed, whatever was chosen
-        if !c.ok { queue.problems.append(Problem(title: g?.name ?? builder.title, reason: c.text, report: c.problems.isEmpty ? nil : builder.report)) }
+        // One that did not pass is converted once more, first in line: the engine keeps what it finished, so only the missing part is redone
+        if !c.ok, c.mendable, let j, j.again != true { var a = j; a.id = UUID(); a.again = true; queue.waiting.insert(a, at: 0); startNext(); return }
+        // A game that still did not pass keeps everything it was made from: nothing is removed, whatever was chosen
+        if !c.ok { queue.problems.append(Problem(title: g?.name ?? builder.title, reason: c.text(again: j?.again == true), report: c.problems.isEmpty ? nil : builder.report)) }
         let (t, b) = Notify.text(done: builder.title, failed: nil, left: queue.waiting.count, problems: queue.problems.count); Notify.say(t, b)
         guard let g else { startNext(); return }
         if !c.ok { offers.removeAll { $0.id == g.id }; if c.problems.isEmpty { offers.append(g) }; startNext(); return }

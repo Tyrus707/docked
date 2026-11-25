@@ -82,7 +82,7 @@ Docked is tested on macOS 27.2. Older versions and Intel Macs are supported in t
 - **A queue that keeps going.** Add as many games as you like. The queue survives a restart, and if one game fails the rest carry on.
 - **Add an update or DLC later.** Docked reuses the work it has already done and keeps your save.
 - **Play with Settings.** Choose frame rate, resolution and language, where the game allows it.
-- **Checked before it's called done.** When a game finishes, Docked makes sure the app is whole, holds everything it needs and has a signature that matches. If its graphics were only partly prepared, it tells you, and keeps what it needs to convert that game again quickly.
+- **Checked before it's called done.** When a game finishes, Docked makes sure the app is whole, holds everything it needs and has a signature that matches. If something is off, such as graphics that were only partly prepared, Docked converts the game once more, which redoes only the missing part. If it's still not right, Docked tells you and keeps what it needs to try again quickly.
 - **A newer engine, without a new Docked.** New game profiles and fixes arrive as engine updates, signed like Docked's own. Docked checks every file, tries the new engine, and only swaps it in while nothing is converting. The previous engine is kept, and **Settings › Setup** can switch back.
 - **Clear reports.** If something goes wrong, **Copy Report** gives you a summary to share with your name, folders and anything that looks like a key taken out.
 
