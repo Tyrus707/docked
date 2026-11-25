@@ -23,7 +23,7 @@ struct Bios {
 enum RetroArch {
     // The reviewed release, and its download's SHA-256. A different file is refused.
     static let version = "1.22.2"
-    static var dmgSHA = "PENDING-RETROARCH-SHA256"
+    static var dmgSHA = "81b79121ba26d539064ae13b4d0419a120c3d165afbe656cf5f5412b15fdb434"
     static var buildbot = "https://buildbot.libretro.com"
     static var home = Paths.root.appendingPathComponent("RetroArch")
     static var app = home.appendingPathComponent("RetroArch.app")
