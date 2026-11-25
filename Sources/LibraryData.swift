@@ -26,6 +26,7 @@ enum Section: Hashable {
         case .smart(let s): return s.name
         }
     }
+    var machine: Console? { if case .console(let c) = self { return consoleFor(id: c) }; return nil }
     var symbol: String {
         switch self {
         case .home: return "house"

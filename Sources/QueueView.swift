@@ -33,7 +33,7 @@ struct CleanUpView: View {
                                 Toggle(isOn: .init(get: { i.on && i.blocked == nil }, set: { v in if let k = model.cleaning?.items.firstIndex(where: { $0.id == i.id }) { model.cleaning?.items[k].on = v } })) {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(model.cleaning?.one == nil && i.title != "Your keys file, \(i.name)" ? "\(i.name): \(i.title.lowercased())" : i.title)
-                                        Text(i.detail).font(.caption).foregroundStyle(i.blocked == nil ? Color.secondary : Color(light: 0x8A4B00, dark: 0xF2B45C)).fixedSize(horizontal: false, vertical: true)
+                                        Text(i.detail).font(.caption).foregroundStyle(i.blocked == nil ? Color.secondary : style.warn).fixedSize(horizontal: false, vertical: true)
                                     }
                                 }.disabled(i.blocked != nil)
                                 Spacer()
@@ -58,7 +58,7 @@ struct QueueBar: View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(model.queue.problems) { p in
                 HStack(alignment: .firstTextBaseline) {
-                    Image(systemName: "exclamationmark.circle").foregroundStyle(Color(light: 0xB3261E, dark: 0xFF8A80)).accessibilityHidden(true)
+                    Image(systemName: "exclamationmark.circle").foregroundStyle(style.danger).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) { Text(p.title).font(.callout.weight(.medium)); Text(p.reason).font(.caption).foregroundStyle(.secondary).lineLimit(3).textSelection(.enabled) }
                     Spacer(); if let r = p.report { Button("Copy Report") { model.copyReport(r) } }; Button("Dismiss") { model.queue.problems.removeAll { $0.id == p.id } }
                 }
@@ -66,12 +66,12 @@ struct QueueBar: View {
             if !model.queue.waiting.isEmpty {
                 HStack {
                     Button { open.toggle() } label: { Label(model.queue.waiting.count == 1 ? "1 game waiting" : "\(model.queue.waiting.count) games waiting", systemImage: open ? "chevron.down" : "chevron.right") }.buttonStyle(.plain).font(.headline).foregroundStyle(style.text)
-                    if model.queue.paused { Text("Paused").font(.callout).foregroundStyle(Color(light: 0x8A4B00, dark: 0xF2B45C)) }
+                    if model.queue.paused { Text("Paused").font(.callout).foregroundStyle(style.warn) }
                     Spacer()
                     if model.queue.paused { Button(builder.running ? "Continue After This" : "Continue") { model.resumeQueue() } } else if builder.running { Button("Pause After This") { model.queue.paused = true } }
                 }
                 let s = spaceText(need: spaceForQueue(model.queue.waiting), free: freeSpace())
-                Text(s.text).font(.caption).foregroundStyle(s.short ? Color(light: 0x8A4B00, dark: 0xF2B45C) : Color.secondary)
+                Text(s.text).font(.caption).foregroundStyle(s.short ? style.warn : Color.secondary)
                 if open {
                     ScrollView {
                         VStack(spacing: 4) {

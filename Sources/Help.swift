@@ -42,6 +42,7 @@ let helpTopics: [HelpTopic] = [
         "To give a game theme music, drop a sound file on it or choose Choose Theme Music in its details. It plays while the game is selected. Theme music in Settings turns it off everywhere.",
         "A smart collection fills itself. Choose + beside Collections, then New Smart Collection.",
         "Docked opens filling the screen and looks for a new version once at launch. Both can be switched off in Settings.",
+        "Choose a theme in Settings, under General. Docked keeps its own look, whatever your Mac's light or dark setting.",
         "To change a game's cover, drop a picture on it or choose Choose Cover from its ••• menu. Covers or Icons is in Settings.",
         "Games from other consoles can get their cover, year and description found for them, if you say yes the first time. A wrong one? Choose Find Details Again from its ••• menu. Find covers and details is in Settings.",
         "Full screen: Control-Command-F. Quit: Command-Q, or hold the controller's Home button for 2 seconds. Save in the game first.",
@@ -64,6 +65,7 @@ let helpTopics: [HelpTopic] = [
 ]
 
 struct HelpView: View {
+    private let look = style
     @Environment(\.dismiss) var dismiss
     var body: some View {
         VStack(spacing: 0) {

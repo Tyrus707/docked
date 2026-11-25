@@ -47,12 +47,12 @@ struct GuideView: View {
             Text("Converting uses Apple's free developer tools. Docked checks each step and moves on by itself.").foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
             let now = nextCheck(model.checks)
             ForEach(model.checks) { c in
-                HStack(spacing: 10) { Image(systemName: c.ok ? "checkmark.circle.fill" : c.id == now?.id ? "arrow.right.circle.fill" : "circle").foregroundStyle(c.ok ? Color(light: 0x1E7A3C, dark: 0x6FCF8A) : c.id == now?.id ? style.accent : style.line).accessibilityLabel(c.ok ? "Done" : "Not done"); Text(c.title).foregroundStyle(c.ok || c.id == now?.id ? style.text : style.soft); Spacer(); if c.ok { Text(c.detail).font(.caption).foregroundStyle(style.soft) } }
+                HStack(spacing: 10) { Image(systemName: c.ok ? "checkmark.circle.fill" : c.id == now?.id ? "arrow.right.circle.fill" : "circle").foregroundStyle(c.ok ? style.ok : c.id == now?.id ? style.accent : style.line).accessibilityLabel(c.ok ? "Done" : "Not done"); Text(c.title).foregroundStyle(c.ok || c.id == now?.id ? style.text : style.soft); Spacer(); if c.ok { Text(c.detail).font(.caption).foregroundStyle(style.soft) } }
             }
             if let now { VStack(alignment: .leading, spacing: 8) { action(now) }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(style.tile, in: RoundedRectangle(cornerRadius: 10)) }
             else if model.checks.isEmpty { HStack { ProgressView().controlSize(.small); Text("Checking your Mac…").foregroundStyle(style.soft) } }
-            else { Label("Your Mac is ready.", systemImage: "checkmark.seal.fill").foregroundStyle(Color(light: 0x1E7A3C, dark: 0x6FCF8A)) }
-            if let p = model.installProblem { Text(p).font(.callout).foregroundStyle(Color(light: 0xB3261E, dark: 0xFF8A80)).fixedSize(horizontal: false, vertical: true) }
+            else { Label("Your Mac is ready.", systemImage: "checkmark.seal.fill").foregroundStyle(style.ok) }
+            if let p = model.installProblem { Text(p).font(.callout).foregroundStyle(style.danger).fixedSize(horizontal: false, vertical: true) }
         }
     }
     @ViewBuilder func action(_ c: Check) -> some View {
@@ -77,7 +77,7 @@ struct GuideView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Games in .nsp, .xci, .nsz and .xcz files are locked. Docked unlocks them with the prod.keys file from your own Switch. .nup files and game folders don't need it.").foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
             dropBox(found == nil ? "Drop your prod.keys file here" : (found! as NSString).lastPathComponent, found == nil ? "key" : "key.fill") { u in model.offerKeys(u) } choose: { if model.pickKeys() { model.objectWillChange.send() } }
-            if let f = found { let v = readKeys(f); Label(v.text, systemImage: v.usable ? "checkmark.circle.fill" : "exclamationmark.triangle").font(.callout).foregroundStyle(v.usable ? Color(light: 0x1E7A3C, dark: 0x6FCF8A) : Color(light: 0x8A4B00, dark: 0xF2B45C)).fixedSize(horizontal: false, vertical: true) }
+            if let f = found { let v = readKeys(f); Label(v.text, systemImage: v.usable ? "checkmark.circle.fill" : "exclamationmark.triangle").font(.callout).foregroundStyle(v.usable ? style.ok : style.warn).fixedSize(horizontal: false, vertical: true) }
             Text("It stays where it is. Docked remembers its place and never copies or sends it.").font(.caption).foregroundStyle(style.soft)
         }
     }

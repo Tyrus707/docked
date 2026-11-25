@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var moving: () -> Bool = { false }
     static var leaving: () -> Void = {}
     static var waiting: () -> Int = { 0 }
+    func applicationWillFinishLaunching(_ n: Notification) { Style.apply() }
     func applicationWillTerminate(_ n: Notification) { Self.leaving() }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { !(Self.builder?.running ?? false) && !Self.moving() }
     func applicationShouldTerminate(_ s: NSApplication) -> NSApplication.TerminateReply {
@@ -50,7 +51,8 @@ final class Model: ObservableObject {
     @Published var games: [Game] = []
     @Published var checks: [Check] = []
     @Published var checking = false
-    @Published var message: String?
+    @Published var message: String?   // an alert, for a problem the player must act on
+    @Published var notice: Notice?     // a quiet word in the tray (Tray.swift)
     @Published var showSetup = false
     @Published var showHelp = false
     @Published var showReview = false
@@ -202,7 +204,7 @@ final class Model: ObservableObject {
     }
     func setTheme(_ g: Game, _ u: URL) {
         guard !addingTheme else { return }; addingTheme = true; theme.stop(0.1)
-        Theme.keep(u, for: g) { e in self.addingTheme = false; if let e { self.message = e } else if !self.themes { self.message = "The music is saved. Theme music is off in Settings." }; self.themeUpdate() }
+        Theme.keep(u, for: g) { e in self.addingTheme = false; if let e { self.message = e } else if !self.themes { self.tell("The music is saved. Theme music is off in Settings.") }; self.themeUpdate() }
     }
     func clearTheme(_ g: Game) { theme.stop(0.2); Theme.remove(g); objectWillChange.send() }
     var chosen: Game? { selected.flatMap { id in games.first { $0.id == id } } }
@@ -215,12 +217,14 @@ final class Model: ObservableObject {
         DispatchQueue.global(qos: .utility).async { let s = folderSize(g.url); DispatchQueue.main.async { self.making.remove("size" + g.id); self.sizes[g.id] = s; self.coverTick += 1 } }
         return nil
     }
+    // Docked's own theme, chosen in Settings; it does not follow the Mac's light or dark setting
+    @Published var palette = Style.current { didSet { UserDefaults.standard.set(palette.id, forKey: "theme"); Style.current = palette; Style.apply() } }
     @Published var look = Look(rawValue: UserDefaults.standard.string(forKey: "look") ?? "") ?? .covers { didSet { UserDefaults.standard.set(look.rawValue, forKey: "look") } }
     var arrived: String?   // a game that has just been converted, until its tile has come down on the shelf
     private func playRom(_ g: Game, _ r: Rom) {
         guard let c = console(r.console) else { return }
         if let p = RetroArch.problem(c, rom: r.path) { message = p; return }
-        if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r) }; if retro == nil { message = "Docked is getting RetroArch ready for \(c.name). The game starts when it's done." }; return }
+        if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r) }; if retro == nil { tell("Docked is getting \(c.name) games ready. The game starts when it's done.") }; return }
         if let b = RetroArch.missingBios(c, rom: r.path), b.required || !biosAsked(c) { askBios(c) { [weak self] in self?.playRom(g, r) }; return }
         do { try RetroArch.prepare() } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
         let ra = NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == RetroArch.app.path }
@@ -349,7 +353,7 @@ final class Model: ObservableObject {
 
     // One game, or everything. Measured off the main thread: a conversion's folder holds thousands of files.
     func cleanUp(_ g: Game?) {
-        guard moving == nil, !removing else { message = "Wait until Docked has finished its current job."; return }
+        guard moving == nil, !removing else { tell("Wait until Docked has finished its current job.", good: false); return }
         let lib = games.filter { $0.rom == nil }, busy = busyBuilds, src = sources, inUse = Set(queue.all.compactMap(\.family)), k = findKeys(keys), needed = keysNeeded
         cleaning = CleanUp(one: g)
         DispatchQueue.global(qos: .userInitiated).async {
@@ -364,7 +368,7 @@ final class Model: ObservableObject {
                 if !o.isEmpty { c.items.append(CleanItem(kind: .originals(o), game: x, name: x.name, bytes: o.bytes, on: false)) }
             }
             if let k { c.items.append(CleanItem(kind: .keys(k), name: (k as NSString).lastPathComponent, bytes: 0, on: false, blocked: needed ? "Games waiting to convert need it." : nil)) }
-            DispatchQueue.main.async { if self.cleaning?.one?.id == g?.id, self.cleaning?.ready == false { if c.items.isEmpty || (g != nil && !c.items.contains { $0.game != nil }) { self.cleaning = nil; self.message = g == nil ? "There is nothing to clean up." : "There is nothing left over from \(g!.name)."; if let g { self.offers.removeAll { $0.id == g.id } } } else { self.cleaning = c } } }
+            DispatchQueue.main.async { if self.cleaning?.one?.id == g?.id, self.cleaning?.ready == false { if c.items.isEmpty || (g != nil && !c.items.contains { $0.game != nil }) { self.cleaning = nil; self.tell(g == nil ? "There is nothing to clean up." : "There is nothing left over from \(g!.name)."); if let g { self.offers.removeAll { $0.id == g.id } } } else { self.cleaning = c } } }
         }
     }
     func doCleanUp(_ c: CleanUp) {
@@ -482,6 +486,7 @@ final class Model: ObservableObject {
     // From settings to another sheet: one has to be gone before the next can come
     var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
+    func leaveSetup(_ f: @escaping () -> Void) { showSetup = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     @Published var guided = UserDefaults.standard.bool(forKey: "guided") { didSet { UserDefaults.standard.set(guided, forKey: "guided") } }
     @Published var fetching = false
@@ -535,7 +540,7 @@ final class Model: ObservableObject {
 
     func moveGame(_ g: Game) {
         guard !isOpen(g) else { message = "Save and quit \(g.name) first."; return }
-        guard !builder.running, moving == nil else { message = "Wait until Docked has finished its current job."; return }
+        guard !builder.running, moving == nil else { tell("Wait until Docked has finished its current job.", good: false); return }
         if let u = pickFolder(g.url.deletingLastPathComponent()) { move(g.url, to: u) }
     }
 
@@ -549,7 +554,7 @@ final class Model: ObservableObject {
         checking = true
         DispatchQueue.global(qos: .userInitiated).async {
             let c = runChecks()
-            DispatchQueue.main.async { self.checks = c; self.checking = false; self.startNext(); if first, !self.guided, self.games.isEmpty { self.showGuide = true } else if first, !self.ready, cannotConvert() == nil { self.showSetup = true } }
+            DispatchQueue.main.async { self.checks = c; self.checking = false; self.startNext(); if first, !self.ready, cannotConvert() == nil, !self.queue.waiting.isEmpty { self.showSetup = true }; self.pickUpSwitch() }
         }
     }
 
@@ -597,7 +602,8 @@ final class Model: ObservableObject {
         let others = picked.filter { !urls.contains($0) }
         if !others.isEmpty && !showReview { addRoms(others) }
         if urls.isEmpty { if showReview && !others.isEmpty { reviewNote = InputError.unsupported.errorDescription }; return }
-        guard ready else { showSetup = true; return }
+        // The first Switch game: this Mac gets ready for it, and the game is kept until it is
+        guard ready else { if cannotConvert() == nil { for u in urls where !waitingSwitch.contains(u) { waitingSwitch.append(u) } }; if !sheetUp { showSetup = true }; recheck(); return }
         let good = urls.filter { u in
             var d: ObjCBool = false
             return fm.fileExists(atPath: u.path, isDirectory: &d) && (d.boolValue || packageTypes.contains(u.pathExtension.lowercased()) || u.pathExtension.lowercased() == "nup")
@@ -605,6 +611,13 @@ final class Model: ObservableObject {
         review.add(good)
         if good.count < urls.count { showReview ? (reviewNote = InputError.unsupported.errorDescription) : (message = InputError.unsupported.errorDescription) }
         if !good.isEmpty { if !showReview { setReviewPlace() }; showReview = true }
+    }
+
+    // Switch games added before this Mac was ready: brought back once it is, unless something else is on screen
+    @Published var waitingSwitch: [URL] = []
+    func pickUpSwitch() {
+        guard ready, !waitingSwitch.isEmpty, !sheetUp else { return }
+        let u = waitingSwitch; waitingSwitch = []; add(u)
     }
 
     // A game that is already converted: start from the files it was made from, then add to them.
@@ -671,7 +684,7 @@ final class Model: ObservableObject {
     }
     var waits: Bool { builder.running || moving != nil || removing || !queue.waiting.isEmpty }
     func queueTime(_ now: Double) -> Double { now + queue.waiting.reduce(0) { $0 + builder.whole(quick: $1.quick, phone: $1.phone, xcode: $1.xcode) } }
-    func copyReport(_ t: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string); message = "The report is copied. Your name, folders, addresses and anything like a key are taken out. Read it before you post it." }
+    func copyReport(_ t: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string); tell("Report copied, with your name, folders and keys taken out. Read it before you post it.") }
     // ---- moving with a controller or the arrow keys ----
     @Published var cursor: Cursor?
     @Published var padUsed = false
@@ -715,7 +728,7 @@ final class Model: ObservableObject {
     }
     func installUpdate(_ v: String) {
         guard !updating else { return }
-        guard !builder.running, moving == nil, !removing, !installing, !engineBusy, !checkingGame else { message = "Docked can update once it has finished its current job."; return }
+        guard !builder.running, moving == nil, !removing, !installing, !engineBusy, !checkingGame else { tell("Docked can update once it has finished its current job.", good: false); return }
         updating = true
         Update.fetch(v) { r in
             switch r {
@@ -726,7 +739,7 @@ final class Model: ObservableObject {
                     DispatchQueue.main.async {
                         self.updating = false
                         switch r { case let .failure(e): self.message = e.localizedDescription
-                        case .success: self.update = nil; if self.builder.running || self.moving != nil || self.removing { self.message = "Docked \(v) is in place. It opens next time." } else { Update.reopen(Bundle.main.bundleURL); NSApp.terminate(nil) } }
+                        case .success: self.update = nil; if self.builder.running || self.moving != nil || self.removing { self.tell("Docked \(v) is in place. It opens next time.") } else { Update.reopen(Bundle.main.bundleURL); NSApp.terminate(nil) } }
                     }
                 }
             }
@@ -741,22 +754,22 @@ final class Model: ObservableObject {
     var engineFree: Bool { !builder.running && queue.current == nil && moving == nil && !removing && !installing && !updating && !checkingGame }
     func lookForEngine(quiet: Bool = false) {
         guard !checkingEngine, !engineBusy else { return }
-        guard Paths.unpacked else { if !quiet { message = "Install the conversion tools first. A newer engine can come after that." }; return }
+        guard Paths.unpacked else { if !quiet { tell("Install the conversion tools first. A newer engine can come after that.", good: false) }; return }
         checkingEngine = true
         Engine.check { a, m, s in
             self.checkingEngine = false
             switch a {
             case let .available(i): if let m, let s { self.engine = i; self.engineSigned = (m, s) }
-            case .newest: self.engine = nil; if !quiet { self.message = "You have the newest conversion engine." }
+            case .newest: self.engine = nil; if !quiet { self.tell("You have the newest conversion engine.") }
             case let .needsApp(v): self.engine = nil; if !quiet { self.message = "A newer conversion engine needs Docked \(v). Update Docked first." }
-            case .unknown: if !quiet { self.message = "Docked could not check for a newer engine. Try again later." }
+            case .unknown: if !quiet { self.tell("Docked could not check for a newer engine. Try again later.", good: false) }
             }
         }
     }
     func installEngine() {
         guard !engineBusy, let signed = engineSigned else { return }
         let (m, s) = signed
-        guard engineFree else { message = "Docked can update its engine once it has finished its current job."; return }
+        guard engineFree else { tell("Docked can update its engine once it has finished its current job.", good: false); return }
         engineBusy = true; let day = engine?.when.map(engineDay)
         DispatchQueue.global(qos: .userInitiated).async {
             let r = Result { try Engine.prepare(manifest: m, sig: s) }
@@ -765,8 +778,8 @@ final class Model: ObservableObject {
                 case let .failure(e): self.message = e.localizedDescription
                 case let .success(next):
                     // Nothing can have started meanwhile, but the swap is the one step that must never happen during a conversion
-                    guard self.engineFree else { try? FileManager.default.removeItem(at: next); self.message = "Docked can update its engine once it has finished its current job."; break }
-                    do { try Engine.swapIn(next); self.engine = nil; self.engineSigned = nil; self.message = "The conversion engine is updated" + (day.map { " to the one from \($0)" } ?? "") + ". Games you already converted stay as they are. If a game converts worse than before, Settings can go back to the engine you had." }
+                    guard self.engineFree else { try? FileManager.default.removeItem(at: next); self.tell("Docked can update its engine once it has finished its current job.", good: false); break }
+                    do { try Engine.swapIn(next); self.engine = nil; self.engineSigned = nil; self.tell("The conversion engine is updated" + (day.map { " to the one from \($0)" } ?? "") + ". Converted games stay as they are, and Settings can switch back.") }
                     catch { self.message = error.localizedDescription }
                 }
                 self.engineBusy = false; self.recheck()
@@ -775,8 +788,8 @@ final class Model: ObservableObject {
     }
     func engineBack() {
         guard !engineBusy else { return }
-        guard engineFree else { message = "Docked can change its engine once it has finished its current job."; return }
-        do { try Engine.goBack(); engine = nil; message = "Docked has switched engines. Settings can switch back." } catch { message = error.localizedDescription }
+        guard engineFree else { tell("Docked can change its engine once it has finished its current job.", good: false); return }
+        do { try Engine.goBack(); engine = nil; tell("Docked has switched engines. Settings can switch back.") } catch { message = error.localizedDescription }
         recheck()
     }
     @Published var checkingUpdate = false
@@ -802,8 +815,8 @@ final class Model: ObservableObject {
         checkForUpdate { a in
             self.checkingUpdate = false
             switch a {
-            case .newest: self.message = "You have the newest Docked (\(appVersion))."
-            case .unknown: self.message = "Docked could not check for updates. Try again later."
+            case .newest: self.tell("You have the newest Docked (\(appVersion)).")
+            case .unknown: self.tell("Docked could not check for updates. Try again later.", good: false)
             case let .available(v): let n = NSAlert(); n.messageText = "Docked \(v) is available"; n.informativeText = "You have \(appVersion). Docked checks the update is genuine, keeps a copy of this version, and reopens. Your games and settings stay."; n.addButton(withTitle: "Update and Reopen"); n.addButton(withTitle: "Not Now"); if n.runModal() == .alertFirstButtonReturn { self.update = v; self.installUpdate(v) }
             }
         }
@@ -844,21 +857,10 @@ struct ContentView: View {
                     .overlay(alignment: .bottom) { if let g = model.offers.first, model.chosen == nil { FinishCard(game: g, more: model.offers.count - 1).id(g.id).padding(20).transition(still ? .opacity : .move(edge: .bottom).combined(with: .opacity)) } }
                     .animation(still ? nil : .spring(response: 0.42, dampingFraction: 0.8), value: model.chosen == nil ? model.offers.first?.id : nil)
             }
-            if let w = model.retro { Divider(); HStack { if let f = w.fraction { ProgressView(value: f).frame(width: 140).tint(style.accent).accessibilityLabel("Download progress") } else { ProgressView().controlSize(.small) }; Text(w.what).foregroundStyle(style.text); Spacer() }.padding(16) }
-            if let m = model.moving { Divider(); HStack { ProgressView().controlSize(.small); Text("Moving \(m)…"); Spacer() }.padding(16) }
-            if let f = model.filing { Divider(); HStack { ProgressView().controlSize(.small); Text(f).foregroundStyle(style.text); Spacer() }.padding(16) }
-            if let n = model.newlyAdded { Divider(); HStack { Image(systemName: "tray.and.arrow.down").foregroundStyle(style.accent).accessibilityHidden(true); Text(n).foregroundStyle(style.text); Spacer(); Button("Show") { model.section = .all; model.sort = .added; model.newlyAdded = nil }; Button("OK") { model.newlyAdded = nil } }.padding(.horizontal, 16).padding(.vertical, 10) }
-            if model.update == nil, let e = model.engine { Divider(); HStack { Image(systemName: "gearshape.2").foregroundStyle(style.accent).accessibilityHidden(true); VStack(alignment: .leading, spacing: 2) { Text("A newer conversion engine is ready").foregroundStyle(style.text); Text(e.summary.isEmpty ? "From \(e.when.map(engineDay) ?? e.date)." : e.summary).font(.callout).foregroundStyle(style.soft).lineLimit(2) }; Spacer(); if model.engineBusy { ProgressView().controlSize(.small); Text("Updating the engine…").foregroundStyle(style.soft) } else { Button("Update Engine") { model.installEngine() }; Button("Later") { model.engine = nil } } }.padding(.horizontal, 16).padding(.vertical, 10) }
-            if let v = model.update { Divider(); HStack { Image(systemName: "arrow.down.circle").foregroundStyle(style.accent).accessibilityHidden(true); Text("Docked \(v) is available. You have \(appVersion).").foregroundStyle(style.text); Spacer(); if model.updating { ProgressView().controlSize(.small); Text("Updating…").foregroundStyle(style.soft) } else { Button("Update and Reopen") { model.installUpdate(v) }; Button("What's New") { NSWorkspace.shared.open(releasePage) }; Button("Later") { model.update = nil } } }.padding(.horizontal, 16).padding(.vertical, 10) }
-            if let n = model.xcodeReady.first { Divider(); HStack { VStack(alignment: .leading, spacing: 2) { Text("\(n) is ready for Xcode").font(.headline); Text("Xcode signs it with your Apple account and puts it on your iPhone or iPad.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }; Spacer(); Button("Show Steps") { model.showXcode = true }; Button("Dismiss") { model.xcodeReady.removeFirst() } }.padding(16) }
-            if let u = model.phoneReady.first { Divider(); HStack { VStack(alignment: .leading, spacing: 2) { Text("\(u.deletingPathExtension().lastPathComponent) is ready for iPhone and iPad").font(.headline); Text("Install the .ipa file with a sideloading tool, such as AltStore or Sideloadly. If it offers Increased Memory Limit, turn it on.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }; Spacer(); Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([u]) }; Button("Dismiss") { model.phoneReady.removeFirst() } }.padding(16) }
-            if model.removing { Divider(); HStack { ProgressView().controlSize(.small); Text("Cleaning up…"); Spacer() }.padding(16) }
-            if model.checkingGame { Divider(); HStack { ProgressView().controlSize(.small); Text("Checking the converted game…"); Spacer() }.padding(16) }
-            if !model.queue.waiting.isEmpty || !model.queue.problems.isEmpty { Divider(); QueueBar() }
-            if builder.running || builder.error != nil { Divider(); BuildBar() }
+            Tray()
         }
         .background(Backdrop())
-        .preferredColorScheme(style.alwaysDark ? .dark : nil)
+        .preferredColorScheme(model.palette.dark ? .dark : .light)
         .overlay { if dropping && !model.games.isEmpty { RoundedRectangle(cornerRadius: 12).strokeBorder(style.accent, lineWidth: 3).padding(6).allowsHitTesting(false) } }
         .onDrop(of: [.fileURL], isTargeted: $dropping) { loadDropped($0) { model.add($0) }; return true }
         .searchable(text: $model.search, placement: .toolbar, prompt: "Search games")
@@ -894,35 +896,52 @@ struct ContentView: View {
         } message: { _ in Text("Your saved progress is kept.") }
     }
 
+    // The first thing a new player sees: their shelf, not a converter. Switch setup waits until a Switch game arrives.
     var empty: some View {
         VStack(spacing: 22) {
             VStack(spacing: 8) {
                 DPad().fill(style.accent).frame(width: 46, height: 46).accessibilityHidden(true)
-                Text("Your library starts here").font(.largeTitle.weight(.semibold)).foregroundStyle(style.text)
-                Text("Drop games anywhere in this window, or start with one of these.").foregroundStyle(style.soft)
+                Text("Your games, all on one shelf").font(.largeTitle.weight(.semibold)).foregroundStyle(style.text).multilineTextAlignment(.center)
+                Text("Drop games anywhere in this window. From the NES to the Switch, they live together here.").foregroundStyle(style.soft).multilineTextAlignment(.center)
             }
             HStack(alignment: .top, spacing: 14) {
-                if cannotConvert() == nil {
-                    card(model.ready ? "checkmark.seal" : "wrench.and.screwdriver", model.ready ? "This Mac is ready" : model.checks.isEmpty ? "Checking this Mac" : "Get this Mac ready", model.ready ? "Everything needed to convert Switch games is in place." : "A few free tools from Apple, one step at a time.", model.ready ? nil : "Continue Setup") { model.showGuide = true }
-                    card("wand.and.stars", "Add a Switch game", "Converted once, in 10 to 60 minutes. Then it runs like any Mac app.", "Add Game…") { model.pickGame() }
-                }
-                card("gamecontroller", "Add other consoles", RetroArch.installed ? "Ready to play right away, in RetroArch." : "They play in RetroArch, free. Docked sets it up inside itself the first time.", "Add Games…") { model.pickGame() }
-                card("magnifyingglass", "Bring in games you have", "Converted games, and games in OpenEmu, RetroArch, Ryujinx or on a drive.", "Find Games…") { model.findGames() }
+                card("gamecontroller", "Add games", "Game files from this Mac or a drive. Docked works out the console, finds the cover and gets it ready to play.", "Add Games…", primary: true) { model.pickGame() }
+                card("magnifyingglass", "Bring in games you have", "Docked looks in OpenEmu, RetroArch, Ryujinx, folders called ROMs and your drives, then shows you the list first.", "Find Games…") { model.findGames() }
             }.fixedSize(horizontal: false, vertical: true)
-            if let why = cannotConvert() { Text(why).font(.callout).foregroundStyle(style.soft).multilineTextAlignment(.center).frame(maxWidth: 480) }
-            Button("How to Use Docked") { model.showHelp = true }.buttonStyle(.plain).foregroundStyle(style.accent)
+            VStack(spacing: 10) {
+                Text("Plays games from \(consoleCount) consoles").font(.caption.weight(.semibold)).foregroundStyle(style.soft)
+                HStack(spacing: 6) {
+                    ForEach(["nes", "snes", "n64", "gba", "genesis", "ps1", "switch"].compactMap(console), id: \.id) { c in
+                        HStack(spacing: 6) { Circle().fill(c.color).frame(width: 8, height: 8).accessibilityHidden(true); Text(c.name).font(.caption).foregroundStyle(style.text).lineLimit(1) }
+                            .padding(.horizontal, 10).frame(height: 24).background(style.tile, in: Capsule())
+                    }
+                    Text("and \(consoleCount - 7) more").font(.caption).foregroundStyle(style.soft).padding(.horizontal, 6)
+                }
+            }.accessibilityElement(children: .combine)
+            if cannotConvert() == nil {
+                Divider()
+                HStack(spacing: 12) {
+                    Image(systemName: "wand.and.stars").foregroundStyle(style.accent).accessibilityHidden(true)
+                    Text("Have Switch games you own? Docked can turn them into real Mac apps. It sets that up the first time you add one.").font(.callout).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("How It Works") { model.showHelp = true }.buttonStyle(.plain).font(.callout.weight(.medium)).foregroundStyle(style.accent)
+                }
+            } else {
+                Button("How to Use Docked") { model.showHelp = true }.buttonStyle(.plain).foregroundStyle(style.accent)
+            }
         }
-        .padding(30).frame(maxWidth: 860)
-        .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(dropping ? style.accent : style.line.opacity(0.7), style: StrokeStyle(lineWidth: dropping ? 2.5 : 1.5, dash: [7, 6])) }
+        .padding(.horizontal, 36).padding(.vertical, 30).frame(maxWidth: 800)
+        .overlay { RoundedRectangle(cornerRadius: 22).strokeBorder(dropping ? style.accent : style.line.opacity(0.9), style: StrokeStyle(lineWidth: dropping ? 2.5 : 1.5, dash: [7, 6])) }
         .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    func card(_ s: String, _ t: String, _ d: String, _ b: String?, _ f: @escaping () -> Void) -> some View {
+    private var consoleCount: Int { consoles.filter { !$0.native }.count + 1 }   // the retro ones, and Switch
+    func card(_ s: String, _ t: String, _ d: String, _ b: String?, primary: Bool = false, _ f: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Image(systemName: s).font(.title).foregroundStyle(style.accent).frame(height: 30, alignment: .leading).accessibilityHidden(true)
             Text(t).font(.headline).foregroundStyle(style.text)
             Text(d).font(.callout).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
-            if let b { Button(b, action: f).tint(style.button) }
+            if let b { if primary { Button(b, action: f).buttonStyle(.borderedProminent).tint(style.button) } else { Button(b, action: f) } }
         }.padding(18).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).background(style.tile, in: RoundedRectangle(cornerRadius: 14))
     }
 }
@@ -937,8 +956,8 @@ struct BuildBar: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(builder.title).font(.headline).foregroundStyle(style.text)
-                    Text(status).font(.callout).foregroundStyle(builder.error == nil ? style.soft : Color(light: 0xB3261E, dark: 0xFF8A80)).lineLimit(4).textSelection(.enabled)
-                    if builder.tested == false { Text("Nobody has tested this game yet, so it may not start.").font(.caption).foregroundStyle(Color(light: 0x8A4B00, dark: 0xF2B45C)) }
+                    Text(status).font(.callout).foregroundStyle(builder.error == nil ? style.soft : style.danger).lineLimit(4).textSelection(.enabled)
+                    if builder.tested == false { Text("Nobody has tested this game yet, so it may not start.").font(.caption).foregroundStyle(style.warn) }
                 }
                 Spacer()
                 Button(showLog ? "Hide Details" : "Details") { showLog.toggle() }
@@ -982,7 +1001,7 @@ struct ConsolesView: View {
                     ForEach(consoles) { c in
                         let ok = c.native || (RetroArch.ready(c) && (RetroArch.bios[c.id].map { !$0.required || !$0.onlyFor.isEmpty } ?? true || RetroArch.hasBios(c)))
                         HStack {
-                            Image(systemName: ok ? "checkmark.circle.fill" : "circle").foregroundStyle(ok ? Color(light: 0x1E7A3C, dark: 0x6FCF8A) : Color.secondary).accessibilityLabel(ok ? "Ready" : "Not ready")
+                            Image(systemName: ok ? "checkmark.circle.fill" : "circle").foregroundStyle(ok ? style.ok : Color.secondary).accessibilityLabel(ok ? "Ready" : "Not ready")
                             VStack(alignment: .leading, spacing: 1) { Text(c.name); Text(detail(c)).font(.caption).foregroundStyle(.secondary) }
                             Spacer()
                             if RetroArch.bios[c.id] != nil { Button(RetroArch.hasBios(c) ? "Replace BIOS…" : "Add BIOS…") { note = model.addBios(c) }.controlSize(.small) }
@@ -1021,7 +1040,7 @@ struct BiosView: View {
             Text("A BIOS is a system file copied from your own \(c.name)\(b.onlyFor.isEmpty ? "" : ", for its CD games"). Docked can't download one for you. Choose it once and Docked keeps a copy inside its RetroArch.").fixedSize(horizontal: false, vertical: true)
             Text("It takes \(b.names).").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !b.required { Text("Without one, \(c.name) games start with a free stand-in. Most run, but some don't.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
-            if let note { Text(note).font(.callout).foregroundStyle(Color(light: 0xB3261E, dark: 0xFF8A80)).fixedSize(horizontal: false, vertical: true) }
+            if let note { Text(note).font(.callout).foregroundStyle(style.danger).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
                 Button(b.required || ask.then == nil ? "Not Now" : "Play Without") { model.biosDone(play: !b.required) }
@@ -1037,36 +1056,64 @@ struct SetupView: View {
     @EnvironmentObject var model: Model
     @Environment(\.dismiss) var dismiss
     @State private var copied: String?
+    private let tick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+    private var first: URL? { model.waitingSwitch.first }   // the Switch game that brought this up, if one did
+    private var keysFound: Bool { findKeys(model.keys) != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Setup").font(.title2.weight(.semibold))
-            Text("These are needed once. Where there's a command, copy it, paste it into Terminal and press Return.").foregroundStyle(.secondary)
-            ForEach(model.checks) { c in
-                HStack(alignment: .firstTextBaseline) {
-                    Image(systemName: c.ok ? "checkmark.circle.fill" : "circle").foregroundStyle(c.ok ? Color(light: 0x1E7A3C, dark: 0x6FCF8A) : Color.secondary)
-                        .accessibilityLabel(c.ok ? "Done" : "Not done")
-                    VStack(alignment: .leading) { Text(c.title); Text(c.detail).font(.caption).foregroundStyle(.secondary) }
-                    Spacer()
-                    if !c.ok, c.installs {
-                        if model.installing { ProgressView().controlSize(.small) }
-                        Button(model.installing ? "Installing…" : "Install") { model.install() }.disabled(model.installing)
+            if let first {
+                HStack(spacing: 14) {
+                    DPad().fill(style.accent).frame(width: 40, height: 40).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Let's get Switch games ready").font(.title2.weight(.semibold))
+                        Text("\(cleanName(first))\(model.waitingSwitch.count > 1 ? " and \(model.waitingSwitch.count - 1) more" : "") will become real Mac apps. This Mac needs a few things first, only once.").foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
-                    if !c.ok, !c.fix.isEmpty {
-                        Button(copied == c.id ? "Copied" : "Copy Command") {
-                            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.fix, forType: .string); copied = c.id
+                }
+            } else {
+                Text("Setup").font(.title2.weight(.semibold))
+                Text("These are needed once. Where there's a command, copy it, paste it into Terminal and press Return.").foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(model.checks) { c in
+                    HStack(alignment: .firstTextBaseline) {
+                        Image(systemName: c.ok ? "checkmark.circle.fill" : "circle").foregroundStyle(c.ok ? style.ok : Color.secondary)
+                            .accessibilityLabel(c.ok ? "Done" : "Not done")
+                        VStack(alignment: .leading) { Text(c.title); Text(c.detail).font(.caption).foregroundStyle(.secondary) }
+                        Spacer()
+                        if !c.ok, c.installs {
+                            if model.installing { ProgressView().controlSize(.small) }
+                            Button(model.installing ? "Installing…" : "Install") { model.install() }.disabled(model.installing)
+                        }
+                        if !c.ok, !c.fix.isEmpty {
+                            Button(copied == c.id ? "Copied" : "Copy Command") {
+                                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.fix, forType: .string); copied = c.id
+                            }
                         }
                     }
                 }
-            }
-            if let p = model.installProblem { Label(p, systemImage: "exclamationmark.circle").foregroundStyle(Color(light: 0xB3261E, dark: 0xFF8A80)).font(.callout) }
+                if first != nil {
+                    HStack(alignment: .firstTextBaseline) {
+                        Image(systemName: keysFound ? "checkmark.circle.fill" : "circle").foregroundStyle(keysFound ? style.ok : Color.secondary).accessibilityLabel(keysFound ? "Done" : "Not done")
+                        VStack(alignment: .leading) { Text("Your prod.keys file"); Text(keysFound ? "Found. Docked only remembers where it is." : "Copied from your own Switch. Not needed for .nup files or dump folders.").font(.caption).foregroundStyle(.secondary) }
+                        Spacer()
+                        Button(keysFound ? "Change…" : "Choose…") { _ = model.pickKeys() }
+                    }
+                }
+            }.padding(first == nil ? 0 : 12).background(first == nil ? Color.clear : style.tile, in: RoundedRectangle(cornerRadius: 10))
+            if let p = model.installProblem { Label(p, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout) }
+            if first != nil { Label("Your game is kept here. Once everything is ready, Docked picks up where you left off, so you can close this and keep playing.", systemImage: "clock").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 if model.checking { ProgressView().controlSize(.small) }
+                if first != nil { Button("What's Needed and Why") { model.leaveSetup { model.showHelp = true } }.buttonStyle(.plain).foregroundStyle(style.accent) }
                 Spacer()
                 Button("Check Again") { model.recheck() }.disabled(model.checking)
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button)
+                if first != nil && !model.ready { Button("Not Now") { dismiss() }.keyboardShortcut(.cancelAction) }
+                else { Button(first != nil ? "Continue" : "Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).tint(style.button) }
             }
-        }.padding(24).frame(width: 520).background(AllowQuit()).background(Backdrop())
+        }.padding(24).frame(width: 540).background(AllowQuit()).background(Backdrop())
+        .onReceive(tick) { _ in if first != nil, !model.ready, !model.checking, !model.installing, !model.fetching { model.recheck() } }
+        .onDisappear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.pickUpSwitch() } }
     }
 }
 
