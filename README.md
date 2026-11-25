@@ -103,6 +103,7 @@ A converted game's graphics are prepared for the Mac that made it. On a differen
 
 - **Feels like a console.** Docked opens filling the screen, and you can get around with a controller or the arrow keys.
 - **Covers made from each game's own art**, or drop any picture onto a game.
+- **Covers and details found for you.** Add a game from another console and Docked can fill in its box art, year, maker, genre and description, the way a launcher's game database does. It matches the file's checksum or disc serial first, then its name, and asks you when more than one game fits. Off until you say yes.
 - **Theme music.** Give a game its own tune and it plays while that game is selected.
 - **Pick up where you left off.** Recent games come first, with how long you've played each one.
 - **Favourites and collections.** Smart collections fill themselves, such as games you haven't played in a month.
@@ -163,7 +164,9 @@ Bundle/dmg.sh Docked.app        # Docked.dmg: the drag-to-Applications download
 
 ## Your games, your Mac
 
-**Privacy.** Docked has no account and collects nothing. When it opens, it asks GitHub for the newest version numbers of Docked and its engine (you can turn that off in Settings), and it only downloads an update when you press **Update** or **Update Engine**. The first time you add a game for another console, it downloads RetroArch and that console's emulator from libretro's own server, `buildbot.libretro.com`, and nothing about you or your games is sent. Covers come from your own games or pictures you pick; nothing is downloaded for them.
+**Privacy.** Docked has no account and collects nothing. When it opens, it asks GitHub for the newest version numbers of Docked and its engine (you can turn that off in Settings), and it only downloads an update when you press **Update** or **Update Engine**. The first time you add a game for another console, it downloads RetroArch and that console's emulator from libretro's own server, `buildbot.libretro.com`, and nothing about you or your games is sent. Switch covers come from your own games, and any cover can be a picture you pick.
+
+**Covers and details**, for games from other consoles, are found only if you say yes when Docked first asks (or turn on **Find covers and details** in Settings). Docked then downloads libretro's public game list for that console once, from a fixed version on GitHub that it checks before use, and compares your files with it on your Mac: their checksums, serials and names are never sent. For a matched game it downloads the box art from [libretro-thumbnails](https://github.com/libretro-thumbnails/libretro-thumbnails) on GitHub, also at a fixed version, and, when the list has no description, looks the game's name up on Wikipedia. Those two see the game's name and nothing else. Everything is kept in `Dockside/Metadata`, so each game is looked up once.
 
 **Your own games only.** Use Docked with games and system files from your own console, where your local law allows it. Some file types need your own `prod.keys`; Docked remembers where it is and never copies or sends it. No games, keys, firmware or console files are included with Docked, and please don't post any here.
 
@@ -175,4 +178,4 @@ Docked is not affiliated with, endorsed by or connected to Nintendo or any other
 
 ## Credits
 
-Docked is free under the [MIT licence](LICENSE). It wouldn't exist without [nxnative](https://github.com/seedds/nxnative) by seedds (MIT). Everything else inside the download is listed in [THIRD-PARTY.md](THIRD-PARTY.md).
+Docked is free under the [MIT licence](LICENSE). It wouldn't exist without [nxnative](https://github.com/seedds/nxnative) by seedds (MIT). Everything else inside the download is listed in [THIRD-PARTY.md](THIRD-PARTY.md). Game details come from the [libretro database](https://github.com/libretro/libretro-database) (CC BY-SA 4.0) and descriptions marked as such from Wikipedia (CC BY-SA 4.0); box art from [libretro-thumbnails](https://github.com/libretro-thumbnails/libretro-thumbnails). None of them are part of the download: Docked fetches them only when you ask it to.

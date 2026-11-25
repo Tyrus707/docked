@@ -15,7 +15,7 @@ struct Inspector: View {
                         .aspectRatio(Cover.shape, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12)).frame(maxWidth: 190).frame(maxWidth: .infinity).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(game.name).font(.title3.weight(.semibold)).foregroundStyle(style.text).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                        Text(consoleName(consoleOf(game.titleID)) + (game.rom == nil && !game.version.isEmpty ? ", version \(game.version)" : "")).font(.callout).foregroundStyle(style.soft)
+                        Text(([consoleName(consoleOf(game.titleID)) + (game.rom == nil && !game.version.isEmpty ? ", version \(game.version)" : "")] + [game.rom?.info?.year.map(String.init)].compactMap { $0 }).joined(separator: " · ")).font(.callout).foregroundStyle(style.soft)
                     }
                     if let why = game.cannot { Label(why, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(Color(light: 0x8A4B00, dark: 0xF2B45C)) }
                     HStack(spacing: 8) {
@@ -28,7 +28,9 @@ struct Inspector: View {
                         fact("Played", playTimeText(e.seconds)); fact("Last played", e.lastPlayed == nil ? "Never" : lastPlayedText(e.lastPlayed).replacingOccurrences(of: "Played ", with: "").firstCapital); if e.added > .distantPast { fact("Added", e.added.formatted(date: .abbreviated, time: .omitted)) }
                         fact("Size", model.size(game).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Measuring…"); if let r = game.rom { fact("Plays in", RetroArch.core(console(r.console) ?? consoles[0]) == nil ? "RetroArch, set up when you first play" : "RetroArch") }
                         fact("In", FileManager.default.displayName(atPath: game.url.deletingLastPathComponent().path)); if !e.collections.isEmpty { fact("Collections", e.collections.joined(separator: ", ")) }
+                        if let i = game.rom?.info { if let d = i.developer { fact("Made by", d) }; if let p = i.publisher, p != i.developer { fact("Published by", p) }; if let g = i.genre { fact("Genre", g) } }
                     }.padding(12).background(style.tile, in: RoundedRectangle(cornerRadius: 10))
+                    if let i = game.rom?.info { GameAbout(info: i) }
                     if game.rom == nil, FileManager.default.fileExists(atPath: GameNotes.file(game.titleID).path) {
                         let notes = model.notes(game)
                         VStack(alignment: .leading, spacing: 7) {
@@ -38,6 +40,7 @@ struct Inspector: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         link("Choose Cover…", "photo") { model.pickArt(game) }
+                        if let r = game.rom { if model.finding.contains(r.id) { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finding details…").font(.callout).foregroundStyle(style.soft) } } else { link(r.info == nil ? "Find Cover and Details…" : "Wrong Game? Find Again…", "magnifyingglass") { model.find(r.id, byHand: true) } } }
                         if model.addingTheme { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Adding music…").font(.callout).foregroundStyle(style.soft) } }
                         else if model.hasTheme(game) { link("Change Theme Music…", "music.note") { model.pickTheme(game) }; link("Remove Theme Music", "minus.circle") { model.clearTheme(game) }; link(model.themes ? "Turn Theme Music Off" : "Turn Theme Music On", model.themes ? "speaker.slash" : "speaker.wave.2") { model.themes.toggle() } }
                         else { link("Choose Theme Music…", "music.note") { model.pickTheme(game) } }

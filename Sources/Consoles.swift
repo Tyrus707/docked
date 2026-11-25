@@ -43,7 +43,7 @@ func consoleOf(_ titleID: String) -> String {
     return titleID.hasPrefix("04") ? "switch2" : "switch"
 }
 
-struct Rom: Codable, Equatable { var id: String, name: String, console: String, path: String }
+struct Rom: Codable, Equatable { var id: String, name: String, console: String, path: String; var info: GameInfo? = nil }
 
 // What a chosen file could be: one console (known), several (ask), or none.
 func consolesFor(_ url: URL, inside: (URL) -> [String] = zipNames) -> [Console] {
@@ -58,13 +58,15 @@ func consolesFor(_ url: URL, inside: (URL) -> [String] = zipNames) -> [Console] 
 func zipNames(_ u: URL) -> [String] { let r = run("/usr/bin/zipinfo", ["-1", u.path], timeout: 10); return r.code == 0 ? r.out.split(separator: "\n").prefix(200).map(String.init) : [] }
 
 // "Legend of Game, The (USA) (Rev 1) [!].sfc" -> "The Legend of Game"
-func cleanName(_ url: URL) -> String {
-    var n = url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " ")
+func cleanName(_ url: URL) -> String { let n = cleanTitle(url.deletingPathExtension().lastPathComponent); return n.isEmpty ? url.deletingPathExtension().lastPathComponent : n }
+// The same for a name from a game list, which has no file type to take off
+func cleanTitle(_ s: String) -> String {
+    var n = s.replacingOccurrences(of: "_", with: " ")
     n = n.replacingOccurrences(of: "\\s*[\\(\\[][^\\)\\]]*[\\)\\]]", with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
     for a in ["The", "A", "An"] {
         if let r = n.range(of: ", \(a)( - |: |$)", options: .regularExpression) { let tail = n[r].dropFirst(a.count + 2); n = a + " " + n[n.startIndex..<r.lowerBound] + tail + n[r.upperBound...]; break }
     }
-    return n.isEmpty ? url.deletingPathExtension().lastPathComponent : n
+    return n
 }
 
 // The same for a file wherever it is moved to: its size and its first part.

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import ImageIO
 var passed = 0, failed = 0
 func check(_ ok: Bool, _ what: String) { if ok { passed += 1 } else { failed += 1; print("FAIL:", what) } }
 func fails2(_ what: String, _ f: () throws -> Void) { do { try f(); check(false, what) } catch { check(error is RetroError, what) } }
@@ -261,6 +262,13 @@ var chdb = Array("MComprHD".utf8) + [0, 0, 0, 124, 0, 0, 0, 5]; put(&chdb, 48, [
 var chdc = chdb; put(&chdc, 124, Array("CHT2".utf8)); let t1 = Array("TRACK:1 TYPE:MODE2_RAW SUBTYPE:NONE FRAMES:1000".utf8); put(&chdc, 125 + 4, [0, 0, UInt8(t1.count)]); put(&chdc, 140, t1); check(Set(consolesFor(disc("Cd.chd", chdc)).map(\.id)) == ["ps1", "ps2"], "a CHD's first track")
 check(Set(consolesFor(disc("Unknown.iso", [UInt8](repeating: 7, count: 40000))).map(\.id)) == ["gc", "wii", "ps2", "psp"], "nothing to go on: the player says")
 _ = disc("Set.m3u", Array("Sat.cue\n".utf8)); check(consolesFor(tmp.appendingPathComponent("disc/Set.m3u")).map(\.id) == ["saturn"], "a set of discs, from its first")
+// A disc's serial, which game lists key disc games by
+check(Disc.serial(ps1cue) == "SLUS-00001" && Disc.serial(disc("Two2.iso", iso9660(system: "PLAYSTATION", files: [("SYSTEM.CNF", "BOOT2 = cdrom0:\\SLUS_200.00;1\n")]))) == "SLUS-20000", "PlayStation serials from SYSTEM.CNF")
+var gcid = gcb; put(&gcid, 0, Array("GM8E01".utf8)); check(Disc.serial(disc("Prime.iso", gcid)) == "GM8E01" && Disc.serial(disc("Cube.iso", gcb)) == nil, "a GameCube disc's ID, and none where it is blank")
+var rvzid = rvz; put(&rvzid, 0x58, Array("RYWP01".utf8)); check(Disc.serial(disc("w2.rvz", rvzid)) == "RYWP01", "an RVZ's ID")
+check(Disc.serial(disc("Pocket2.iso", iso9660(system: "PSP GAME", files: [("UMD_DATA.BIN", "ULUS-10041|0001|G")]))) == "ULUS-10041" && Disc.serial(disc("Pocket3.iso", iso9660(system: "PSP GAME", files: [("UMD_DATA.BIN", "x")]))) == nil, "a PSP's serial")
+var satid = satb; put(&satid, 16 + 0x20, Array("T-12705H  ".utf8)); _ = disc("Sat2.bin", satid); check(Disc.serial(disc("Sat2.cue", Array("FILE \"Sat2.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n".utf8))) == "T-12705H", "a Saturn disc's product number")
+check(Disc.serial(disc("Dc2.chd", chdb)) == nil && Disc.serial(mk("rom/none.sfc", "x")) == nil, "nothing to read: no serial")
 // Setting up from a local copy of the buildbot: RetroArch once, then the best core it has for this Mac
 if fm.isExecutableFile(atPath: "/usr/bin/hdiutil") {
     let bb = tmp.appendingPathComponent("bb"), src = tmp.appendingPathComponent("rasrc"), fake = src.appendingPathComponent("RetroArch.app/Contents")
@@ -478,5 +486,58 @@ check(gc(fakeGame("Warned"), warned: ["Pipeline archive: failed"]).notes.count =
 check(gc(fakeGame("Half", pso: half)).text().contains("leftovers were kept") && gc(fakeGame("Unsigned"), signed: false).text().hasPrefix("Converted, but") && gc(fakeGame("Unsigned"), signed: false).text(again: true).contains("second time"), "said plainly")
 check(gc(fakeGame("Half", pso: half)).mendable && gc(fakeGame("Unsigned"), signed: false).mendable && !checkGame(fakeGame("Other"), titleID: "0100000000020000", quick: false, warned: [], verify: { _ in true }).mendable, "converting again is tried only where it can help")
 let realApp = fakeGame("Real"); let cs = run("/usr/bin/codesign", ["--force", "--sign", "-", realApp.path]); check(cs.code != 0 || signatureHolds(realApp) == true, "codesign agrees with a signed app")
+
+// ---- finding covers and details ----
+check(Lookup.crc32(mk("lk/check.bin", "123456789")) == 0xCBF43926, "CRC-32 check value")
+func mps(_ t: String) -> [UInt8] { let b = Array(t.utf8); return (b.count < 32 ? [0xA0 | UInt8(b.count)] : [0xD9, UInt8(b.count)]) + b }
+func rec(_ f: [(String, [UInt8])]) -> [UInt8] { [0x80 | UInt8(f.count)] + f.flatMap { mps($0.0) + $0.1 } }
+func bin(_ c: UInt32) -> [UInt8] { [0xC4, 4, UInt8(c >> 24), UInt8(c >> 16 & 0xFF), UInt8(c >> 8 & 0xFF), UInt8(c & 0xFF)] }
+let gbCRC = Lookup.crc32(gb)!
+let rdb: [UInt8] = Array("RARCHDB".utf8) + [0] + [UInt8](repeating: 0, count: 8)
+    + rec([("name", mps("Puzzle Box (Japan)")), ("crc", bin(gbCRC)), ("releaseyear", [0xCD, 0x07, 0xC6]), ("publisher", mps("Box Co")), ("users", [0x92, 0x01, 0xFF]), ("rumble", [0xC0])])
+    + rec([("name", mps("Legend of Game, The - Part 2 (USA)")), ("serial", [0xC4, 10] + Array("SLUS-00001".utf8)), ("crc", bin(1)), ("releaseyear", [0xCD, 0x07, 0xCA]), ("publisher", mps("Maker")), ("genre", mps("Adventure"))])
+    + rec([("name", mps("Legend of Game, The - Part 2 (Europe)")), ("crc", bin(2)), ("developer", mps("Dev")), ("description", mps("A long story about a game that is told across a whole box back."))])
+    + rec([("name", mps("Legend of Gamer (USA)")), ("crc", bin(3))])
+    + rec([("name", mps("Space Race (USA) [h1]")), ("crc", bin(4))]) + rec([("name", mps("Space Race (USA)")), ("crc", bin(5)), ("size", [0xCE, 0, 1, 0, 0])])
+    + [0xC0] + [0x81, 0xA1, 0x78, 0x01]
+let parsed = RDB.parse(Data(rdb)); check(parsed?.count == 6 && parsed?[0].year == 1990 && parsed?[0].crc == gbCRC && parsed?[1].serial == "SLUS-00001" && parsed?[2].about?.hasPrefix("A long") == true, "a RetroArch database read, nil and arrays skipped, its index left alone")
+check(RDB.parse(Data("RARCHDB".utf8)) == nil && RDB.parse(Data(Array(rdb.prefix(40)))) == nil && RDB.parse(Data([UInt8](repeating: 0, count: 64))) == nil, "a cut or foreign file is refused")
+check(Lookup.titleKey("Final Fantasy III, The (USA) (Rev 1)") == "final fantasy 3" && Lookup.titleKey("Pokémon - Red Version") == "pokemon red version" && Lookup.titleKey("Mario & Luigi") == "mario and luigi" && Lookup.titleKey("X (Japan)") == "x", "one key for a title however it is written")
+check(!Set(Lookup.serialKeys("SLUS-00001GH-2")).isDisjoint(with: Lookup.serialKeys("SLUS-00001")) && !Set(Lookup.serialKeys("RVL-RYWP-EUR")).isDisjoint(with: Lookup.serialKeys("RYWP01")) && Set(Lookup.serialKeys("SLUS-00002")).isDisjoint(with: Lookup.serialKeys("SLUS-00001")), "serials meet however a list writes them")
+let gl = GameList(parsed ?? [])
+let lg = gl.candidate(Lookup.titleKey("Legend of Game, The - Part 2"), how: "name"); check(lg?.info.year == 1994 && lg?.info.developer == "Dev" && lg?.info.publisher == "Maker" && lg?.info.about?.hasPrefix("A long") == true && lg?.names.first == "Legend of Game, The - Part 2 (USA)" && lg?.info.name == "The Legend of Game - Part 2", "one title's versions give their details together, its USA name first")
+check(gl.candidate(Lookup.titleKey("Legend of Game - Part 2"), how: "name", region: ["europe"])?.names.first?.contains("Europe") == true, "the player's own region first")
+check(gl.candidate("space race", how: "name")?.names == ["Space Race (USA)"], "hacks and bad dumps aren't used for the cover")
+if case .found(let c) = Lookup.byName("Legend of Game, The - Part 2", in: gl) { check(c.key == "legend of game part 2", "found by name") } else { check(false, "found by name") }
+if case .choose(let cs) = Lookup.byName("Legend of Game", in: gl) { check(cs.first?.key == "legend of game part 2" && cs.contains { $0.key == "legend of gamer" }, "close names: the player chooses") } else { check(false, "close names: the player chooses") }
+check(Lookup.byName("Something Else Entirely", in: gl) == .none, "nothing like it: nothing")
+// The list comes from a fixed commit and must match its SHA-256
+let lkRoot = tmp.appendingPathComponent("lk/src"); Lookup.source = lkRoot.absoluteString.hasSuffix("/") ? String(lkRoot.absoluteString.dropLast()) : lkRoot.absoluteString; Lookup.wikipedia = nil
+func listAt(_ folder: String) -> URL { lkRoot.appendingPathComponent("libretro/libretro-database/\(Lookup.database)/rdb/\(folder).rdb") }
+for f in ["Nintendo - Game Boy", "Sony - PlayStation", "Nintendo - Super Nintendo Entertainment System"] { try! fm.createDirectory(at: listAt(f).deletingLastPathComponent(), withIntermediateDirectories: true); try! Data(rdb).write(to: listAt(f)) }
+let rdbSHA = SHA256.hash(data: Data(rdb)).map { String(format: "%02x", $0) }.joined()
+Lookup.lists["Nintendo - Game Boy"] = "0000"; Lookup.forget(); check((try? Lookup.match(Rom(id: "ROM:GB:1", name: "Puzzle Box", console: "gb", path: gb.path))) == nil && !fm.fileExists(atPath: Lookup.home.path + "/Lists/Nintendo - Game Boy.rdb"), "a list that isn't the reviewed one is refused")
+for f in ["Nintendo - Game Boy", "Sony - PlayStation", "Nintendo - Super Nintendo Entertainment System"] { Lookup.lists[f] = rdbSHA }
+let gbRom = Rom(id: romID(gb, "gb"), name: "Puzzle Box", console: "gb", path: gb.path)
+if case .found(let c)? = try? Lookup.match(gbRom) { check(c.info.how == "checksum" && c.info.year == 1990 && fm.fileExists(atPath: Lookup.home.path + "/Lists/Nintendo - Game Boy.rdb"), "found by checksum, the list kept") } else { check(false, "found by checksum") }
+let ps1Rom = Rom(id: "ROM:PS1:1", name: "One", console: "ps1", path: ps1cue.path)
+if case .found(let c)? = try? Lookup.match(ps1Rom) { check(c.info.how == "serial" && c.key == "legend of game part 2", "found by disc serial") } else { check(false, "found by disc serial") }
+check((try? Lookup.search("legend", console("gb")!))?.count == 2, "searching the list by hand")
+// Checksums the way the list keeps them: in a zip, without a copier header, in N64 byte order
+check(Lookup.crcs(tmp.appendingPathComponent("rom/real.zip"), "snes") == [Lookup.crc32(sf)!], "a zip's own CRC, nothing unpacked")
+let nes = mk("lk/Game.nes", "NES\u{1A}" + String(repeating: "\0", count: 12) + "body"), body = mk("lk/body.bin", "body"); check(Set(Lookup.crcs(nes, "nes")) == [Lookup.crc32(nes)!, Lookup.crc32(body)!], "with and without the iNES header")
+let v64 = tmp.appendingPathComponent("lk/Game.v64"), z64 = tmp.appendingPathComponent("lk/Game.z64"); try! Data([0x37, 0x80, 0x40, 0x12, 1, 2, 3, 4]).write(to: v64); try! Data([0x80, 0x37, 0x12, 0x40, 2, 1, 4, 3]).write(to: z64); check(Lookup.crcs(v64, "n64").contains(Lookup.crc32(z64)!), "an N64 game in its list's byte order")
+check(Lookup.crcs(ps1cue, "ps1").isEmpty, "a disc isn't read whole")
+// The cover: only a real picture, drawn again before it is kept
+func png(_ w: Int, _ h: Int) -> Data { let c = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!; c.setFillColor(red: 1, green: 0, blue: 0, alpha: 1); c.fill(CGRect(x: 0, y: 0, width: w, height: h)); let d = NSMutableData(); let dst = CGImageDestinationCreateWithData(d, "public.png" as CFString, 1, nil)!; CGImageDestinationAddImage(dst, c.makeImage()!, nil); CGImageDestinationFinalize(dst); return d as Data }
+let keptCover = tmp.appendingPathComponent("lk/kept.png"); check(Lookup.keep(png(1000, 800), at: keptCover) && fm.fileExists(atPath: keptCover.path) && !Lookup.keep(Data("<html>not a picture</html>".utf8), at: tmp.appendingPathComponent("lk/no.png")) && !Lookup.keep(png(4, 4), at: tmp.appendingPathComponent("lk/tiny.png")), "a picture kept, anything else refused")
+if let src = CGImageSourceCreateWithURL(keptCover as CFURL, nil), let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] { check((p[kCGImagePropertyPixelWidth] as? Int) == 720, "made small") } else { check(false, "made small") }
+let thumbs = lkRoot.appendingPathComponent("libretro-thumbnails/Nintendo_-_Game_Boy/\(Lookup.covers["Nintendo - Game Boy"]!)/Named_Boxarts"); try! fm.createDirectory(at: thumbs, withIntermediateDirectories: true); try! png(300, 300).write(to: thumbs.appendingPathComponent("Puzzle_Box (Japan).png"))
+check(Lookup.fetchCover(gbRom, names: ["Not There (USA)", "Puzzle/Box (Japan)"]) == Lookup.artFile(gbRom.id) && RetroArch.art(gbRom) == Lookup.artFile(gbRom.id), "the cover from the fixed commit, by its list name, shown for the game")
+check(Lookup.url("a b/c&d#e.png").absoluteString.hasSuffix("/a%20b/c%26d%23e.png"), "names are escaped in the address")
+do { _ = try Lookup.get(URL(string: "http://example.com/x")!, limit: 10); check(false, "plain http refused") } catch { check(true, "plain http refused") }
+// Kept with the game, and read by an earlier library too
+var il = LibraryData(); var withInfo = gbRom; withInfo.info = GameInfo(title: "Puzzle Box (Japan)", year: 1990, publisher: "Box Co", how: "checksum"); il.addRom(withInfo); let ilf = tmp.appendingPathComponent("lk/library.json"); il.save(ilf); check(LibraryData.load(ilf).roms.first?.info == withInfo.info, "details saved with the game")
+check(GameInfo(title: "Legend of Game, The (USA)", year: 1994, publisher: "Maker", how: "name").line == "1994 · Maker", "a short line of details")
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
