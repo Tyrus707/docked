@@ -101,6 +101,9 @@ A converted game's graphics are prepared for the Mac that made it. On a differen
 
 <br>
 
+- **An organized folder, wherever you want it.** One library folder, even on an external SSD, with a folder for each console and each game named after itself. **Organize Library** shows you what it will move before anything moves, and saves follow their game.
+- **Bring in what you already have.** **Find Games on This Mac** finds games Docked converted before and games in OpenEmu, RetroArch and Ryujinx, or look through any folder or drive. Docked asks whether to copy, move or leave the files where they are, and can remember your answer.
+- **Watched folders.** New games in a folder you choose are added on their own and stay where they are. A drive's games show as not connected while it's unplugged, and come back when it's plugged in.
 - **Feels like a console.** Docked opens filling the screen, and you can get around with a controller or the arrow keys.
 - **Covers made from each game's own art**, or drop any picture onto a game.
 - **Covers and details found for you.** Add a game from another console and Docked can fill in its box art, year, maker, genre and description, the way a launcher's game database does. It matches the file's checksum or disc serial first, then its name, and asks you when more than one game fits. Off until you say yes.

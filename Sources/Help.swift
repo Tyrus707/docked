@@ -21,6 +21,14 @@ let helpTopics: [HelpTopic] = [
         "Add more games while one converts: they wait in a queue and start by themselves. Docked remembers the queue if you quit.",
         "To save space, choose Clean Up from a game's ••• menu, or in Settings, and pick what to remove. Docked keeps a link to each original file, so deleting one in Finder alone doesn't free its space.",
     ]),
+    HelpTopic(title: "Your library", symbol: "books.vertical", lines: [
+        "Docked keeps games in one library folder, with a folder for each console and each game named after itself. Choose where it is, even on an external drive, in Settings > Library.",
+        "To bring in games you already have, choose File > Find Games on This Mac. It finds games Docked converted before, and games in OpenEmu, RetroArch and Ryujinx. Look in Another Folder reaches any folder or drive.",
+        "Dropping a game, a converted game, or a whole folder in the window works too. Docked asks whether to copy the files into the library, move them, or leave them where they are. Tick Don't ask again to keep your answer; change it in Settings > Library.",
+        "Watched folders, in Settings > Library, are folders whose new games are added on their own. Good for a drive full of games: plug it in and they're there.",
+        "A game on a drive that isn't connected stays in the library, marked as not connected. If you moved a game yourself, open its ••• menu and choose Locate.",
+        "Organize Library, in the File menu, puts games in Docked's folders where they belong, after showing you the list. Saves follow their game. Games you keep anywhere else are never moved.",
+    ]),
     HelpTopic(title: "About prod.keys", symbol: "key", lines: [
         "They belong to the Switch system, not to a game. One file works for many games.",
         "They must be at least as new as the game needs. If a new game or update can't be unlocked, dump your keys again after updating your Switch.",
