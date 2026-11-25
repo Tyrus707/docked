@@ -42,8 +42,8 @@ extension Model {
     func ask(_ p: Picking) { if picking == nil && !sheetUp { picking = p } else if !picks.contains(where: { $0.id == p.id }) { picks.append(p) } }
     func nextPick() { guard picking == nil, !picks.isEmpty, !sheetUp else { return }; DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { if self.picking == nil, !self.sheetUp, !self.picks.isEmpty { self.picking = self.picks.removeFirst() } } }
     func chose(_ p: Picking, _ c: Candidate?) {
-        guard let c else { return }
-        var c = c; c.info.how = "chosen"; finding.insert(p.rom.id)
+        guard var c else { return }
+        c.info.how = "chosen"; finding.insert(p.rom.id)
         Lookup.queue.async { let f = Lookup.fill(p.rom, c); DispatchQueue.main.async { self.finding.remove(p.rom.id); self.use(p.rom.id, f.info, cover: f.cover, rename: true) } }
     }
     // The name follows the list's unless the player has renamed the game themselves
