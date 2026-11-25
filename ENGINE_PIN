@@ -1,0 +1,7 @@
+# The nxnative commit Docked was reviewed with, when it was made, and the fingerprints of the prebuilt tools in it.
+# bump-engine.sh writes this file. setup.sh, Bundle/make.sh and engine-release.sh read it; build.sh and test.sh check that Sources/Core.swift holds the same.
+commit 01439b0fe923929d275e2fd4337cbdf08b54fcfd
+date 2026-11-24T06:12:52Z
+tool dm/tools/nx_extract_bin/nx_extract 0a89455e0aa41df451bd9a6f05bb32fda7a92cddf93cafdaa9b8090bd3355f65
+tool dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate 5c3099a7c611c2de0fa031b718d23f0cde91ff85b00a4dda47155185dabebfd6
+tool dm/gfx/tools/spirv_cross_bin/spirv-cross 76fd1e68297459488b2929bf5d656e40767a0840daa438368cb87fcaf3070a9e

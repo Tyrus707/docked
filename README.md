@@ -84,6 +84,8 @@ Docked is tested on macOS 27.2. Older versions and Intel Macs are supported in t
 - **A queue that keeps going.** Add as many games as you like. The queue survives a restart, and if one game fails the rest carry on.
 - **Add an update or DLC later.** Docked reuses the work it has already done and keeps your save.
 - **Play with Settings.** Choose frame rate, resolution and language, where the game allows it.
+- **Checked before it's called done.** When a game finishes, Docked makes sure the app is whole, holds everything it needs and has a signature that matches. If something is off, such as graphics that were only partly prepared, Docked converts the game once more, which redoes only the missing part. If it's still not right, Docked tells you and keeps what it needs to try again quickly.
+- **A newer engine, without a new Docked.** New game profiles and fixes arrive as engine updates, signed like Docked's own. Docked checks every file, tries the new engine, and only swaps it in while nothing is converting. The previous engine is kept, and **Settings › Setup** can switch back.
 - **Clear reports.** If something goes wrong, **Copy Report** gives you a summary to share with your name, folders and anything that looks like a key taken out.
 
 A converted game's graphics are prepared for the Mac that made it. On a different chip or major macOS version, its first start takes a little longer. Games that use OpenGL may need macOS 27 to convert.
@@ -139,7 +141,17 @@ Versions 1.1 and older can't update themselves, so download the new one by hand 
 Bundle/dmg.sh Docked.app        # Docked.dmg: the drag-to-Applications download
 ```
 
-`Bundle/make.sh` packs what `setup.sh` installed, with a pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261124) placed in `~/Dockside/python-standalone`. Every pinned version and fingerprint is in those scripts. A release carries **Docked.dmg** and **Docked.zip** (the same full app) plus **Docked-Update.zip** and its `.sig`, which the built-in updater downloads.
+`Bundle/make.sh` packs what `setup.sh` installed, with a pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261124) placed in `~/Dockside/python-standalone`. The engine's pinned commit and the fingerprints of its prebuilt tools are in [`ENGINE_PIN`](ENGINE_PIN); the other pinned versions are in those scripts. A release carries **Docked.dmg** and **Docked.zip** (the same full app) plus **Docked-Update.zip** and its `.sig`, which the built-in updater downloads.
+
+**Moving to a newer engine.** nxnative changes every day, and its game profiles decide which games work, so Docked follows it in reviewed steps:
+
+```sh
+./bump-engine.sh [commit]   # shows new and changed game profiles, stops if a prebuilt tool changed, writes ENGINE_PIN, runs the tests
+./build.sh Docked.app       # then convert one or two of your own games with it
+./engine-release.sh         # signs that engine and offers it to every Docked as an engine update
+```
+
+`engine-release.sh` uploads to one pre-release tagged `engine`: the whole engine, and smaller packs with only what changed since engines players are likely to have. It signs `engine.json`, which names the engine's commit, date and the SHA-256 of every file, with the same key as Docked's own updates (from `DOCKED_SIGNING_KEY` or the Keychain, never the repository). Docked uses an engine only if that signature holds, the files match, it is newer than the one Docked was built with, and it starts. An engine that needs other Python packages can't go out this way; it needs a full Docked release.
 
 </details>
 
@@ -147,7 +159,7 @@ Bundle/dmg.sh Docked.app        # Docked.dmg: the drag-to-Applications download
 
 ## Your games, your Mac
 
-**Privacy.** Docked has no account and collects nothing. When it opens, it asks GitHub for the newest version number (you can turn that off in Settings), and it only downloads an update when you press **Update**. Covers come from your own games or pictures you pick; nothing is downloaded for them.
+**Privacy.** Docked has no account and collects nothing. When it opens, it asks GitHub for the newest version numbers of Docked and its engine (you can turn that off in Settings), and it only downloads an update when you press **Update** or **Update Engine**. Covers come from your own games or pictures you pick; nothing is downloaded for them.
 
 **Your own games only.** Use Docked with games and system files from your own console, where your local law allows it. Some file types need your own `prod.keys`; Docked remembers where it is and never copies or sends it. No games, keys, firmware or console files are included with Docked, and please don't post any here.
 

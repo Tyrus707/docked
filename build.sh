@@ -3,6 +3,8 @@
 set -eu
 APP="${1:-Docked.app}"; PAYLOAD="${2:-}"; case "$APP" in /*) ;; *) APP="$PWD/$APP";; esac
 cd "$(dirname "$0")"
+# The engine pin lives in ENGINE_PIN; the app's own copy must say the same
+[ "$(sed -n 's/^let pinnedEngine = "\(.*\)"/\1/p' Sources/Core.swift) $(sed -n 's/^let pinnedEngineDate = "\(.*\)"/\1/p' Sources/Core.swift)" = "$(awk '$1=="commit"{c=$2} $1=="date"{d=$2} END{print c, d}' ENGINE_PIN)" ] || { echo "Sources/Core.swift and ENGINE_PIN name different engines. Run bump-engine.sh."; exit 1; }
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 B=$(mktemp -d); for a in arm64 x86_64; do swiftc -swift-version 5 -O -whole-module-optimization -parse-as-library -target $a-apple-macos13.0 Sources/*.swift -o "$B/$a"; done
 lipo -create "$B/arm64" "$B/x86_64" -output "$APP/Contents/MacOS/Docked"
@@ -15,7 +17,7 @@ if [ -n "$PAYLOAD" ]; then
   plutil -insert DSPayloadSHA256 -string "$(shasum -a 256 "$PAYLOAD" | cut -c1-64)" "$APP/Contents/Info.plist"
   # What the carried tools were really built for decides where converting works; the rest of Docked goes further back.
   M=$(xz -dc "$PAYLOAD" | tar -xOf - tools/.tools-minimum 2>/dev/null || echo 27.0); plutil -insert DSToolsMinimum -string "$M" "$APP/Contents/Info.plist"
-elif [ "${SLIM:-}" = 1 ]; then cp setup.sh "$APP/Contents/Resources/"   # an update for a Mac that already has the tools
-else cp setup.sh "$APP/Contents/Resources/"; fi
+elif [ "${SLIM:-}" = 1 ]; then cp setup.sh ENGINE_PIN "$APP/Contents/Resources/"   # an update for a Mac that already has the tools
+else cp setup.sh ENGINE_PIN "$APP/Contents/Resources/"; fi
 codesign --force --sign - "$APP"
 du -sh "$APP"

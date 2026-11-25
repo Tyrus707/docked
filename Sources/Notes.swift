@@ -3,7 +3,7 @@ import Foundation
 // What the engine's makers wrote about a game: its open problems, in the lines a player can use. Read from the engine already on this Mac.
 enum GameNotes {
     static func file(_ id: String) -> URL { Paths.engine.appendingPathComponent("dm/games/\(id.uppercased())/README.md") }
-    static func page(_ id: String) -> URL { URL(string: "https://github.com/seedds/nxnative/blob/\(pinnedEngine)/dm/games/\(id.uppercased())/README.md")! }
+    static func page(_ id: String) -> URL { URL(string: "https://github.com/seedds/nxnative/blob/\(activeEngine)/dm/games/\(id.uppercased())/README.md")! }
     // Notes to developers rather than to players
     private static let inside = #"\.(py|tsv|md|c|h|m|swift|bfsha|arc|json|log|patch)\b|\bDM_[A-Z]|0x[0-9a-fA-F]+|\bTODO\b|[a-z]+_[a-z_]+|\b(SDK|HLE|NRO|ExeFS|NVN|MSL|SPIR|PSO|IPA|iPhone|iPad|iOS|archive|profile|rewriter|translate[sd]?|recompiler|decompil|register|build ID|commit|regress|survey|cross-?check|validated?|validation|measured?|unmeasured|driven|bring-?up|headless|subsdk|symbol|hook|opcode|heap|thread|allocator|residency|alpha test|shaders?|textures?|descriptors?|upload|swizzle|deswizzle|stalls?|route|prewarm|memory pools?|fragment|chain|extracted|packed|merged|2D|3D|decoders?|decoding|logs?|logged|pipelines?|runs?|current main|builds?|NV12|VP\d|copy|label|registered|matched|matches|dead-code|no longer|fixed|provisional|uniform|multisample|module|binary|host|guest|port|probe[ds]?|capture[ds]?|compared|v\d{3,})\b|::|->|#\d+"#
     static func read(_ md: String, limit: Int = 4) -> [String] {

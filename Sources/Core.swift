@@ -5,9 +5,8 @@ enum Paths {
     static let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DOCKSIDE_ROOT"] ?? NSHomeDirectory() + "/Dockside")
     // The tools the app carries, once unpacked; else a separate setup's.
     static var tools: URL { root.appendingPathComponent("tools") }
-    static var unpacked: Bool {
-        (try? String(contentsOf: tools.appendingPathComponent(".dockside-pin"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) == pinnedEngine
-    }
+    // The engine Docked was built with, or a signed engine update (Engine.swift).
+    static var unpacked: Bool { Engine.active != nil }
     static var engine: URL { unpacked ? tools.appendingPathComponent("engine") : root.appendingPathComponent("engine") }
     static var script: URL { engine.appendingPathComponent("scripts/build_ipa_from_nsp.py") }
     static var python: URL { unpacked ? tools.appendingPathComponent("bin/python3") : root.appendingPathComponent("venv/bin/python3") }
@@ -16,8 +15,11 @@ enum Paths {
     static let xcode = "/Applications/Xcode.app/Contents/Developer"
 }
 
-// The exact engine version that was reviewed. The app refuses to run any other.
+// The exact engine version that was reviewed, as in ENGINE_PIN (build.sh checks they agree). The app runs no other, unless it comes as an engine update signed by Docked's maker.
 let pinnedEngine = "01439b0fe923929d275e2fd4337cbdf08b54fcfd"
+let pinnedEngineDate = "2026-11-24T06:12:52Z"
+// The engine in use: the one above, or a newer signed one.
+var activeEngine: String { Engine.active?.commit ?? pinnedEngine }
 let requiredXcode = "27.2"
 
 // MARK: - Engine events (one JSON object per line)
@@ -26,7 +28,7 @@ enum EngineEvent: Equatable {
     case stage(k: Int, n: Int, name: String)
     case step(String)
     case progress(frac: Double?, eta: Double?, note: String)
-    case stageEnd(ok: Bool)
+    case stageEnd(ok: Bool, warn: Bool, name: String, summary: String)   // warn: the step finished without what it makes
     case game(titleID: String, name: String, out: String?)
     case say(String)
 
@@ -38,7 +40,7 @@ enum EngineEvent: Equatable {
         case "stage": return .stage(k: Int(d("k") ?? 0), n: Int(d("n") ?? 0), name: s("name"))
         case "step": return .step(s("step"))
         case "progress": return .progress(frac: d("frac"), eta: d("eta"), note: s("note"))
-        case "stage_end": return .stageEnd(ok: o["ok"] as? Bool ?? true)
+        case "stage_end": return .stageEnd(ok: o["ok"] as? Bool ?? true, warn: o["warn"] as? Bool ?? false, name: s("name"), summary: s("summary"))
         case "game": return .game(titleID: s("title_id"), name: s("name"), out: o["out"] as? String)
         case "say": return .say(s("msg"))
         default: return nil
@@ -259,7 +261,7 @@ func runChecks(carriesTools: Bool = bundledPayload != nil) -> [Check] {
     let toolDir = Paths.unpacked ? Paths.tools.path + "/bin" : "/opt/homebrew/bin"
     let glslang = fm.isExecutableFile(atPath: toolDir + "/glslangValidator")
     let zstd = fm.isExecutableFile(atPath: toolDir + "/zstd")
-    let head = Paths.unpacked ? pinnedEngine : fm.fileExists(atPath: Paths.script.path) ? run("/usr/bin/git", ["-C", Paths.engine.path, "rev-parse", "HEAD"]).out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    let head = Paths.unpacked ? activeEngine : fm.fileExists(atPath: Paths.script.path) ? run("/usr/bin/git", ["-C", Paths.engine.path, "rev-parse", "HEAD"]).out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
     let py = fm.isExecutableFile(atPath: Paths.python.path) && run(Paths.python.path, ["-I", "-c", "import sys,lz4.block,capstone,fontTools,nsz,zbic; assert sys.version_info>=(3,12)"]).code == 0
     let setup = "/bin/zsh \"" + (Bundle.main.url(forResource: "setup", withExtension: "sh")?.path ?? "setup.sh") + "\""
     let apple = [
@@ -268,8 +270,8 @@ func runChecks(carriesTools: Bool = bundledPayload != nil) -> [Check] {
         Check(title: "Apple's Metal compiler", ok: metal, detail: metal ? "Installed" : "A free Apple download, after the licence", fix: "DEVELOPER_DIR=\(Paths.xcode) xcodebuild -downloadComponent MetalToolchain"),
     ]
     if carriesTools || Paths.unpacked {
-        let ok = head == pinnedEngine && py && glslang && zstd
-        return apple + [Check(title: "Conversion tools", ok: ok, detail: ok ? "Installed" : "Included in Docked. Needs about 2.5 GB free", fix: "", installs: carriesTools)]
+        let ok = Paths.unpacked && py && glslang && zstd, older = !Paths.unpacked && fm.fileExists(atPath: Paths.tools.appendingPathComponent(".dockside-pin").path)
+        return apple + [Check(title: "Conversion tools", ok: ok, detail: ok ? "Installed" : older ? "This Docked comes with a newer engine. Install it to keep converting" : "Included in Docked. Needs about 2.5 GB free", fix: "", installs: carriesTools)]
     }
     return apple + [
         Check(title: "Homebrew", ok: brew, detail: brew ? "Installed" : "Install it from brew.sh", fix: ""),

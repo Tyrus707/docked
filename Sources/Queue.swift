@@ -10,6 +10,7 @@ struct Job: Codable, Equatable, Identifiable {
     var title: String, family: String?, parts: [String], place: String, quick: Bool, after: After, bytes: Int64, needsKeys: Bool, sources: [SourceFile]
     var target: Target? = nil
     var viaXcode: Bool? = nil   // for iPhone: a project for Xcode, not an .ipa file
+    var again: Bool? = nil   // converted a second time, because the first did not pass Docked's check
     var phone: Bool { target == .phone }
     var xcode: Bool { phone && viaXcode == true }
     var urls: [URL] { parts.map { URL(fileURLWithPath: $0) } }
