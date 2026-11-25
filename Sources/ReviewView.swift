@@ -11,7 +11,7 @@ struct ReviewView: View {
     var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? "Saves to " + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil].compactMap { $0 }).joined(separator: ", ") }
     func note(_ t: String, _ s: String, _ warn: Bool) -> some View { Label(t, systemImage: s).foregroundStyle(warn ? Color(light: 0x8A4B00, dark: 0xF2B45C) : Color.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
 
-    // Only a copy in Dockside's own folder, or in the chosen folder, is replaced.
+    // Only a copy in Docked's own folder, or in the chosen folder, is replaced.
     func existingNote(_ g: Game) -> String {
         let dir = g.url.deletingLastPathComponent().path
         if dir == model.reviewPlace.path || dir == Paths.games.path { return "\(g.name) is already converted. Converting replaces it and keeps your save." }

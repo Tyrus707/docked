@@ -62,7 +62,7 @@ The first time you convert, Docked walks you through the one-off setup. The conv
 
 Prefer a zip? [**Docked.zip**](https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip) has the same app: unzip it, open Docked, and it offers to move itself to Applications.
 
-From then on Docked lets you know when there's a new version and installs it for you, after checking the update really came from this project. Your previous version is kept in `Dockside/Backups` in your home folder, just in case.
+From then on Docked lets you know when there's a new version and installs it for you, after checking the update really came from this project. Your previous version is kept in `Docked/Backups` in your home folder, just in case.
 
 ### What you need
 
@@ -128,7 +128,7 @@ This hasn't been tested on a real device yet, so treat it as an early preview.
 
 <br>
 
-Download the new version, open it and drag Docked to Applications, choosing **Replace**. Your games, saves and settings stay. Or open Docked straight from the download: it offers to replace the old one for you and keeps the old version in `Dockside/Backups`.
+Download the new version, open it and drag Docked to Applications, choosing **Replace**. Your games, saves and settings stay. Or open Docked straight from the download: it offers to replace the old one for you and keeps the old version in `Docked/Backups`.
 
 Versions 1.1 and older can't update themselves, so download the new one by hand once. If macOS blocks an automatic update, allow **Docked** under **System Settings › Privacy & Security › App Management**.
 
@@ -146,7 +146,7 @@ Versions 1.1 and older can't update themselves, so download the new one by hand 
 Bundle/dmg.sh Docked.app        # Docked.dmg: the drag-to-Applications download
 ```
 
-`Bundle/make.sh` packs what `setup.sh` installed, with a pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261124) placed in `~/Dockside/python-standalone`. The engine's pinned commit and the fingerprints of its prebuilt tools are in [`ENGINE_PIN`](ENGINE_PIN); the other pinned versions are in those scripts. A release carries **Docked.dmg** and **Docked.zip** (the same full app) plus **Docked-Update.zip** and its `.sig`, which the built-in updater downloads.
+`Bundle/make.sh` packs what `setup.sh` installed, with a pinned [standalone Python](https://github.com/astral-sh/python-build-standalone/releases/tag/20261124) placed in `~/Docked/python-standalone`. The engine's pinned commit and the fingerprints of its prebuilt tools are in [`ENGINE_PIN`](ENGINE_PIN); the other pinned versions are in those scripts. A release carries **Docked.dmg** and **Docked.zip** (the same full app) plus **Docked-Update.zip** and its `.sig`, which the built-in updater downloads.
 
 **Moving to a newer engine.** nxnative changes every day, and its game profiles decide which games work, so Docked follows it in reviewed steps:
 
@@ -166,7 +166,7 @@ Bundle/dmg.sh Docked.app        # Docked.dmg: the drag-to-Applications download
 
 **Privacy.** Docked has no account and collects nothing. When it opens, it asks GitHub for the newest version numbers of Docked and its engine (you can turn that off in Settings), and it only downloads an update when you press **Update** or **Update Engine**. The first time you add a game for another console, it downloads RetroArch and that console's emulator from libretro's own server, `buildbot.libretro.com`, and nothing about you or your games is sent. Switch covers come from your own games, and any cover can be a picture you pick.
 
-**Covers and details**, for games from other consoles, are found only if you say yes when Docked first asks (or turn on **Find covers and details** in Settings). Docked then downloads libretro's public game list for that console once, from a fixed version on GitHub that it checks before use, and compares your files with it on your Mac: their checksums, serials and names are never sent. For a matched game it downloads the box art from [libretro-thumbnails](https://github.com/libretro-thumbnails/libretro-thumbnails) on GitHub, also at a fixed version, and, when the list has no description, looks the game's name up on Wikipedia. Those two see the game's name and nothing else. Everything is kept in `Dockside/Metadata`, so each game is looked up once.
+**Covers and details**, for games from other consoles, are found only if you say yes when Docked first asks (or turn on **Find covers and details** in Settings). Docked then downloads libretro's public game list for that console once, from a fixed version on GitHub that it checks before use, and compares your files with it on your Mac: their checksums, serials and names are never sent. For a matched game it downloads the box art from [libretro-thumbnails](https://github.com/libretro-thumbnails/libretro-thumbnails) on GitHub, also at a fixed version, and, when the list has no description, looks the game's name up on Wikipedia. Those two see the game's name and nothing else. Everything is kept in `Docked/Metadata`, so each game is looked up once.
 
 **Your own games only.** Use Docked with games and system files from your own console, where your local law allows it. Some file types need your own `prod.keys`; Docked remembers where it is and never copies or sends it. No games, keys, firmware or console files are included with Docked, and please don't post any here.
 

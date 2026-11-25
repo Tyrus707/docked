@@ -1,4 +1,4 @@
-// Dockside's own build code against the real installed engine, with junk input in a temporary folder.
+// Docked's own build code against the real installed engine, with junk input in a temporary folder.
 import Foundation
 var passed = 0, failed = 0
 func check(_ ok: Bool, _ what: String) { if ok { passed += 1 } else { failed += 1; print("FAIL:", what) } }

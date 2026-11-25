@@ -6,7 +6,7 @@ func check(_ ok: Bool, _ what: String) { if ok { passed += 1 } else { failed += 
 func fails2(_ what: String, _ f: () throws -> Void) { do { try f(); check(false, what) } catch { check(error is RetroError, what) } }
 func fails(_ e: InputError, _ what: String, _ f: () throws -> Void) { do { try f(); check(false, what) } catch { check(error as? InputError == e, what) } }
 let fm = FileManager.default
-let tmp = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DOCKSIDE_ROOT"]!)   // a temporary folder
+let tmp = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DOCKED_ROOT"]!)   // a temporary folder
 func mk(_ p: String, _ s: String = "x") -> URL { let u = tmp.appendingPathComponent(p); try! fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true); try! Data(s.utf8).write(to: u); return u }
 
 // events
@@ -539,5 +539,20 @@ do { _ = try Lookup.get(URL(string: "http://example.com/x")!, limit: 10); check(
 // Kept with the game, and read by an earlier library too
 var il = LibraryData(); var withInfo = gbRom; withInfo.info = GameInfo(title: "Puzzle Box (Japan)", year: 1990, publisher: "Box Co", how: "checksum"); il.addRom(withInfo); let ilf = tmp.appendingPathComponent("lk/library.json"); il.save(ilf); check(LibraryData.load(ilf).roms.first?.info == withInfo.info, "details saved with the game")
 check(GameInfo(title: "Legend of Game, The (USA)", year: 1994, publisher: "Maker", how: "name").line == "1994 · Maker", "a short line of details")
+
+// the folder's old name
+func link(_ u: URL) -> String? { try? fm.destinationOfSymbolicLink(atPath: u.path) }
+do {
+    let h = tmp.appendingPathComponent("home1"); _ = mk("home1/Dockside/library.json", "lib"); _ = mk("home1/Dockside/Games/a")
+    let a = Paths.home(h); check(a.lastPathComponent == "Docked" && (try? String(contentsOf: a.appendingPathComponent("library.json"), encoding: .utf8)) == "lib", "folder renamed whole")
+    check(link(h.appendingPathComponent("Dockside")) == "Docked" && fm.fileExists(atPath: h.path + "/Dockside/Games/a"), "old name still works")
+    check(Paths.home(h) == a && link(h.appendingPathComponent("Docked")) == nil, "renamed once only")
+    try! fm.removeItem(at: h.appendingPathComponent("Dockside")); check(Paths.home(h) == a && link(h.appendingPathComponent("Dockside")) == "Docked", "link made again if cut short")
+    let b = tmp.appendingPathComponent("home2"); _ = mk("home2/Dockside/library.json", "lib"); _ = mk("home2/Docked/mine.txt")
+    check(Paths.home(b).lastPathComponent == "Dockside" && fm.fileExists(atPath: b.path + "/Docked/mine.txt") && fm.fileExists(atPath: b.path + "/Dockside/library.json"), "never merged into another Docked folder")
+    let c = tmp.appendingPathComponent("home3"); try! fm.createDirectory(at: c, withIntermediateDirectories: true); check(Paths.home(c).lastPathComponent == "Docked" && link(c.appendingPathComponent("Dockside")) == nil, "new player gets no link")
+    let n = URL(fileURLWithPath: "/Users/x/Docked")
+    check(Paths.now("/Users/x/Dockside/Games", root: n, home: "/Users/x") == "/Users/x/Docked/Games" && Paths.now("/Users/x/Docksider/a", root: n, home: "/Users/x") == "/Users/x/Docksider/a" && Paths.now("/Users/x/Dockside/a", root: URL(fileURLWithPath: "/Users/x/Dockside"), home: "/Users/x") == "/Users/x/Dockside/a", "saved paths follow the folder")
+}
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)

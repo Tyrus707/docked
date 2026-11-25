@@ -9,17 +9,17 @@ swiftc -swift-version 5 -target ${ARCH:-arm64}-apple-macos13.0 Sources/Core.swif
 hdiutil create -quiet -size 1200m -type SPARSE -fs APFS -volname DSBig "$T/big"; hdiutil create -quiet -size 40m -type SPARSE -fs APFS -volname DSSmall "$T/small"
 mkdir "$T/mb" "$T/ms"; hdiutil attach -quiet -nobrowse -mountpoint "$T/mb" "$T/big.sparseimage"; hdiutil attach -quiet -nobrowse -mountpoint "$T/ms" "$T/small.sparseimage"
 trap 'hdiutil detach -quiet -force "$T/mb"; hdiutil detach -quiet -force "$T/ms"; chmod -R u+w "$T"; rm -rf "$T"' EXIT
-mkdir "$T/root"; BIGVOL="$T/mb" SMALLVOL="$T/ms" DOCKSIDE_ROOT="$T/root" "$T/tests"
+mkdir "$T/root"; BIGVOL="$T/mb" SMALLVOL="$T/ms" DOCKED_ROOT="$T/root" "$T/tests"
 # With the engine installed: the same code against the real engine. Its own checkout and Python are only read; everything else is temporary.
-if [ -d "$HOME/Dockside/engine" ] && [ -d "$HOME/Dockside/venv" ]; then
+if [ -d "$HOME/Docked/engine" ] && [ -d "$HOME/Docked/venv" ]; then
   swiftc -swift-version 5 -target ${ARCH:-arm64}-apple-macos13.0 Sources/Core.swift Sources/Builder.swift Sources/Review.swift Sources/Estimate.swift Sources/Install.swift Sources/Pipeline.swift Sources/Consoles.swift Sources/Disc.swift Sources/Lookup.swift Sources/Retro.swift Sources/Queue.swift Sources/Place.swift Sources/Originals.swift Sources/Extras.swift Sources/Notes.swift Sources/Smart.swift Sources/LibraryData.swift Sources/Phone.swift Sources/Xcode.swift Sources/Engine.swift Sources/Update.swift Tests/integration/main.swift -o "$T/itests"
-  mkdir "$T/real"; ln -s "$HOME/Dockside/engine" "$T/real/engine"; ln -s "$HOME/Dockside/venv" "$T/real/venv"
-  DOCKSIDE_ROOT="$T/real" "$T/itests"
+  mkdir "$T/real"; ln -s "$HOME/Docked/engine" "$T/real/engine"; ln -s "$HOME/Docked/venv" "$T/real/venv"
+  DOCKED_ROOT="$T/real" "$T/itests"
 fi
-# With a payload: the same checks using only the carried tools, with Homebrew and any other Dockside install blocked.
+# With a payload: the same checks using only the carried tools, with Homebrew and any other Docked install blocked.
 if [ -n "${PAYLOAD:-}" ]; then
   mkdir "$T/all"; tar -xJf "$PAYLOAD" -C "$T/all"
-  printf '(version 1)(allow default)(deny file-read* file-write* (subpath "/opt/homebrew") (subpath "/usr/local") (subpath "%s/Dockside") (subpath "/Library/Developer/CommandLineTools"))' "$HOME" > "$T/block.sb"
-  DOCKSIDE_ROOT="$T/all" sandbox-exec -f "$T/block.sb" "$T/itests"
+  printf '(version 1)(allow default)(deny file-read* file-write* (subpath "/opt/homebrew") (subpath "/usr/local") (subpath "%s/Docked") (subpath "/Library/Developer/CommandLineTools"))' "$HOME" > "$T/block.sb"
+  DOCKED_ROOT="$T/all" sandbox-exec -f "$T/block.sb" "$T/itests"
 fi
 ./Tests/queue/run.sh

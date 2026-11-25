@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Dockside's look, in one place: colours, the mark, and the game tiles. Drawn with shapes only, so it adds no images and no work while idle.
+// Docked's look, in one place: colours, the mark, and the game tiles. Drawn with shapes only, so it adds no images and no work while idle.
 extension Color {
     init(hex: UInt32) { self.init(.sRGB, red: Double(hex >> 16 & 255) / 255, green: Double(hex >> 8 & 255) / 255, blue: Double(hex & 255) / 255) }
     init(light: UInt32, dark: UInt32) {
