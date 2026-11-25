@@ -587,7 +587,7 @@ var oldata = LibraryData(); let gA = gameAt(filedApp)!
 var shown = oldata.settle(found: [gA]); check(shown.isEmpty && oldata.apps[filedApp.path] == "0100000000020000", "a converted game is remembered")
 shown = oldata.settle(found: [], exists: { _ in false }); check(shown.count == 1 && shown[0].missing && shown[0].titleID == "0100000000020000", "gone: still shown, as missing")
 var omoved = gA; omoved.url = tmp.appendingPathComponent("org/other/Foo Game.app")
-shown = oldata.settle(found: [omoved], exists: { _ in false }); check(shown.isEmpty && oldata.apps.count == 1 && oldata.apps[omoved.url.path] != nil, "found somewhere else: it omoved, the old place is dropped")
+shown = oldata.settle(found: [omoved], exists: { _ in false }); check(shown.isEmpty && oldata.apps.count == 1 && oldata.apps[omoved.url.path] != nil, "found somewhere else: it moved, the old place is dropped")
 oldata.removeApp(omoved.url.path); check(oldata.apps.isEmpty && oldata.removed == [omoved.url.path], "removed by hand, and remembered as removed")
 oldata.addApp(omoved.url.path, "0100000000020000"); check(oldata.removed.isEmpty, "added again")
 let olf = tmp.appendingPathComponent("org/library.json"); oldata.save(olf); check(LibraryData.load(olf).apps == oldata.apps, "places saved")
