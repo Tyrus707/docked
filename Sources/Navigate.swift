@@ -23,57 +23,25 @@ func step(_ c: Cursor?, _ m: Move, rows: [(id: String, games: [String])], column
     switch m { case .left: return at(r, i - 1); case .right: return at(r, i + 1); case .up: return r > 0 ? at(r - 1, i) : c; case .down: return r < rows.count - 1 ? at(r + 1, i) : c; default: return c }
 }
 
-// Couch Mode: shelves across the top, several rows of games on screen, one game chosen.
-// The shelf and game are remembered by name, so a refreshed library keeps the place even when shelves come and go.
+// Couch Mode: a row of shelves, one shown at a time. Each shelf keeps its own place, so going back to it lands where the player left it.
 struct CouchSpot: Equatable {
-    var shelf = 0
-    var shelfID: String?
-    var at: [String: Int] = [:]         // shelf id -> game number
-    var gameID: [String: String] = [:]  // shelf id -> game id
-    var game: String?                   // the chosen game, even if its shelf changes
-    func shelfIndex(_ rows: [(id: String, games: [String])]) -> Int {
-        if let shelfID, let i = rows.firstIndex(where: { $0.id == shelfID }) { return i }
-        return min(max(shelf, 0), max(rows.count - 1, 0))
-    }
-    func index(_ shelf: String, _ count: Int) -> Int { min(max(at[shelf] ?? 0, 0), max(count - 1, 0)) }
-    func index(_ shelf: String, _ games: [String]) -> Int {
-        if let id = gameID[shelf], let i = games.firstIndex(of: id) { return i }
-        return index(shelf, games.count)
-    }
-    // A shelf can appear or disappear when a game is favorited. Follow the chosen game first, so that does not strand it.
-    func resolved(_ rows: [(id: String, games: [String])]) -> CouchSpot {
-        let rows = rows.filter { !$0.games.isEmpty }
-        guard !rows.isEmpty else { return self }
-        var s = self
-        if let game, let r = rows.firstIndex(where: { $0.id == s.shelfID }), let i = rows[r].games.firstIndex(of: game) {
-            s.select(rows, r, i)
-        } else if let game, let r = rows.firstIndex(where: { $0.games.contains(game) }), let i = rows[r].games.firstIndex(of: game) {
-            s.select(rows, r, i)
-        } else {
-            let r = s.shelfIndex(rows); s.select(rows, r, s.index(rows[r].id, rows[r].games))
-        }
-        return s
-    }
-    fileprivate mutating func select(_ rows: [(id: String, games: [String])], _ r: Int, _ i: Int) {
-        shelf = r; shelfID = rows[r].id; at[rows[r].id] = i
-        gameID[rows[r].id] = rows[r].games[i]; game = rows[r].games[i]
-    }
+    var shelf = 0, at: [Int: Int] = [:]
+    func index(_ count: Int) -> Int { min(max(at[shelf] ?? 0, 0), max(count - 1, 0)) }
 }
-func couchStep(_ s: CouchSpot, _ m: Move, rows: [(id: String, games: [String])]) -> CouchSpot {
-    let rows = rows.filter { !$0.games.isEmpty }
-    guard !rows.isEmpty else { return s }
-    var s = s.resolved(rows)
-    let r = s.shelf, shelf = rows[r], i = s.index(shelf.id, shelf.games)
+func couchStep(_ s: CouchSpot, _ m: Move, counts: [Int]) -> CouchSpot {
+    guard !counts.isEmpty else { return s }
+    var s = s; s.shelf = min(max(s.shelf, 0), counts.count - 1)
+    let i = s.index(counts[s.shelf])
     switch m {
-    case .left, .right:
-        s.select(rows, r, m == .left ? max(i - 1, 0) : min(i + 1, shelf.games.count - 1))
-    case .up, .down:
-        let n = r + (m == .down ? 1 : -1)   // up and down change row, stopping at the ends
-        if rows.indices.contains(n) { s.select(rows, n, s.index(rows[n].id, rows[n].games)) }
-    case .nextSection, .previousSection:
-        let d = m == .nextSection ? 1 : -1  // the shoulders change shelf and go round
-        let n = (r + d + rows.count) % rows.count
-        s.select(rows, n, s.index(rows[n].id, rows[n].games))
+    case .left: s.at[s.shelf] = max(i - 1, 0)
+    case .right: s.at[s.shelf] = min(i + 1, max(counts[s.shelf] - 1, 0))
+    case .up, .down, .nextSection, .previousSection:
+        let wrap = m == .nextSection || m == .previousSection, d = m == .down || m == .nextSection ? 1 : -1
+        var n = s.shelf
+        for _ in counts.indices {   // past empty shelves; up and down stop at the ends, the shoulders go round
+            n += d; if wrap { n = (n + counts.count) % counts.count } else if n < 0 || n >= counts.count { return s }
+            if counts[n] > 0 { s.shelf = n; return s }
+        }
     default: break
     }
     return s
@@ -90,7 +58,7 @@ final class Navigator {
         GCController.controllers().forEach(listen)
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let s = self, let w = e.window, w.attachedSheet == nil, NSApp.modalWindow == nil, w.canBecomeMain, !(w.firstResponder is NSText), e.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return e }
-            let m: Move? = [123: .left, 124: .right, 125: .down, 126: .up, 36: .accept, 76: .accept][Int(e.keyCode)] ?? (s.couch() ? [53: .back, 49: .play, 3: .favorite, 48: e.modifierFlags.contains(.shift) ? .previousSection : .nextSection][Int(e.keyCode)] : nil); guard let m else { return e }
+            let m: Move? = [123: .left, 124: .right, 125: .down, 126: .up, 36: .accept, 76: .accept][Int(e.keyCode)] ?? (s.couch() ? [53: .back, 49: .play, 3: .favorite, 48: .nextSection][Int(e.keyCode)] : nil); guard let m else { return e }
             s.act(m, false); return nil
         }
     }
