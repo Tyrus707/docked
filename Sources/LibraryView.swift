@@ -237,6 +237,7 @@ struct GameActions: View {
             Button("New Collection…") { model.collecting = game }
         }
         Divider()
+        if game.rom == nil, model.lookUp == true { Button(e.meta == nil ? "Find Details" : "Find Details Again") { model.findMeta(game, force: true) }.disabled(model.scoring.contains(game.titleID.uppercased())) }
         if game.rom == nil { Button("Add Update or DLC…") { model.addTo(game) }; Button("Move to Folder…") { model.moveGame(game) } }
         else { Button("Rename…") { model.retitling = game }; if let r = game.rom { Button(r.info == nil ? "Find Cover and Details…" : "Find Details Again…") { model.find(r.id, byHand: true) }.disabled(model.finding.contains(r.id)) } }
         Button("Choose Cover…") { model.pickArt(game) }; if model.hasArt(game) { Button("Use Original Cover") { model.clearArt(game) } }

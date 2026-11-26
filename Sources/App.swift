@@ -85,6 +85,9 @@ final class Model: ObservableObject {
     @Published var askLookUp = false
     @Published var picking: Picking?
     @Published var finding = Set<String>()
+    @Published var scoring = Set<String>()   // games whose scores and details are being looked up, by title ID
+    // Converted Switch games get their details when they are done; nil follows "Find covers and details"
+    @Published var metaConverted = UserDefaults.standard.object(forKey: "metaConverted") as? Bool { didSet { UserDefaults.standard.set(metaConverted, forKey: "metaConverted") } }
     var waitingLookUp: [String] = [], picks: [Picking] = []
 
     // Games for other consoles, and converted games, chosen or dropped: looked through off the main thread, then brought in (Library.swift).
@@ -457,7 +460,7 @@ final class Model: ObservableObject {
     }
 
     private func finished() {
-        icons = [:]; covers = [:]; sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID }; let job = queue.current
+        icons = [:]; covers = [:]; sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; metaArrived(builder.titleID) }; let job = queue.current
         switch builder.stage {
         case "Done":
             if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }

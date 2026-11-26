@@ -27,7 +27,11 @@ struct SettingsSheet: View {
             flip("Step aside while playing", "Docked hides when a game starts and comes back when it closes.", $model.hideWhilePlaying)
             flip("Theme music", "Plays a game's own theme while it is selected.", $model.themes)
             flip("Couch Mode sounds", "Soft clicks and chimes as you move around Couch Mode.", $model.couchSounds)
-            flip("Find covers and details", "For games from other consoles. Your files are matched on this Mac; libretro and Wikipedia see only a game's name.", .init(get: { model.lookUp == true }, set: { model.lookUp = $0; if $0 { model.lookUpAll() } }))
+            flip("Find covers and details", "Covers and descriptions for games from other consoles, and critic scores, popularity, year and genre for every game. Your files are matched on this Mac; libretro, Wikidata and Wikipedia see only a game's name.", .init(get: { model.lookUp == true }, set: { model.lookUp = $0; if $0 { model.lookUpAll(); model.findMetaAll() } }))
+            line("Game details", model.scoring.isEmpty ? "Looks up every game not checked in the last month, a couple of seconds each, while you use Docked." : "Finding details, \(model.scoring.count) to go…") {
+                if !model.scoring.isEmpty { ProgressView().controlSize(.small) }
+                Button("Find for All Games") { model.lookUpAll(); model.findMetaAll() }.disabled(model.lookUp != true || !model.scoring.isEmpty)
+            }
             flip("Check for updates at launch", "Asks GitHub for the newest version numbers of Docked and its engine. Nothing else is sent.", $model.updatesAtLaunch)
             line("Updates", "") { if model.checkingUpdate { ProgressView().controlSize(.small) }; Button("Check Now") { model.leaveSettings { model.lookForUpdate() } }.disabled(model.checkingUpdate) }
         }
@@ -37,6 +41,7 @@ struct SettingsSheet: View {
             line("Keys file", findKeys(model.keys).map { ($0 as NSString).lastPathComponent } ?? "Not chosen. Needed for .nsp, .xci, .nsz and .xcz games.") { Button(findKeys(model.keys) == nil ? "Choose…" : "Change…") { _ = model.pickKeys() } }
             if model.organized { line("New games go to", "The Switch folder in your library. Change it under Library.") { Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([model.consoleFolder("switch")]) } } }
             else { line("New games go to", model.destination.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) { Button("Change…") { if let u = model.pickFolder(model.destination) { model.destination = u } } } }
+            flip("Find details when a game is done", "Critic score, popularity, year and genre from Wikidata and Wikipedia, which see only the game's name.", .init(get: { model.lookUp == true && model.metaConverted ?? true }, set: { model.metaConverted = $0; if $0, model.lookUp != true { model.lookUp = true } }))
             line("When a game is done", "You can change this for each game.") { Picker("When a game is done", selection: $model.after) { ForEach(After.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
             flip("Skip the pipeline step", "Faster to convert, slower to start the first time.", $model.quick)
             if !phoneGames.isEmpty { line("Games for iPhone and iPad", phoneGames.map(\.name).joined(separator: ", ")) { Button("Open Steps…") { model.leaveSettings { model.showXcode = true } } } }

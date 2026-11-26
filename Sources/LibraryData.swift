@@ -10,9 +10,10 @@ struct Entry: Codable, Equatable {
     var seconds: Double = 0
     var rating = 0     // the player's own stars, 1 to 5; 0 is not rated
     var plays = 0      // how many times it has been played
+    var meta: Meta?    // critic score, popularity and details from Wikidata, once looked up
     enum Status: String, Codable, CaseIterable { case none = "Not started", playing = "Playing", finished = "Finished", aside = "Set aside" }
-    init(favorite: Bool = false, status: Status = .none, collections: [String] = [], added: Date = Date(), lastPlayed: Date? = nil, seconds: Double = 0, rating: Int = 0, plays: Int = 0) {
-        self.favorite = favorite; self.status = status; self.collections = collections; self.added = added; self.lastPlayed = lastPlayed; self.seconds = seconds; self.rating = rating; self.plays = plays
+    init(favorite: Bool = false, status: Status = .none, collections: [String] = [], added: Date = Date(), lastPlayed: Date? = nil, seconds: Double = 0, rating: Int = 0, plays: Int = 0, meta: Meta? = nil) {
+        self.favorite = favorite; self.status = status; self.collections = collections; self.added = added; self.lastPlayed = lastPlayed; self.seconds = seconds; self.rating = rating; self.plays = plays; self.meta = meta
     }
     // A library saved by an earlier version lacks the newer fields, and must still open.
     init(from d: Decoder) throws {
@@ -25,12 +26,13 @@ struct Entry: Codable, Equatable {
         seconds = try c.decodeIfPresent(Double.self, forKey: .seconds) ?? 0
         rating = min(max(try c.decodeIfPresent(Int.self, forKey: .rating) ?? 0, 0), 5)
         plays = try c.decodeIfPresent(Int.self, forKey: .plays) ?? 0
+        meta = try? c.decodeIfPresent(Meta.self, forKey: .meta)
     }
 }
 
 // The raw values are what is saved, so the older ones stay as they were.
 enum SortBy: String, CaseIterable {
-    case recent = "Recently Played", name = "Name", added = "Recently Added", played = "Most Played", rating = "Rating", plays = "Times Played", year = "Release Year"
+    case recent = "Recently Played", name = "Name", added = "Recently Added", played = "Most Played", rating = "Rating", critic = "Critic Score", popular = "Popularity", plays = "Times Played", year = "Release Year"
     var title: String { self == .played ? "Hours Played" : rawValue }
 }
 
@@ -178,16 +180,21 @@ struct LibraryData: Codable, Equatable {
             case .played: return x.seconds == y.seconds ? byName(a, b) : x.seconds > y.seconds
             case .rating: return x.rating == y.rating ? byName(a, b) : x.rating > y.rating
             case .plays: return x.plays == y.plays ? (x.seconds == y.seconds ? byName(a, b) : x.seconds > y.seconds) : x.plays > y.plays
-            case .year: let p = a.rom?.info?.year ?? 0, r = b.rom?.info?.year ?? 0; return p == r ? byName(a, b) : (p == 0 || r == 0) ? p != 0 : p > r   // newest first, unknown last
+            case .critic: let p = x.meta?.critic ?? -1, r = y.meta?.critic ?? -1; return p == r ? byName(a, b) : p > r
+            case .popular: let p = x.meta?.views ?? -1, r = y.meta?.views ?? -1; return p == r ? byName(a, b) : p > r
+            case .year: let p = year(a) ?? 0, r = year(b) ?? 0; return p == r ? byName(a, b) : (p == 0 || r == 0) ? p != 0 : p > r   // newest first, unknown last
             }
         }
     }
+
+    // A game's year: its game list's, else Wikidata's
+    func year(_ g: Game) -> Int? { g.rom?.info?.year ?? entry(g.titleID).meta?.year }
 
     // What "Automatic" groups by: whatever the list is sorted by, when that makes clear runs.
     func grouping(_ g: GroupBy, sort: SortBy, count: Int) -> GroupBy {
         guard g == .auto else { return g }
         guard count >= GroupBy.enough else { return .none }
-        switch sort { case .name: return .letter; case .year: return .year; case .recent, .added, .rating: return .auto; case .played, .plays: return .none }
+        switch sort { case .name: return .letter; case .year: return .year; case .recent, .added, .rating, .critic: return .auto; case .played, .plays, .popular: return .none }
     }
 
     // An already sorted list, cut into runs in the order they come; each run keeps the sort. Runs of a kind that has no order of its own (console, genre) are put in name order.
@@ -205,14 +212,15 @@ struct LibraryData: Codable, Equatable {
             switch g {
             case .letter: let f = x.name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).first.map { String($0).uppercased() } ?? "#"; return f.first?.isLetter == true ? f : "#"
             case .console: return consoleName(consoleOf(x.titleID))
-            case .year: return x.rom?.info?.year.map(String.init) ?? "Year Unknown"
-            case .genre: return x.rom?.info?.genre.map { $0.split(separator: "/").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? $0 } ?? "Genre Unknown"
+            case .year: return year(x).map(String.init) ?? "Year Unknown"
+            case .genre: return (x.rom?.info?.genre ?? e.meta?.genre).map { $0.split(separator: "/").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? $0 } ?? "Genre Unknown"
             case .progress: return e.status.rawValue
             case .auto:   // by the sort itself
                 switch sort {
                 case .recent: return when(e.lastPlayed, never: "Not Played Yet")
                 case .added: return when(e.added, never: "Earlier")
                 case .rating: return e.rating == 0 ? "Not Rated" : String(repeating: "★", count: e.rating)
+                case .critic: guard let c = e.meta?.critic else { return "No Score" }; return c >= 90 ? "90 and Up" : c >= 80 ? "80 to 89" : c >= 70 ? "70 to 79" : "Under 70"
                 default: return ""
                 }
             case .none: return ""
