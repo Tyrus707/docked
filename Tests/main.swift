@@ -766,12 +766,59 @@ do {
     check(Compat.parse(Data("nope".utf8)).isEmpty && Compat(tier: "Profile only", fps: "", platforms: [], issues: 0, engine: "").label == "Not tested yet", "compat edge cases")
 }
 
+// convert when
+check(convertWait(.now, onPower: false, lowPower: true, hour: 12, idle: 0) == nil && convertWait(.plugged, onPower: false, lowPower: false, hour: 2, idle: 9999) == "Waiting for the power adapter" && convertWait(.plugged, onPower: true, lowPower: true, hour: 2, idle: 0) != nil && convertWait(.plugged, onPower: true, lowPower: false, hour: 12, idle: 0) == nil, "plugged in")
+check(convertWait(.overnight, onPower: true, lowPower: false, hour: 15, idle: 60) == "Waiting for tonight" && convertWait(.overnight, onPower: true, lowPower: false, hour: 23, idle: 0) == nil && convertWait(.overnight, onPower: true, lowPower: false, hour: 6, idle: 0) == nil && convertWait(.overnight, onPower: true, lowPower: false, hour: 15, idle: 1200) == nil, "overnight, or while nobody is using the Mac")
+check(convertWait(.plugged, onPower: true, lowPower: true, hour: 2, idle: 0) == "Waiting for Low Power Mode to turn off" && convertWait(.plugged, onPower: false, lowPower: true, hour: 2, idle: 0) == "Waiting for the power adapter and Low Power Mode to turn off", "Low Power Mode says why it waits")
+var scans = ScanToken(); let olderScan = scans.start(), latestScan = scans.start()
+check(!scans.current(olderScan) && scans.current(latestScan), "a late disk or health look can't overwrite a newer one")
+
+// docked:// links
+check(DockedLink.parse(URL(string: "docked://play?id=0100000000010000")!) == .play(id: "0100000000010000", name: nil) && DockedLink.parse(URL(string: "DOCKED://Resume")!) == .resume && DockedLink.parse(URL(string: "docked://play")!) == nil && DockedLink.parse(URL(string: "https://play?id=1")!) == nil && DockedLink.parse(URL(string: "docked://nope")!) == nil, "links read")
+let linkGames = [Game(url: URL(fileURLWithPath: "/a.app"), name: "Pokémon Legends", titleID: "0100AAAA00000000"), Game(url: URL(fileURLWithPath: "/b.app"), name: "Mario Kart 8 Deluxe", titleID: "0100BBBB00000000"), Game(url: URL(fileURLWithPath: "/c.app"), name: "Mario", titleID: "0100CCCC00000000")]
+check(gameFor(id: "0100bbbb00000000", name: nil, in: linkGames)?.name == "Mario Kart 8 Deluxe" && gameFor(id: nil, name: "mario", in: linkGames)?.name == "Mario" && gameFor(id: nil, name: "kart deluxe", in: linkGames)?.name == "Mario Kart 8 Deluxe" && gameFor(id: nil, name: "pokemon", in: linkGames)?.name == "Pokémon Legends" && gameFor(id: nil, name: "zelda", in: linkGames) == nil, "the game a link means")
+check(DockedLink.play("0100BBBB00000000") == "docked://play?id=0100BBBB00000000", "a game's link")
+
+// retro games online
+do {
+    var n: UInt8 = 0; let inv = Invite.make(game: "Super Game") { n &+= 7; return n }
+    check(Invite.valid(inv.room) && inv.key.count == 10 && DockedLink.parse(URL(string: inv.link)!) == .join(inv), "an invite goes through its own link: \(inv.link)")
+    check(DockedLink.parse(URL(string: "docked://join?room=evil;rm&key=x&game=y")!) == nil, "only Docked's own room names")
+    let injected = "docked://join?room=Docked-ABC&key=x%0Anetplay_nickname%20%3D%20%22evil%22&game=y"
+    check(DockedLink.parse(URL(string: injected)!) == nil && RetroArch.line("netplay_password", "x\nnetplay_nickname = \"evil\"") == "netplay_password = \"xnetplay_nickname = evil\"\n", "a crafted join link adds no RetroArch setting")
+    let lobbyList = Data(#"[{"fields":{"username":"Other","ip":"1.1.1.1","port":55435}},{"fields":{"username":"Docked-ABC","ip":"2.2.2.2","port":55435,"mitm_ip":"3.3.3.3","mitm_port":55001,"mitm_session":"s1"}},{"username":"Docked-DIR","ip":"4.4.4.4","port":"55435","mitm_ip":""}]"#.utf8)
+    check(Netplay.room(lobbyList, named: "Docked-ABC") == Netplay.Room(ip: "3.3.3.3", port: 55001, session: "s1") && Netplay.room(lobbyList, named: "Docked-DIR") == Netplay.Room(ip: "4.4.4.4", port: 55435, session: nil) && Netplay.room(lobbyList, named: "Nobody") == nil && Netplay.room(Data("x".utf8), named: "a") == nil, "the host's room in the lobby")
+    check(Netplay.arguments(.join(inv, Netplay.Room(ip: "3.3.3.3", port: 55001, session: "s1"))) == ["--connect", "3.3.3.3", "--port", "55001", "--mitm-session", "s1"] && Netplay.arguments(.host(inv)) == ["--host"] && Netplay.lines(.host(inv)).contains("netplay_password = \"\(inv.key)\""), "RetroArch told how to meet")
+}
+
+// library health
+do {
+    let nowhere = URL(fileURLWithPath: "/nope/Gone.app")
+    let h = healthOf(app: nowhere, titleID: "0100000000010000", name: "Gone", engine: "old", active: "new", kept: false, hasOriginals: true, compat: Compat(tier: "Doesn't run yet", fps: "", platforms: [], issues: 0, engine: ""), verify: { _ in true }, friends: { _ in false })
+    check(h.problems.count == 1 && h.better.count == 2 && h.reports.count == 1 && h.canRebuild && h.fixable && !h.good, "a game short of a part, older engine, no friends, reported not running")
+    let k = healthOf(app: nowhere, titleID: "x", name: "K", engine: nil, active: "new", kept: true, hasOriginals: true, compat: nil, verify: { _ in true }, friends: { _ in true })
+    check(!k.canRebuild && k.better.isEmpty, "a kept build is never rebuilt, and an unknown engine isn't called old")
+    var fine = h; fine.problems = []; fine.better = []; fine.reports = []
+    check(healthSummary([fine, fine]) == "All 2 converted games look good." && healthSummary([fine, h]) == "1 looks good. 1 needs attention." && healthSummary([]).hasPrefix("There are no"), "health in words")
+    var reported = h; reported.problems = []; reported.better = []
+    check(!reported.good && !reported.fixable && healthSummary([reported]) == "1 has a report from players.", "a player's report is not a rebuild reason")
+}
+
 // artwork: where it is, and what no game uses
 do {
     let ex: Set<String> = ["/g/a", "/g"]
     check(deletedFile("/g/b", exists: { ex.contains($0) }) && !deletedFile("/g/a", exists: { ex.contains($0) }), "a file gone from a folder that is still there was deleted")
     check(!deletedFile("/moved/b", exists: { ex.contains($0) }), "a whole folder gone may have moved: kept as missing")
     check(!deletedFile("/Volumes/NoSuchDriveHere/Games/x.sfc", exists: { _ in false }), "a drive that isn't connected: never deleted")
+    // two drives with one name: the other one plugged in is not this one, so its games are not deleted
+    let vol = "/Volumes/" + (((try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []).first { !$0.hasPrefix(".") } ?? "X")   // any drive that is mounted
+    var driveNow = "A"; let dIDs = DriveIDs(store: UserDefaults(suiteName: "docked-drives-\(UUID())")!, id: { _ in driveNow })
+    let onA = vol + "/Games/Switch/Game.app", there: Set<String> = [vol + "/Games/Switch", vol]
+    dIDs.remember([onA, "/Users/me/x.app"]); check(dIDs.matches(onA) && dIDs.matches("/Users/me/x.app") && dIDs.matches(vol + "/never/seen.app"), "the drive a game was seen on")
+    driveNow = "B"; check(!dIDs.matches(onA) && !deletedFile(onA, exists: { there.contains($0) }, ids: dIDs), "another drive with the same name: the game is away, not deleted")
+    driveNow = "A"; check(deletedFile(onA, exists: { there.contains($0) }, ids: dIDs) == FileManager.default.fileExists(atPath: vol), "its own drive, and it isn't there: deleted")
+    let dl = DiskLook.take(dirs: [], apps: [], removed: [], roms: ["/nope/a.sfc", NSTemporaryDirectory()], offloaded: [], ids: dIDs)
+    check(!dl.exists("/nope/a.sfc") && dl.known.contains("/nope") && dl.exists(NSTemporaryDirectory()) && dl.apps.isEmpty, "the library's look at the disk, taken once")
     check(artStem("snes:abc/1") == "snes-abc-1", "art named for its game")
     let a = Artwork.tile("snes:abc", from: "k1"), b = Artwork.tile("snes:abc", from: "k2")
     check(a != b && a.lastPathComponent.hasPrefix("snes-abc~") && Artwork.tile("snes:abc", from: "k1") == a, "made cover named for its art")

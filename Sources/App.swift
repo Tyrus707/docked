@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import CoreSpotlight
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var builder: Builder?
@@ -7,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var leaving: () -> Void = {}
     static var waiting: () -> Int = { 0 }
     func applicationWillFinishLaunching(_ n: Notification) { Style.apply() }
-    func applicationWillTerminate(_ n: Notification) { Self.leaving() }
+    func applicationWillTerminate(_ n: Notification) { Self.leaving(); Friends.forgetShared() }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { !(Self.builder?.running ?? false) && !Self.moving() }
     func applicationShouldTerminate(_ s: NSApplication) -> NSApplication.TerminateReply {
         if Self.moving() { let a = NSAlert(); a.messageText = "A game is being moved."; a.informativeText = "Quit Docked when it has finished."; a.runModal(); return .terminateCancel }
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var body: some Scene {
         Window("Docked", id: "main") {
             ContentView().environmentObject(model).environmentObject(model.builder).frame(minWidth: 720, minHeight: 480).onAppear { model.windowAppeared() }
+                .onOpenURL { model.open($0) }.onContinueUserActivity(CSSearchableItemActionType) { model.openSpotlight($0) }
         }
         .defaultSize(width: 1000, height: 660)
         .commands {
@@ -40,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Button("Organize Library…") { model.planTidy() }.disabled(!model.organized)
                 Menu("Add Update or DLC") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.addTo(g) } } }.disabled(model.games.isEmpty)
                 Button("Clean Up…") { model.cleanUp(nil) }
+                Button("Check Library Health…") { model.checkHealth() }.disabled(!model.games.contains { $0.rom == nil })
                 Menu("Move Game to Folder") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.moveGame(g) } } }.disabled(model.games.isEmpty)
             }
             CommandGroup(after: .sidebar) { Button(model.couch ? "Leave Couch Mode" : "Couch Mode") { model.toggleCouch() }.keyboardShortcut("b", modifiers: [.command, .shift]).disabled(model.games.isEmpty && !model.couch) }
@@ -93,6 +96,8 @@ final class Model: ObservableObject {
     @Published var asking: (files: [URL], choices: [Console])?   // a file several consoles use
     @Published var retitling: Game?
     @Published var showConsoles = false
+    @Published var joining: String?   // the online room being looked for
+    @Published var health: HealthState?   // Library Health, while it is open (HealthView.swift)
     // ---- covers and details, found online once the player has said yes (Lookup.swift) ----
     @Published var lookUp = UserDefaults.standard.object(forKey: "lookUp") as? Bool { didSet { UserDefaults.standard.set(lookUp, forKey: "lookUp"); refreshCompat() } }
     @Published var askLookUp = false
@@ -195,8 +200,14 @@ final class Model: ObservableObject {
     }
     func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); Artwork.removeMade(g.titleID); forgetArt(g) }
     func hasArt(_ g: Game) -> Bool { FileManager.default.fileExists(atPath: Cover.custom(g).path) }
-    func forgetArt(_ g: Game) { dropArt(g); reload() }
+    func forgetArt(_ g: Game) { dropArt(g) }   // a new cover changes no game: no rescan
     func dropArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers.removeObject(forKey: g.id as NSString); coverReady() }
+    // Only the art of games whose place matches: the rest of a big library keeps what it has drawn
+    func dropArt(where hit: (String) -> Bool) {
+        for k in icons.keys where hit(k) { icons[k] = nil }; for k in washes.keys where hit(k) { washes[k] = nil }
+        for g in games where hit(g.id) { covers.removeObject(forKey: g.id as NSString) }
+        coverReady()
+    }
     // Dropped on a game: a picture becomes its cover, sound its theme, anything else is added as usual.
     func dropped(_ urls: [URL], on g: Game) { if urls.count == 1, pictureTypes.contains(urls[0].pathExtension.lowercased()) { setArt(g, urls[0]) } else if urls.count == 1, soundTypes.contains(urls[0].pathExtension.lowercased()) { setTheme(g, urls[0]) } else { add(urls) } }
     let covers: NSCache<NSString, NSImage> = { let c = NSCache<NSString, NSImage>(); c.totalCostLimit = 220 << 20; return c }()   // about 500 covers; the rest load again from disk
@@ -255,22 +266,40 @@ final class Model: ObservableObject {
     @Published var palette = Style.current { didSet { UserDefaults.standard.set(palette.id, forKey: "theme"); Style.current = palette; Style.apply() } }
     @Published var look = Look(rawValue: UserDefaults.standard.string(forKey: "look") ?? "") ?? .covers { didSet { UserDefaults.standard.set(look.rawValue, forKey: "look") } }
     var arrived: String?   // a game that has just been converted, until its tile has come down on the shelf
-    private func playRom(_ g: Game, _ r: Rom) {
+    private func playRom(_ g: Game, _ r: Rom, net: Netplay.Role? = nil) {
         guard let c = console(r.console) else { return }
         if let p = RetroArch.problem(c, rom: r.path) { message = p; return }
-        if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r) }; if retro == nil { tell("Docked is getting \(c.name) games ready. The game starts when it's done.") }; return }
-        if let b = RetroArch.missingBios(c, rom: r.path), b.required || !biosAsked(c) { askBios(c) { [weak self] in self?.playRom(g, r) }; return }
+        if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r, net: net) }; if retro == nil { tell("Docked is getting \(c.name) games ready. The game starts when it's done.") }; return }
+        if let b = RetroArch.missingBios(c, rom: r.path), b.required || !biosAsked(c) { askBios(c) { [weak self] in self?.playRom(g, r, net: net) }; return }
         let look = Shaders.look(r)
-        if look != .off && !Shaders.installed { getLooks { [weak self] in self?.playRom(g, r) }; return }
+        if look != .off && !Shaders.installed { getLooks { [weak self] in self?.playRom(g, r, net: net) }; return }
         let shader = Shaders.preset(look)
         if !Pads.installed { DispatchQueue.global(qos: .utility).async { try? Pads.install() } }
         do { try RetroArch.prepare(shader: shader != nil) } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
         let ra = NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == RetroArch.app.path }
         if let ra { if isRunning(g) { ra.activate() } else { message = "RetroArch is already open. Quit it first, then play \(g.name)." }; return }
         do {
-            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path, shader: shader) { [weak self] in self?.backFromGame() }
+            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path, shader: shader, net: net) { [weak self] in self?.backFromGame() }
             adoptRetro(pid, as: g.titleID.uppercased(), tries: 20); stepAside()
         } catch { message = "RetroArch couldn't start. \(error.localizedDescription)" }
+    }
+    // ---- retro games online with a friend (Netplay.swift) ----
+    func hostOnline(_ g: Game) {
+        guard let r = g.rom else { return }
+        let i = Invite.make(game: g.name)
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(i.link, forType: .string)
+        tell("Invite link copied, with the room's password in it: send it only to the friend you want to join. The room and game names can be seen in libretro's public lobby.")
+        playRom(g, r, net: .host(i))
+    }
+    func joinOnline(_ i: Invite) {
+        guard let g = gameFor(id: nil, name: i.game, in: games.filter { $0.rom != nil && !$0.missing }), let r = g.rom else { message = "To join, add \(i.game) to your library first, the same version as your friend's."; return }
+        guard joining == nil else { return }
+        joining = i.room; tell("Looking for your friend's game of \(g.name)…")
+        Netplay.find(i) { [weak self] room in
+            guard let self else { return }; self.joining = nil
+            guard let room else { self.message = "Your friend's game couldn't be found. Ask them to start it again from Play Online with a Friend, then open the new link."; return }
+            self.playRom(g, r, net: .join(i, room))
+        }
     }
     // RetroArch is known to the system a moment after it starts; play time counts from then.
     private func adoptRetro(_ pid: pid_t, as id: String, tries: Int) {
@@ -356,6 +385,7 @@ final class Model: ObservableObject {
         builder.onFinish = { [weak self] in self?.finished() }
         let hide = organized
         DispatchQueue.global(qos: .utility).async { finishRemovals(); Engine.tidy(); RetroArch.hideEarlier(); if hide { Organize.hideBuildFolders() } }
+        Power.shared.changed = { [weak self] in self?.powerChanged() }; Power.shared.start()
         reload(); trackPlay(); recheck(first: true)
     }
 
@@ -368,7 +398,7 @@ final class Model: ObservableObject {
     @Published var importing: Importing?
     @Published var tidying: [Tidy]?
     @Published var askingMode: PendingAdd?
-    @Published var filing: String?
+    @Published var filing: String? { didSet { if filing == nil, oldValue != nil { sayLeftBehind() } } }
     @Published var newlyAdded: String?
     @Published var missingGame: Game?
     var lastWatch = Date.distantPast, skipped = Set<String>()
@@ -388,8 +418,26 @@ final class Model: ObservableObject {
     @Published var cleaning: CleanUp?
     @Published var removing = false
     private var retry: DispatchWorkItem?
-    @Published var moving: String?
+    @Published var moving: String? { didSet { if moving == nil, oldValue != nil { sayLeftBehind() } } }
+    // A move that copied but could not remove the original: said, so the player knows the room wasn't freed
+    private func sayLeftBehind() {
+        let l = LeftBehind.take(); guard !l.isEmpty else { return }
+        let names = l.prefix(3).map { "\($0.lastPathComponent) in \(FileManager.default.displayName(atPath: $0.deletingLastPathComponent().path))" }.joined(separator: ", ")
+        tell((l.count == 1 ? "The file at " : "\(l.count) files, including ") + names + (l.count == 1 ? ", was moved but couldn't be removed from there, so it still takes space. You can delete it yourself." : ", were moved but couldn't be removed from there, so they still take space. You can delete them yourself."), good: false)
+    }
     @Published var quick = UserDefaults.standard.bool(forKey: "skipPipeline") { didSet { UserDefaults.standard.set(quick, forKey: "skipPipeline") } }
+    @Published var spotlight = UserDefaults.standard.object(forKey: "spotlight") as? Bool ?? true { didSet { UserDefaults.standard.set(spotlight, forKey: "spotlight"); refreshSpotlight() } }
+    var spotlightSig: String?   // what Spotlight was last given, so an unchanged library isn't indexed again
+    @Published var convertWhen = ConvertWhen(rawValue: UserDefaults.standard.string(forKey: "convertWhen") ?? "") ?? .now { didSet { UserDefaults.standard.set(convertWhen.rawValue, forKey: "convertWhen"); startNext() } }
+    @Published var convertWaiting: String?   // why the queue waits for Convert When, said in the tray
+    private var convertOnce = false, oneOffRunning = false   // "Convert Now": this batch only; the saved choice stays as it is
+    func convertNowOnce() { guard !queue.waiting.isEmpty else { return }; convertOnce = true; startNext() }
+    private var powerStop: Job?   // the game stopped because the power adapter went: first in line again
+    // Unplugged, or Low Power Mode on, while converting with Convert When set: it stops, keeping its finished steps, and carries on later
+    private func powerChanged() {
+        if builder.running, powerStop == nil, !oneOffRunning, convertWhen != .now, !Power.shared.onPower || Power.shared.lowPower, let j = queue.current, !j.phone { powerStop = j; builder.cancel() }
+        else { startNext() }
+    }
     @Published var speed = UserDefaults.standard.string(forKey: "conversionSpeed").flatMap(Speed.init(rawValue:)) ?? (UserDefaults.standard.object(forKey: "conversionEffort") as? Int).map(Speed.init(effort:)) ?? .full { didSet { UserDefaults.standard.set(speed.rawValue, forKey: "conversionSpeed") } }
     @Published var checkingGame = false   // a game just converted is being checked
     @Published var converting = false   // kept apart from the builder, whose every progress report would redraw the library
@@ -513,22 +561,26 @@ final class Model: ObservableObject {
         }
     }
 
+    // Only the newest disk or health look may write its answer, however late a slow drive or signature check finishes.
+    private var diskScan = ScanToken()
+    var healthScan = ScanToken()
     // Every game Docked knows: converted games in its folders and wherever they were added from, games for other consoles where they are kept.
     // One that can't be found stays, marked missing, so a drive that is unplugged takes nothing out of the library.
     // One whose file was deleted, from a folder that is still there, leaves the library; its play time stays in case it comes back.
-    func reload() {
-        var seen = Set<String>(), l = library
-        let removed = Set(l.removed), dirs = ([Paths.games, libraryFolder] + folders.map { URL(fileURLWithPath: $0) }).flatMap(libraryFolders)
-        var found = (dirs.flatMap { scanLibrary($0) } + l.apps.keys.compactMap { p in seen.contains(p) ? nil : gameAt(URL(fileURLWithPath: p)) }).filter { seen.insert($0.id).inserted && !removed.contains($0.url.path) }
-        found += l.settle(found: found)
+    func reload(_ disk: DiskLook? = nil) {
+        _ = diskScan.start()
+        var l = library
+        let removed = Set(l.removed)
+        let d = disk ?? DiskLook.take(dirs: libraryDirs, apps: Array(l.apps.keys), removed: removed, roms: l.roms.map(\.path), offloaded: Array(l.offloaded.keys))
+        var found = d.apps.filter { !removed.contains($0.url.path) }   // also one removed since the look was taken
+        found += l.settle(found: found, exists: d.exists)
         var all = found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        all += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !FileManager.default.fileExists(atPath: $0.path)) }
+        all += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !d.exists($0.path)) }
         // An offloaded game is away, not deleted. One whose file is back here by other means is just here.
-        let fm = FileManager.default
-        for (home, _) in l.offloaded where fm.fileExists(atPath: home) { l.offloaded[home] = nil }
+        for (home, _) in l.offloaded where d.exists(home) { l.offloaded[home] = nil }
         for i in all.indices where all[i].missing { all[i].away = l.offloaded[all[i].url.path] }
         let busy = moving != nil || filing != nil || removing
-        let deleted = busy ? [] : all.filter { $0.missing && $0.away == nil && deletedFile($0.url.path) }
+        let deleted = busy ? [] : all.filter { $0.missing && $0.away == nil && deletedFile($0.url.path, exists: d.exists) }
         if !deleted.isEmpty {
             for g in deleted { if g.rom != nil { l.removeRom(g.titleID) } else { l.removeApp(g.url.path) } }
             let gone = Set(deleted.map(\.id)); all.removeAll { gone.contains($0.id) }
@@ -536,6 +588,16 @@ final class Model: ObservableObject {
         }
         games = all
         l.meet(games); if l != library { library = l }; offers = offers.filter { o in games.contains { $0.id == o.id } }; if let s = selected, !games.contains(where: { $0.id == s }) { selected = nil }
+        refreshSpotlight()
+    }
+    private var libraryDirs: [URL] { [Paths.games, libraryFolder] + folders.map { URL(fileURLWithPath: $0) } }
+    // The same, with the disk read off the main thread: for drives coming and going, which may be slow to wake. The newest ask wins.
+    func reloadSoon() {
+        let n = diskScan.start(), l = library, dirs = libraryDirs
+        DispatchQueue.global(qos: .userInitiated).async {
+            let d = DiskLook.take(dirs: dirs, apps: Array(l.apps.keys), removed: Set(l.removed), roms: l.roms.map(\.path), offloaded: Array(l.offloaded.keys))
+            DispatchQueue.main.async { if self.diskScan.current(n) { self.reload(d) } }
+        }
     }
     // Many games out of the library at once. Their files stay where they are. A converted game kept in the library's own folders stays, as its file is the library.
     @discardableResult func forget(_ list: [Game]) -> (gone: Int, kept: Int) {
@@ -549,10 +611,13 @@ final class Model: ObservableObject {
     }
 
     private func finished() {
-        icons = [:]; covers.removeAllObjects(); sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
+        oneOffRunning = false
+        if let id = builder.titleID { let ids = Set(games.filter { $0.titleID.uppercased() == id }.map(\.id)); dropArt { ids.contains($0) } }   // only the game just made changed
+        sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
         switch builder.stage {
         case "Done":
             if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
+            if let id = builder.titleID, job?.phone != true { library.edit(id) { $0.engine = activeEngine } }   // Library Health tells games made with an older engine
             queue.done()
             if let j = job, j.phone { finishPhone(j); return }
             // Checked before it is called done, off the main thread: the signature check reads the app
@@ -566,7 +631,9 @@ final class Model: ObservableObject {
                     if place.path != Paths.games.path { self.move(app, to: place) { self.settle(job, c) } } else { self.reload(); self.settle(job, c) }
                 }
             }
-        case "Stopped": queue.stopped(); reload()
+        case "Stopped":
+            if let j = powerStop { powerStop = nil; queue.current = nil; queue.waiting.insert(j, at: 0); tell("Converting \(j.title) paused because the Mac is on battery or in Low Power Mode. It carries on from where it stopped when the Mac is plugged in and Low Power Mode is off."); reload(); startNext() }
+            else { queue.stopped(); reload() }
         default:
             let (t, b) = Notify.text(done: nil, failed: job?.title ?? builder.title, left: queue.waiting.count, problems: 0); Notify.say(t, b)
             queue.failed(builder.error ?? "It stopped without saying why.", report: builder.report); reload(); startNext()
@@ -605,7 +672,7 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil || health != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSetup(_ f: @escaping () -> Void) { showSetup = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
@@ -634,7 +701,7 @@ final class Model: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try placeGame(app, in: dir) }
             DispatchQueue.main.async {
-                self.moving = nil; self.icons = [:]; self.covers.removeAllObjects()
+                self.moving = nil; self.dropArt { $0 == app.path }
                 switch result {
                 case .success: if dir.path != Paths.games.path, !self.folders.contains(dir.path) { self.folders.append(dir.path) }
                 case .failure(let e): self.message = "\(app.deletingPathExtension().lastPathComponent) stayed in \(app.deletingLastPathComponent().lastPathComponent). \(e.localizedDescription)"
@@ -793,12 +860,17 @@ final class Model: ObservableObject {
         retry?.cancel(); retry = nil
         guard !builder.running, moving == nil, !removing, !installing, !queue.paused, !engineBusy, !checkingGame else { return }
         guard ready else { if !checks.isEmpty, !queue.waiting.isEmpty { queue.paused = true }; return }
+        let now = convertOnce; convertOnce = false   // Convert Now starts this batch without changing the saved choice
+        if !queue.waiting.isEmpty, let why = now ? nil : Power.shared.wait(convertWhen) {   // looked at again every 5 minutes, and at once when the power changes
+            convertWaiting = why; let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: w); return
+        }
+        convertWaiting = nil
         while let j = queue.next(verdict) {
             do {
                 let input = try resolveInput(j.urls, family: j.family)
                 buildPlace = j.placeURL; buildSources = j.sources
                 builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, speed: j.speed, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone; Notify.ask()
-                if builder.running { return }
+                if builder.running { if now { oneOffRunning = true }; return }
                 queue.failed(builder.error ?? "The conversion engine did not start.")
             } catch { queue.problems.append(Problem(title: j.title, reason: error.localizedDescription)); queue.done() }
         }
@@ -966,7 +1038,7 @@ final class Model: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
         for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched(); self?.evictOffloaded() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
-        for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers.removeAllObjects(); self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
+        for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.dropArt { $0.hasPrefix("/Volumes/") }; self?.reloadSoon(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
         lookInWatched(force: true)
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil { DispatchQueue.global(qos: .utility).async { Update.clearBackups(Paths.root.appendingPathComponent("Backups")) } }
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
@@ -1065,6 +1137,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showSetup) { SetupView() }
         .sheet(isPresented: $model.showXcode) { XcodeStepsView() }
         .sheet(isPresented: $model.showConsoles) { ConsolesView() }
+        .sheet(isPresented: .init(get: { model.health != nil }, set: { if !$0 { model.health = nil } })) { HealthView() }
         .sheet(item: $model.wantsBios) { BiosView(ask: $0) }
         .sheet(isPresented: .init(get: { model.importing != nil }, set: { if !$0 { model.importing = nil } })) { ImportView() }
         .sheet(isPresented: .init(get: { model.tidying != nil }, set: { if !$0 { model.tidying = nil } })) { TidyView() }

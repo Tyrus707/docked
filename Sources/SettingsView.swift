@@ -31,6 +31,7 @@ struct SettingsSheet: View {
             line("Show games as", "") { Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
             flip("Open filling the screen", "A window as big as the screen, without a separate Space. From the next time Docked opens.", $model.fullScreen)
             flip("Play other consoles full screen", "Retro games fill the whole screen. Off: a window as big as the screen. Press F in a game to switch.", .init(get: { RetroArch.fullScreen }, set: { RetroArch.fullScreen = $0; model.objectWillChange.send() }))
+            flip("Show games in Spotlight", "Type a game's name in Spotlight to play it. Each game's ••• menu also has a link for Shortcuts.", $model.spotlight)
             flip("Step aside while playing", "Docked hides when a game starts and comes back when it closes.", $model.hideWhilePlaying)
             flip("Theme music", "Plays a game's own theme while it is selected.", $model.themes)
             flip("Couch Mode sounds", "Soft clicks and chimes as you move around Couch Mode.", $model.couchSounds)
@@ -53,6 +54,7 @@ struct SettingsSheet: View {
             line("When a game is done", "You can change this for each game.") { Picker("When a game is done", selection: $model.after) { ForEach(After.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
             flip("Skip the pipeline step", "Faster to convert, slower to start the first time.", $model.quick)
             line("Conversion speed", model.speed.note + " The finished game is the same. Applies to games added after this.") { Picker("Conversion speed", selection: $model.speed) { ForEach(Speed.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
+            line("Convert", model.convertWhen.note) { Picker("Convert", selection: $model.convertWhen) { ForEach(ConvertWhen.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
             if !phoneGames.isEmpty { line("Games for iPhone and iPad", phoneGames.map(\.name).joined(separator: ", ")) { Button("Open Steps…") { model.leaveSettings { model.showXcode = true } } } }
             line("Cloud saves", model.cloudSaves.isEmpty ? "Off. Choose a folder in iCloud Drive to carry your Switch saves between Macs and an iPhone or iPad." : "Every converted game syncs its save through \((model.cloudSaves as NSString).lastPathComponent). It starts with the newer save.") {
                 if !model.cloudSaves.isEmpty { Button("Turn Off") { model.cloudSaves = "" } }

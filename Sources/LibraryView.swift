@@ -303,8 +303,9 @@ struct GameActions: View {
             Toggle("Keep This Build", isOn: .init(get: { e.kept }, set: { on in model.edit(game) { $0.kept = on } }))
             SaveMenu(game: game)
         }
-        else { Button("Rename…") { model.retitling = game }; if let r = game.rom { Button(r.info == nil ? "Find Cover and Details…" : "Find Details Again…") { model.find(r.id, byHand: true) }.disabled(model.finding.contains(r.id)) } }
+        else { Button("Play Online with a Friend…") { model.hostOnline(game) }.disabled(game.missing || model.isRunning(game)); Button("Rename…") { model.retitling = game }; if let r = game.rom { Button(r.info == nil ? "Find Cover and Details…" : "Find Details Again…") { model.find(r.id, byHand: true) }.disabled(model.finding.contains(r.id)) } }
         Button("Choose Cover…") { model.pickArt(game) }; if model.hasArt(game) { Button("Use Original Cover") { model.clearArt(game) } }
+        Button("Copy Link for Shortcuts") { model.copyLink(game) }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.away.map { URL(fileURLWithPath: $0) } ?? game.url]) }.disabled(game.missing && game.away == nil)
         if !game.missing {
             Divider()
