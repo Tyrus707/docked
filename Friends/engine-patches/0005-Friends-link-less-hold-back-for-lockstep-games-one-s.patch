@@ -1,7 +1,7 @@
-From d7645f2429d9b5c697a45c7f0086b16059c04223 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 16:33:22 +0000
-Subject: [PATCH 5/6] Friends link: less hold-back for lockstep games, one
+Subject: [PATCH 5/8] Friends link: less hold-back for lockstep games, one
  spare copy, a link line in the log every 5 s
 
 ---
@@ -11,7 +11,7 @@ Subject: [PATCH 5/6] Friends link: less hold-back for lockstep games, one
  3 files changed, 19 insertions(+), 6 deletions(-)
 
 diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
-index d707b43..3d1f322 100644
+index d707b43b..3d1f322e 100644
 --- a/dm/host/friends_link.c
 +++ b/dm/host/friends_link.c
 @@ -22,6 +22,12 @@
@@ -64,7 +64,7 @@ index d707b43..3d1f322 100644
  static void send_copies(friends_link *f, uint64_t now) {
      for (int k = 0; k < RINGS; k++) for (; f->copy_r[k] != f->copy_w[k]; f->copy_r[k]++) { copy *c = &f->copies[k][f->copy_r[k] % COPIES]; if (c->due > now) break;
 diff --git a/dm/host/friends_link.h b/dm/host/friends_link.h
-index a058aff..44ec53c 100644
+index a058aff6..44ec53c6 100644
 --- a/dm/host/friends_link.h
 +++ b/dm/host/friends_link.h
 @@ -36,6 +36,7 @@ typedef struct {
@@ -76,7 +76,7 @@ index a058aff..44ec53c 100644
  typedef struct { uint64_t rx, bad_source, bad_packet, bad_tag, replay, refused, tx, game_rx, copies_spare, dropped; } fl_stats;
  int fl_load(const char *path, int allow_loopback, fl_setup *out, char *why, size_t whylen);   // 0, or -1 with the reason
 diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
-index 66d2c3b..b74a0bd 100644
+index 66d2c3b6..b74a0bd1 100644
 --- a/dm/host/hle_friends_link.c
 +++ b/dm/host/hle_friends_link.c
 @@ -40,12 +40,12 @@ static Result fl_init(void) {
@@ -94,6 +94,3 @@ index 66d2c3b..b74a0bd 100644
              if (!g_fl) { LOG("friends link: off, this Mac's private address or port is not available"); r = FL_ERR(16); } else LOG("friends link: on, listed friends only"); }
      }
      pthread_rwlock_unlock(&g_fl_l); trace("initialize", r); return r;
--- 
-2.43.0
-

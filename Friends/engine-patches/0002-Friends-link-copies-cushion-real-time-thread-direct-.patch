@@ -1,7 +1,7 @@
-From 963a2620a67913c057c993a9dabec85b3d37e0bc Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 04:29:45 -0500
-Subject: [PATCH 2/6] Friends link: copies, cushion, real-time thread, direct
+Subject: [PATCH 2/8] Friends link: copies, cushion, real-time thread, direct
  paths, checker
 
 ---
@@ -15,7 +15,7 @@ Subject: [PATCH 2/6] Friends link: copies, cushion, real-time thread, direct
  create mode 100644 friends_check.c
 
 diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
-index 3e90235..9c8fdfc 100644
+index 3e902358..9c8fdfcd 100644
 --- a/dm/host/friends_link.c
 +++ b/dm/host/friends_link.c
 @@ -4,11 +4,14 @@
@@ -302,7 +302,7 @@ index 3e90235..9c8fdfc 100644
 +    LOCK; peer *p = &f->p[i]; int k = node_of(f, i), r = p->up ? 0 : -1; *rtt = p->rtt; *rtt_max = p->rtt_max; p->rtt_max = 0; *cushion = k >= 0 ? f->flows[k].cushion / 1000.0 : 0; pthread_mutex_unlock(&f->m); return r;
 +}
 diff --git a/dm/host/friends_link.h b/dm/host/friends_link.h
-index caaf96e..08003c9 100644
+index caaf96e7..08003c9d 100644
 --- a/dm/host/friends_link.h
 +++ b/dm/host/friends_link.h
 @@ -36,7 +36,7 @@ typedef struct {
@@ -321,7 +321,7 @@ index caaf96e..08003c9 100644
 +int fl_quality(friends_link *, int i, double *rtt, double *rtt_max, double *cushion);
 diff --git a/dm/host/tests/b_friends_net.c b/dm/host/tests/b_friends_net.c
 new file mode 100644
-index 0000000..737a0af
+index 00000000..737a0af5
 --- /dev/null
 +++ b/dm/host/tests/b_friends_net.c
 @@ -0,0 +1,46 @@
@@ -372,7 +372,7 @@ index 0000000..737a0af
 +            printf("%-12s %9.2f %9.1f %9.1f %9.1f %9d %7d %6d %6d\n", N.name, 100.0 * lost / (m + lost), sum / m, d[(int)(m * .99)], d[m - 1], jolt, late, S[0].order + S[1].order, S[0].dup + S[1].dup); printf("             (simulator late by up to %.1f ms, sender by %.1f ms)\n", late_sim / 1000, late_game / 1000); late_sim = late_game = 0; }
 +        fl_stop(L[0]); fl_stop(L[1]); stop = 1; pthread_join(t, NULL); } return 0; }
 diff --git a/dm/host/tests/t_friends_link.c b/dm/host/tests/t_friends_link.c
-index 02efd1e..af3536a 100644
+index 02efd1ef..af3536a2 100644
 --- a/dm/host/tests/t_friends_link.c
 +++ b/dm/host/tests/t_friends_link.c
 @@ -31,6 +31,7 @@ static size_t forge(uint8_t *b, int type, uint64_t s, uint64_t r, uint64_t c, co
@@ -408,7 +408,7 @@ index 02efd1e..af3536a 100644
      CK(!fl_leave(b, 0) && fl_state(b) == FL_STATION, "leave"); UNTIL(!fl_info(a, &ni, NULL, 0) && ni.node_count == 1, 1000); CK(ni.node_count == 1, "host sees it"); CK(!fl_scan(b, nets, &n, 8, NULL) && n == 1 && !fl_connect(b, &nets[0], &sec, &ub, 7), "rejoin"); CK(!fl_leave(a, 1), "host closes"); UNTIL(fl_state(b) == FL_STATION, 1000); CK(fl_state(b) == FL_STATION && fl_reason(b) == 3, "told it closed"); CK(fl_connect(b, &nets[0], &sec, &ub, 7) != 0, "closed room gone");
 diff --git a/friends_check.c b/friends_check.c
 new file mode 100644
-index 0000000..49d6adf
+index 00000000..49d6adf7
 --- /dev/null
 +++ b/friends_check.c
 @@ -0,0 +1,30 @@
@@ -442,6 +442,3 @@ index 0000000..49d6adf
 +    printf(lost > 1 || jolts > 60 ? "POOR: expect stutter. Use Ethernet, or move closer to the router.\n" : rt > 60 ? "STEADY BUT DISTANT: playable, with clear delay.\n" : jolts > 12 || rt > 30 ? "FAIR: some delay or the odd hitch. Ethernet would help.\n" : "GOOD: should feel smooth.\n");
 +    nap(600); fl_stop(l); return 0;
 +}
--- 
-2.43.0
-

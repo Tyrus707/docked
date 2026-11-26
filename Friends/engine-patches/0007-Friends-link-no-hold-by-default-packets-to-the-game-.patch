@@ -1,7 +1,7 @@
-From abf6fc93d6762a27a070d83ec2dfe9ac910f7bf0 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 16:45:31 +0000
-Subject: [PATCH] Friends link: no hold by default, packets to the game
+Subject: [PATCH 7/8] Friends link: no hold by default, packets to the game
  straight from the receiving thread, spare copies 3 and 10 ms later
 
 ---
@@ -11,7 +11,7 @@ Subject: [PATCH] Friends link: no hold by default, packets to the game
  3 files changed, 30 insertions(+), 16 deletions(-)
 
 diff --git a/dm/games/settings.tsv b/dm/games/settings.tsv
-index 85b6224..218facd 100644
+index 85b62246..218facd9 100644
 --- a/dm/games/settings.tsv
 +++ b/dm/games/settings.tsv
 @@ -43,4 +43,4 @@ DM_NVN_ENC_THREAD	toggle	-	1|DM_GAME_ENC_THREAD	gfxapi:nvn	Performance	Encode th
@@ -21,7 +21,7 @@ index 85b6224..218facd 100644
 -DM_FRIENDS_CUSHION_MS	choice	0=Off,4=Light,12=Medium,25=Strong	4	platform:mac	Game	Connection smoothing	Holds packets back to even out a bumpy connection, which adds delay. Keep it light for fighting and racing games.	needs=DM_FRIENDS=1
 +DM_FRIENDS_CUSHION_MS	choice	0=Off,4=Light,12=Medium,25=Strong	0	platform:mac	Game	Connection smoothing	Holds packets back to even out a bumpy connection, which adds delay. Leave it off for fighting and racing games.	needs=DM_FRIENDS=1
 diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
-index 3d1f322..b4953f4 100644
+index 3d1f322e..b4953f4a 100644
 --- a/dm/host/friends_link.c
 +++ b/dm/host/friends_link.c
 @@ -23,13 +23,14 @@
@@ -121,7 +121,7 @@ index 3d1f322..b4953f4 100644
  int fl_reason(friends_link *f) { if (!f) return 0; LOCK; int s = f->reason; pthread_mutex_unlock(&f->m); return s; }
  uint32_t fl_open(friends_link *f, int ap) { if (!f) return FL_E_DISABLED; LOCK; if (f->state != FL_INIT) UNLOCK(FL_E_STATE); f->state = ap ? FL_AP : FL_STATION; f->reason = 0; changed(f); UNLOCK(0); }
 diff --git a/docs/env_switches.tsv b/docs/env_switches.tsv
-index 233de0b..2d5c9af 100644
+index 0ec2c7c4..5b546a1c 100644
 --- a/docs/env_switches.tsv
 +++ b/docs/env_switches.tsv
 @@ -56,8 +56,8 @@ DM_FPS_HOLD	player	`on` / `off` overrides the profile's `fps_hold`: whether late
@@ -135,6 +135,3 @@ index 233de0b..2d5c9af 100644
  DM_FRIENDS_DIR	path	Folder where the friends link keeps this player's code, name and friends (default ~/Library/Application Support/Docked/Friends)
  DM_FRIENDS_FILE	path	The home-network friends file (code, this Mac's and the friend's private address) used when there is no friends.cfg (default ~/Dockside/friends.txt)
  DM_FRIENDS_STUN_PORT	test	Port of the local STUN server the friends tests start (loopback builds only)
--- 
-2.43.0
-

@@ -1,7 +1,7 @@
-From 188ebfe2216127796b331f840eff0c0dd8f30dc8 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 11:48:08 -0500
-Subject: [PATCH 3/6] Friends link: create room works, errno mapping, play
+Subject: [PATCH 3/8] Friends link: create room works, errno mapping, play
  history, pctl, tracing, loopback test build
 
 Verified on one Mac: two copies create, join, and play a full match.
@@ -22,7 +22,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  11 files changed, 50 insertions(+), 19 deletions(-)
 
 diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
-index 9c8fdfc..b15337e 100644
+index 9c8fdfcd..b15337e7 100644
 --- a/dm/host/friends_link.c
 +++ b/dm/host/friends_link.c
 @@ -316,7 +316,8 @@ static void pass_hash(const fl_security *s, const uint8_t session[16], uint8_t o
@@ -36,7 +36,7 @@ index 9c8fdfc..b15337e 100644
      memcpy(n->common.mac, f->mac, 6); n->common.ssid.len = 32; for (int i = 0; i < 16; i++) snprintf(n->common.ssid.text + 2 * i, 3, "%02x", n->id.session[i]);
      n->common.channel = c->channel ? c->channel : 6; n->common.link = 3; n->common.type = 2; n->security_mode = s->mode; n->max_nodes = c->max_nodes; n->node_count = 1; n->version = 3;
 diff --git a/dm/host/hle_friends.c b/dm/host/hle_friends.c
-index 4003a4b..064e8a8 100644
+index 4003a4b0..064e8a82 100644
 --- a/dm/host/hle_friends.c
 +++ b/dm/host/hle_friends.c
 @@ -2,6 +2,7 @@
@@ -66,7 +66,7 @@ index 4003a4b..064e8a8 100644
  HLE_FORCE("_ZN2nn7friends17NotificationQueueC1Ev", "notification queue creates no session (cut)", void, h_fr_NqCtor, void *self) { (void)self; }
  HLE_FORCE("_ZN2nn7friends17NotificationQueueD1Ev", "notification queue has no session to close (cut)", void, h_fr_NqDtor, void *self) { (void)self; }
 diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
-index 2dd5a6b..903b5cb 100644
+index 2dd5a6bb..903b5cba 100644
 --- a/dm/host/hle_friends_link.c
 +++ b/dm/host/hle_friends_link.c
 @@ -3,6 +3,9 @@
@@ -115,7 +115,7 @@ index 2dd5a6b..903b5cb 100644
  LDN("_ZN2nn3ldn20CreateNetworkPrivateERKNS0_13NetworkConfigERKNS0_14SecurityConfigERKNS0_17SecurityParameterERKNS0_10UserConfigEiPKNS0_12AddressEntryE", h_ldn_CreateP,
      const fl_config *c, const fl_security *s, const fl_secparam *p, const fl_user *u, int n, const void *e) { (void)n; (void)e; return create(c, s, p, u); }
 diff --git a/dm/host/hle_misc.c b/dm/host/hle_misc.c
-index adcc360..c7d9c9b 100644
+index d264387f..703576b1 100644
 --- a/dm/host/hle_misc.c
 +++ b/dm/host/hle_misc.c
 @@ -1,6 +1,7 @@
@@ -126,7 +126,7 @@ index adcc360..c7d9c9b 100644
  #include <dirent.h>
  
  // ---------- aoc add-on content (the DLC NSPs in the player's folder) / ec shop (excluded) ----------
-@@ -177,8 +178,8 @@ HLE_FORCE("_ZN2nn3nsd7ResolveEPNS0_4FqdnERKS1_", "server name resolution, networ
+@@ -176,8 +177,8 @@ HLE_FORCE("_ZN2nn3nsd7ResolveEPNS0_4FqdnERKS1_", "server name resolution, networ
  HLE_FORCE("_ZN2nn3nsd9ResolveExEPNS0_4FqdnERKS1_", "server name resolution, networking out of scope; cut", Result, h_nsd_ResolveEx, void *out, const void *in) { (void)out; (void)in; return RES_FAIL; }
  // bool arguments only look at the low 8 bits; returns bool
  // The permission query answers as TryBegin / IsFreeCommunicationAvailable do: the SDK's version calls the pctl service (pctl::detail::ipc::GetService), which the host never opens (DRAGON QUEST XI S imports it; from PR #38)
@@ -137,7 +137,7 @@ index adcc360..c7d9c9b 100644
  // Parental control of the 3D (VR goggles) mode, Super Mario Odyssey: no restriction, nothing to configure
  HLE_FORCE("_ZN2nn4pctl26GetStereoVisionRestrictionEv", "parental controls · 3D view restriction; never restricted", unsigned, h_pctl_GetStereo, void) { return 0; }
  HLE_FORCE("_ZN2nn4pctl26SetStereoVisionRestrictionEb", "parental controls · 3D view restriction; the host does not store it", void, h_pctl_SetStereo, unsigned on) { (void)on; }
-@@ -186,7 +187,7 @@ HLE_FORCE("_ZN2nn4pctl42ConfirmStereoVisionRestrictionConfigurableEv", "parental
+@@ -185,7 +186,7 @@ HLE_FORCE("_ZN2nn4pctl42ConfirmStereoVisionRestrictionConfigurableEv", "parental
  HLE_FORCE("_ZN2nn4pctl53RequestStereoVisionRestrictionConfigurationPermissionEv", "parental controls · permission to change the 3D restriction; granted at once", Result, h_pctl_ReqStereo, void) { return RES_OK; }
  HLE_FORCE("_ZN2nn4pctl20EndFreeCommunicationEv", "parental controls · communication with others", void, h_pctl_End, void) {}
  // Engage asks on entering a battle map (no UI); without this the SDK connects to the pctl service through sm, which the host does not have, and aborts
@@ -147,7 +147,7 @@ index adcc360..c7d9c9b 100644
  // show UI, the game passes 0). The host has no VR display (pl::BeginVrMode refuses, hle_sdk16.c): not permitted, so the game clears its VR flag and stays 2D (as MacNativeGames found on 1.6.0 and 1.9.0)
  HLE_FORCE("_ZN2nn4pctl33CheckAgcPermissionUnderMinimumAgeERKNS_7account3UidE", "parental controls · a user's permission under the minimum age (SDK 22), networking out of scope; never", unsigned, h_pctl_CheckAgc, const void *uid) { (void)uid; return 0; }
 diff --git a/dm/host/hle_net.c b/dm/host/hle_net.c
-index 18019b9..716aae7 100644
+index 18019b91..716aae70 100644
 --- a/dm/host/hle_net.c
 +++ b/dm/host/hle_net.c
 @@ -39,9 +39,15 @@ HLE_FORCE("nnsslFinalize", "pairs with nnsslInitialize (cut)", Result, h_ssl_Fin
@@ -258,10 +258,10 @@ index 18019b9..716aae7 100644
  
  // ---------- ssl: offline, Initialize and a context's Create / Destroy succeed, everything else that contacts the service fails ----------
 diff --git a/dm/host/hle_offline.c b/dm/host/hle_offline.c
-index 984765f..bedcb2b 100644
+index b5bfa80b..cfa67707 100644
 --- a/dm/host/hle_offline.c
 +++ b/dm/host/hle_offline.c
-@@ -132,7 +132,7 @@ HLE_FORCE("_ZN2nn7friends27CheckFriendListAvailabilityEPbRKNS_7account3UidE", "f
+@@ -139,7 +139,7 @@ HLE_FORCE("_ZN2nn7friends27CheckFriendListAvailabilityEPbRKNS_7account3UidE", "f
  HLE_FORCE("_ZN2nn7friends25EnsureFriendListAvailableEPNS0_12AsyncContextERKNS_7account3UidE", "friend list (cut): the request fails at once", Result, h_fr_ListEnsure, void *ctx, const void *uid) { (void)ctx; (void)uid; return RES_FAIL; }
  HLE_FORCE("_ZN2nn7friends12AsyncContext7HasDoneEPb", "async context: always done", Result, h_fr_AcHasDone, void *self, uint8_t *done) { (void)self; *done = 1; return RES_OK; }
  HLE_FORCE("_ZN2nn7friends14AddPlayHistoryERKNS_7account3UidERKNS0_26PlayHistoryRegistrationKeyERKNS0_15InAppScreenNameESA_", "play history is not registered (cut)",
@@ -271,7 +271,7 @@ index 984765f..bedcb2b 100644
  // ---------- ngc: newer SDK overloads (with bool). Always judged as no profanity ----------
  HLE_FORCE("_ZN2nn3ngc15ProfanityFilter10InitializeEPvmb", "profanity filter init; the host has no word list", Result, h_ngc_Init3, void *self, void *work, uint64_t sz, unsigned check) { (void)self; (void)work; (void)sz; (void)check; return RES_OK; }
 diff --git a/dm/host/tests/t_friends.c b/dm/host/tests/t_friends.c
-index 72128a1..c9f0b8e 100644
+index 72128a1c..c9f0b8ef 100644
 --- a/dm/host/tests/t_friends.c
 +++ b/dm/host/tests/t_friends.c
 @@ -105,3 +105,5 @@ int main(void) {
@@ -281,7 +281,7 @@ index 72128a1..c9f0b8e 100644
 +
 +int dm_friends_on(void) { return 0; }   // the friends link is off
 diff --git a/dm/host/tests/t_friends_link.c b/dm/host/tests/t_friends_link.c
-index af3536a..35273a4 100644
+index af3536a2..35273a40 100644
 --- a/dm/host/tests/t_friends_link.c
 +++ b/dm/host/tests/t_friends_link.c
 @@ -50,7 +50,7 @@ int main(void) {
@@ -294,7 +294,7 @@ index af3536a..35273a4 100644
      fl_filter q = {.flags = 1}; q.id.intent.local_id = 5; CK(!fl_scan(b, nets + 1, &n, 4, &q) && n == 0, "another game's room filtered"); q.id.intent.local_id = cfg.intent.local_id; q.flags = 33; q.id.intent.scene = 1; CK(!fl_scan(b, nets, &n, 4, &q) && n == 1, "own game's room");
      CK(fl_connect(b, &nets[0], &sec2, &ub, 7) == FL_E_REJECTED, "wrong room password refused"); CK(fl_connect(b, &nets[0], &sec, &ub, 8) == FL_E_REJECTED, "other version refused"); CK(!fl_connect(b, &nets[0], &sec, &ub, 7) && fl_state(b) == FL_CONNECTED && fl_address(b) == FL_NET + 2, "joined");
 diff --git a/dm/host/tests/t_friends_net.c b/dm/host/tests/t_friends_net.c
-index 16c0dfd..1a02284 100644
+index 16c0dfd4..1a022842 100644
 --- a/dm/host/tests/t_friends_net.c
 +++ b/dm/host/tests/t_friends_net.c
 @@ -32,7 +32,7 @@ int main(void) {
@@ -307,25 +307,22 @@ index 16c0dfd..1a02284 100644
      nap(400); while ((r = dm_sk_recvfrom(f, b, sizeof b, 0x80, NULL, NULL)) > 0) got++; CK(got >= 590 && !wrong, "600 game packets arrive, unchanged and from the right address"); if (!child) printf("game packets: %d of 600 arrived\n", got);
      sa(a, FL_NET + 255, 12346); CK(dm_sk_sendto(g, "bc", 2, 0, a, 16) == 2, "broadcast"); sa(a, his, 12347); dm_sk_sendto(f, "no", 2, 0, a, 16); struct { int32_t fd; int16_t e, r; } pf = {g, 1, 0}; CK(dm_sk_poll(&pf, 1, 2000) == 1 && pf.r & 1, "poll wakes"); CK(dm_sk_recvfrom(g, b, sizeof b, 0x80, NULL, NULL) == 2 && !memcmp(b, "bc", 2), "broadcast arrives"); nap(200); CK(dm_sk_recvfrom(lo, b, sizeof b, 0x80, NULL, NULL) < 0, "a loopback socket hears no friend");
 diff --git a/dm/host/tests/t_pctl.c b/dm/host/tests/t_pctl.c
-index 3574858..289f4ab 100644
+index fd0fec54..a04ef310 100644
 --- a/dm/host/tests/t_pctl.c
 +++ b/dm/host/tests/t_pctl.c
-@@ -88,3 +88,5 @@ int main(void) {
+@@ -140,3 +140,5 @@ int main(void) {
      printf("pctl: %d checks, %d failed\n", checks, fails);
      return fails != 0;
  }
 +
 +int dm_friends_on(void) { return 0; }   // the friends link is off
 diff --git a/dm/host/tests/t_server_environment.c b/dm/host/tests/t_server_environment.c
-index 48c6af7..2a7c705 100644
+index bfdf8770..ce606a81 100644
 --- a/dm/host/tests/t_server_environment.c
 +++ b/dm/host/tests/t_server_environment.c
-@@ -108,3 +108,5 @@ int main(void) {
+@@ -146,3 +146,5 @@ int main(void) {
      printf("offline services: %d checks, %d failed\n", checks, failed);
      return failed != 0;
  }
 +
 +int dm_friends_on(void) { return 0; }   // the friends link is off
--- 
-2.43.0
-

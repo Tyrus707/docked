@@ -1,7 +1,7 @@
-From f335d7834fe53f6a72d4b962569a12d5760a24b4 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 12:53:11 -0500
-Subject: [PATCH 4/6] Friends over the internet: codes, meeting point,
+Subject: [PATCH 4/8] Friends over the internet: codes, meeting point,
  encryption, friends screen
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -42,15 +42,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 dm/host/tests/turn_server.py
 
 diff --git a/dm/host/Makefile b/dm/host/Makefile
-index f6d4333..a36f16f 100644
+index cc6cc81a..bc0a3f47 100644
 --- a/dm/host/Makefile
 +++ b/dm/host/Makefile
 @@ -24,7 +24,7 @@ ifeq ($(filter -j%,$(MAKEFLAGS)),)
  MAKEFLAGS += -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
  endif
  # Service-layer takeover hle_*.c files are included by wildcard: adding a file does not touch this line (avoids merge conflicts)
--SRC=main.c loader.c friends_link.c hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
-+SRC=main.c loader.c friends_link.c friends_crypto.c friends_path.c friends_internet.m friends_screen.m hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
+-SRC=main.c loader.c friends_link.c hle.c crash.c probe.c thread.c save_sync.c save_sync_apple.m memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
++SRC=main.c loader.c friends_link.c friends_crypto.c friends_path.c friends_internet.m friends_screen.m hle.c crash.c probe.c thread.c save_sync.c save_sync_apple.m memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
  # NVN null device + nn::vi + the Vulkan layer (dm/gfx/)
  # Sources under dm/gfx, dm/gfx/nvn, dm/gfx/tex, dm/gfx/vk and dm/gfx/gl are included by wildcard (tests/ and metal/ do not go into the host): adding a file does not touch this line
  GFX=$(sort $(wildcard ../gfx/*.c ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S ../gfx/tex/*.c ../gfx/tex/*.m ../gfx/vk/*.m ../gfx/gl/*.m))
@@ -65,7 +65,7 @@ index f6d4333..a36f16f 100644
  $(error host sources outside dm/host and dm/gfx need an object rule: $(filter ../%,$(filter-out ../gfx/%,$(HOST_SRC))))
 diff --git a/dm/host/friends_crypto.c b/dm/host/friends_crypto.c
 new file mode 100644
-index 0000000..ee4557e
+index 00000000..ee4557e7
 --- /dev/null
 +++ b/dm/host/friends_crypto.c
 @@ -0,0 +1,83 @@
@@ -154,7 +154,7 @@ index 0000000..ee4557e
 +}
 diff --git a/dm/host/friends_crypto.h b/dm/host/friends_crypto.h
 new file mode 100644
-index 0000000..dc7f0a0
+index 00000000..dc7f0a00
 --- /dev/null
 +++ b/dm/host/friends_crypto.h
 @@ -0,0 +1,26 @@
@@ -186,7 +186,7 @@ index 0000000..dc7f0a0
 +void fc_hmac256(const void *key, size_t kn, const void *d, size_t n, uint8_t out[32]);
 diff --git a/dm/host/friends_internet.h b/dm/host/friends_internet.h
 new file mode 100644
-index 0000000..f81cc2a
+index 00000000..f81cc2a0
 --- /dev/null
 +++ b/dm/host/friends_internet.h
 @@ -0,0 +1,18 @@
@@ -210,7 +210,7 @@ index 0000000..f81cc2a
 +int fi_send(void *, int slot, const void *, size_t);
 diff --git a/dm/host/friends_internet.m b/dm/host/friends_internet.m
 new file mode 100644
-index 0000000..243aab2
+index 00000000..243aab2d
 --- /dev/null
 +++ b/dm/host/friends_internet.m
 @@ -0,0 +1,208 @@
@@ -423,7 +423,7 @@ index 0000000..243aab2
 +void fi_remove(const char *code) { if (!g_running) return; NSString *c = @(code); on_q(^{ DFFriend *f = friend_of(c); if (!f) return; drop(f); [g_friends removeObject:f]; save(); watch(); }); }
 +int fi_rename(const char *name) { if (!g_running) return -1; NSString *s = clean(@(name)); if (!s.length) return -1; on_q(^{ g_name = s; save(); }); return 0; }
 diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
-index b15337e..d707b43 100644
+index b15337e7..d707b43b 100644
 --- a/dm/host/friends_link.c
 +++ b/dm/host/friends_link.c
 @@ -26,7 +26,7 @@ enum { HDR = 32, TAG = 16, RETIRED = 32, LOST_MS = 6000, JOIN_MS = 4000, SCAN_MS
@@ -528,7 +528,7 @@ index b15337e..d707b43 100644
  int fl_reason(friends_link *f) { if (!f) return 0; LOCK; int s = f->reason; pthread_mutex_unlock(&f->m); return s; }
  uint32_t fl_open(friends_link *f, int ap) { if (!f) return FL_E_DISABLED; LOCK; if (f->state != FL_INIT) UNLOCK(FL_E_STATE); f->state = ap ? FL_AP : FL_STATION; f->reason = 0; changed(f); UNLOCK(0); }
 diff --git a/dm/host/friends_link.h b/dm/host/friends_link.h
-index 08003c9..a058aff 100644
+index 08003c9d..a058aff6 100644
 --- a/dm/host/friends_link.h
 +++ b/dm/host/friends_link.h
 @@ -29,12 +29,13 @@ enum { FL_NONE, FL_INIT, FL_AP, FL_CREATED, FL_STATION, FL_CONNECTED };
@@ -557,7 +557,7 @@ index 08003c9..a058aff 100644
  int fl_state(friends_link *);
 diff --git a/dm/host/friends_path.c b/dm/host/friends_path.c
 new file mode 100644
-index 0000000..1b1acdd
+index 00000000..1b1acdd7
 --- /dev/null
 +++ b/dm/host/friends_path.c
 @@ -0,0 +1,314 @@
@@ -877,7 +877,7 @@ index 0000000..1b1acdd
 +fp_stats fp_get_stats(friends_path *f) { fp_stats s = {0}; if (!f) return s; LOCK; s = f->st; UNLOCK; return s; }
 diff --git a/dm/host/friends_path.h b/dm/host/friends_path.h
 new file mode 100644
-index 0000000..13c4a1e
+index 00000000..13c4a1e2
 --- /dev/null
 +++ b/dm/host/friends_path.h
 @@ -0,0 +1,26 @@
@@ -909,7 +909,7 @@ index 0000000..13c4a1e
 +int fp_cand_ok(const fp_cand *, const struct in_addr *ips, const struct in_addr *masks, int n, int loopback);
 diff --git a/dm/host/friends_screen.h b/dm/host/friends_screen.h
 new file mode 100644
-index 0000000..2dbec33
+index 00000000..2dbec338
 --- /dev/null
 +++ b/dm/host/friends_screen.h
 @@ -0,0 +1,11 @@
@@ -926,7 +926,7 @@ index 0000000..2dbec33
 +@end
 diff --git a/dm/host/friends_screen.m b/dm/host/friends_screen.m
 new file mode 100644
-index 0000000..7815829
+index 00000000..7815829a
 --- /dev/null
 +++ b/dm/host/friends_screen.m
 @@ -0,0 +1,152 @@
@@ -1083,18 +1083,18 @@ index 0000000..7815829
 +}
 +#endif
 diff --git a/dm/host/front_mac.m b/dm/host/front_mac.m
-index 329dcc3..709fc4a 100644
+index e956b7d3..570fd9d2 100644
 --- a/dm/host/front_mac.m
 +++ b/dm/host/front_mac.m
-@@ -1801,6 +1801,7 @@ void front_run(void (*guest)(void)) {
-         [[bar addItemWithTitle:@"Window" action:nil keyEquivalent:@""] setSubmenu:wm];
-         [wm addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"].keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+@@ -1849,6 +1849,7 @@ void front_run(void (*guest)(void)) {
+         stickMotion.state = dm_stick_motion_enabled() ? NSControlStateValueOn : NSControlStateValueOff;
+         [[bar insertItemWithTitle:@"Controls" action:nil keyEquivalent:@"" atIndex:bar.numberOfItems - 1] setSubmenu:controls];
          NSApp.mainMenu = bar;
 +        void dm_friends_menu(void *); dm_friends_menu((__bridge void *)bar);
-         const char *fs = getenv("DM_FULLSCREEN");   // 1 (or any value but 0): start in fullscreen; 0, the settings window's Window, or unset: a window
-         if (fs && strcmp(fs, "0")) {
+         if (want_fs) {
              g_fs_asked = CACurrentMediaTime(); g_fs_starting = 1;   // front_screen_settling: the display link waits for fullscreen
-@@ -1906,6 +1907,7 @@ void front_progress(const char *title, long done, long total) {
+             // A game opened from a fullscreen app starts while macOS leaves that Space. Wait for activation and for the window to reach the active Space before asking for fullscreen
+@@ -1953,6 +1954,7 @@ void front_progress(const char *title, long done, long total) {
  }
  
  // Offline HTML pages (web_apple.m): the page's view covers the game view and resizes with it; it is the first responder while shown (front_web_show), and the game view again after
@@ -1103,10 +1103,10 @@ index 329dcc3..709fc4a 100644
  void front_web_detach(NSView *box) { if (box.window && box.window.firstResponder != box.window.contentView) [box.window makeFirstResponder:box.window.contentView]; }
  
 diff --git a/dm/host/hle_account.c b/dm/host/hle_account.c
-index d212e07..675dc3c 100644
+index 2433d6d4..f42318a0 100644
 --- a/dm/host/hle_account.c
 +++ b/dm/host/hle_account.c
-@@ -42,7 +42,7 @@ static Result open_user(UserHandle *h, const Uid *uid) {
+@@ -64,7 +64,7 @@ static Result open_user(UserHandle *h, const Uid *uid) {
      h->v[0] = uid->v[0]; h->v[1] = uid->v[1]; h->v[2] = s->token; g_last_user = i;
      pthread_mutex_unlock(&g_account_lock); return RES_OK;
  }
@@ -1116,7 +1116,7 @@ index d212e07..675dc3c 100644
      pthread_mutex_lock(&g_account_lock); *n = list_users(out, max, opened_users()); pthread_mutex_unlock(&g_account_lock); return RES_OK;
  }
 diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
-index 903b5cb..66d2c3b 100644
+index 903b5cba..66d2c3b6 100644
 --- a/dm/host/hle_friends_link.c
 +++ b/dm/host/hle_friends_link.c
 @@ -1,7 +1,8 @@
@@ -1175,10 +1175,10 @@ index 903b5cb..66d2c3b 100644
  LDN("_ZN2nn3ldn10InitializeEv", h_ldn_Init, void) { return fl_init(); }
  HLE_FORCE("_ZN2nn3ldn8FinalizeEv", "local wireless: closes the friends link", void, h_ldn_Fini, void) { fl_fini(); }
 diff --git a/dm/host/hle_hid.c b/dm/host/hle_hid.c
-index 885d82a..67150a8 100644
+index 4879b672..70f878e8 100644
 --- a/dm/host/hle_hid.c
 +++ b/dm/host/hle_hid.c
-@@ -72,6 +72,8 @@ void dm_input_hold(int on) {
+@@ -73,6 +73,8 @@ void dm_input_hold(int on) {
      if (atomic_exchange(&g_hold, on) == on) return;
      atomic_store(&g_latch, 0); atomic_store(&g_sc_latch, 0); for (int p = 0; p < DM_PLAYERS; p++) atomic_store(&g_pad_latch[p], 0);   // a press made for the applet is not the game's
  }
@@ -1189,7 +1189,7 @@ index 885d82a..67150a8 100644
      for (int i = 0; i < 4; i++) axes[i] = pick(ax(k, i), ax(c, i));
 diff --git a/dm/host/tests/fi_player.m b/dm/host/tests/fi_player.m
 new file mode 100644
-index 0000000..ebd1f18
+index 00000000..ebd1f18d
 --- /dev/null
 +++ b/dm/host/tests/fi_player.m
 @@ -0,0 +1,24 @@
@@ -1219,7 +1219,7 @@ index 0000000..ebd1f18
 +    fi_stop(); return 0; } }
 diff --git a/dm/host/tests/t_friends_internet.py b/dm/host/tests/t_friends_internet.py
 new file mode 100644
-index 0000000..7ffd0e5
+index 00000000..7ffd0e5d
 --- /dev/null
 +++ b/dm/host/tests/t_friends_internet.py
 @@ -0,0 +1,96 @@
@@ -1321,7 +1321,7 @@ index 0000000..7ffd0e5
 +m.kill(); turn.kill(); print(f'friends internet: {npass} passed, {nfail} failed'); sys.exit(nfail != 0)
 diff --git a/dm/host/tests/t_friends_path.c b/dm/host/tests/t_friends_path.c
 new file mode 100644
-index 0000000..646ec3f
+index 00000000..646ec3f5
 --- /dev/null
 +++ b/dm/host/tests/t_friends_path.c
 @@ -0,0 +1,81 @@
@@ -1408,7 +1408,7 @@ index 0000000..646ec3f
 +}
 diff --git a/dm/host/tests/t_friends_screen.m b/dm/host/tests/t_friends_screen.m
 new file mode 100644
-index 0000000..7ff3855
+index 00000000..44df32a8
 --- /dev/null
 +++ b/dm/host/tests/t_friends_screen.m
 @@ -0,0 +1,22 @@
@@ -1436,7 +1436,7 @@ index 0000000..7ff3855
 +    printf("friends screen: %d passed, %d failed\n", np, nf); return nf != 0; } }
 diff --git a/dm/host/tests/turn_server.py b/dm/host/tests/turn_server.py
 new file mode 100644
-index 0000000..eff168f
+index 00000000..eff168ff
 --- /dev/null
 +++ b/dm/host/tests/turn_server.py
 @@ -0,0 +1,64 @@
@@ -1504,6 +1504,3 @@ index 0000000..eff168f
 +        elif t == 8: al['perms'][unx(a[0x12][0])[0]] = time.time(); main.sendto(msg(0x108, tid, b'', True), src)
 +        else:
 +            n = struct.unpack('>H', a[0x0c][0][:2])[0]; p = unx(a[0x12][0]); al['chans'][n] = p; al['by'][p] = n; al['perms'][p[0]] = 1; main.sendto(msg(0x109, tid, b'', True), src)
--- 
-2.43.0
-
