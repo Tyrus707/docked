@@ -40,6 +40,13 @@ enum SortBy: String, CaseIterable {
     var title: String { self == .played ? "Hours Played" : rawValue }
 }
 
+// A disk or health scan: only the newest ask may write its answer, however late it finishes.
+struct ScanToken {
+    private var value = 0
+    mutating func start() -> Int { value += 1; return value }
+    func current(_ token: Int) -> Bool { value == token }
+}
+
 // Breaking a long list into labelled runs, so a big console reads like shelves, not one wall of games.
 enum GroupBy: String, CaseIterable {
     case auto = "Automatic", none = "None", letter = "Letter", console = "Console", year = "Year", genre = "Genre", progress = "Progress"

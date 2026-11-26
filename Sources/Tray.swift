@@ -81,7 +81,7 @@ struct Tray: View {
                 else if let w = model.convertWaiting { Text(w).font(.caption).foregroundStyle(style.soft) }
             }
             if model.queue.paused { Button("Continue") { model.resumeQueue() } }
-            else if model.convertWaiting != nil { Button("Convert Now") { model.convertWhen = .now } }
+            else if model.convertWaiting != nil { Button("Convert Now") { model.convertNowOnce() } }
             chip("Details")
         }
     }

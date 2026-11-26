@@ -288,7 +288,7 @@ final class Model: ObservableObject {
         guard let r = g.rom else { return }
         let i = Invite.make(game: g.name)
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(i.link, forType: .string)
-        tell("Invite link copied. Send it to a friend in Messages. They open it with \(g.name) in their Docked, and join you.")
+        tell("Invite link copied, with the room's password in it: send it only to the friend you want to join. The room and game names can be seen in libretro's public lobby.")
         playRom(g, r, net: .host(i))
     }
     func joinOnline(_ i: Invite) {
@@ -423,17 +423,19 @@ final class Model: ObservableObject {
     private func sayLeftBehind() {
         let l = LeftBehind.take(); guard !l.isEmpty else { return }
         let names = l.prefix(3).map { "\($0.lastPathComponent) in \(FileManager.default.displayName(atPath: $0.deletingLastPathComponent().path))" }.joined(separator: ", ")
-        tell((l.count == 1 ? "The original of " : "\(l.count) originals, including ") + names + (l.count == 1 ? ", was copied but couldn't be removed, so it still takes space. You can delete it yourself." : ", were copied but couldn't be removed, so they still take space. You can delete them yourself."), good: false)
+        tell((l.count == 1 ? "The file at " : "\(l.count) files, including ") + names + (l.count == 1 ? ", was moved but couldn't be removed from there, so it still takes space. You can delete it yourself." : ", were moved but couldn't be removed from there, so they still take space. You can delete them yourself."), good: false)
     }
     @Published var quick = UserDefaults.standard.bool(forKey: "skipPipeline") { didSet { UserDefaults.standard.set(quick, forKey: "skipPipeline") } }
     @Published var spotlight = UserDefaults.standard.object(forKey: "spotlight") as? Bool ?? true { didSet { UserDefaults.standard.set(spotlight, forKey: "spotlight"); refreshSpotlight() } }
     var spotlightSig: String?   // what Spotlight was last given, so an unchanged library isn't indexed again
     @Published var convertWhen = ConvertWhen(rawValue: UserDefaults.standard.string(forKey: "convertWhen") ?? "") ?? .now { didSet { UserDefaults.standard.set(convertWhen.rawValue, forKey: "convertWhen"); startNext() } }
     @Published var convertWaiting: String?   // why the queue waits for Convert When, said in the tray
+    private var convertOnce = false, oneOffRunning = false   // "Convert Now": this batch only; the saved choice stays as it is
+    func convertNowOnce() { guard !queue.waiting.isEmpty else { return }; convertOnce = true; startNext() }
     private var powerStop: Job?   // the game stopped because the power adapter went: first in line again
     // Unplugged, or Low Power Mode on, while converting with Convert When set: it stops, keeping its finished steps, and carries on later
     private func powerChanged() {
-        if builder.running, powerStop == nil, convertWhen != .now, !Power.shared.onPower || Power.shared.lowPower, let j = queue.current, !j.phone { powerStop = j; builder.cancel() }
+        if builder.running, powerStop == nil, !oneOffRunning, convertWhen != .now, !Power.shared.onPower || Power.shared.lowPower, let j = queue.current, !j.phone { powerStop = j; builder.cancel() }
         else { startNext() }
     }
     @Published var speed = UserDefaults.standard.string(forKey: "conversionSpeed").flatMap(Speed.init(rawValue:)) ?? (UserDefaults.standard.object(forKey: "conversionEffort") as? Int).map(Speed.init(effort:)) ?? .full { didSet { UserDefaults.standard.set(speed.rawValue, forKey: "conversionSpeed") } }
@@ -559,10 +561,14 @@ final class Model: ObservableObject {
         }
     }
 
+    // Only the newest disk or health look may write its answer, however late a slow drive or signature check finishes.
+    private var diskScan = ScanToken()
+    var healthScan = ScanToken()
     // Every game Docked knows: converted games in its folders and wherever they were added from, games for other consoles where they are kept.
     // One that can't be found stays, marked missing, so a drive that is unplugged takes nothing out of the library.
     // One whose file was deleted, from a folder that is still there, leaves the library; its play time stays in case it comes back.
     func reload(_ disk: DiskLook? = nil) {
+        _ = diskScan.start()
         var l = library
         let removed = Set(l.removed)
         let d = disk ?? DiskLook.take(dirs: libraryDirs, apps: Array(l.apps.keys), removed: removed, roms: l.roms.map(\.path), offloaded: Array(l.offloaded.keys))
@@ -586,12 +592,11 @@ final class Model: ObservableObject {
     }
     private var libraryDirs: [URL] { [Paths.games, libraryFolder] + folders.map { URL(fileURLWithPath: $0) } }
     // The same, with the disk read off the main thread: for drives coming and going, which may be slow to wake. The newest ask wins.
-    private var reloadAsked = 0
     func reloadSoon() {
-        reloadAsked += 1; let n = reloadAsked, l = library, dirs = libraryDirs
+        let n = diskScan.start(), l = library, dirs = libraryDirs
         DispatchQueue.global(qos: .userInitiated).async {
             let d = DiskLook.take(dirs: dirs, apps: Array(l.apps.keys), removed: Set(l.removed), roms: l.roms.map(\.path), offloaded: Array(l.offloaded.keys))
-            DispatchQueue.main.async { if n == self.reloadAsked { self.reload(d) } }
+            DispatchQueue.main.async { if self.diskScan.current(n) { self.reload(d) } }
         }
     }
     // Many games out of the library at once. Their files stay where they are. A converted game kept in the library's own folders stays, as its file is the library.
@@ -606,6 +611,7 @@ final class Model: ObservableObject {
     }
 
     private func finished() {
+        oneOffRunning = false
         if let id = builder.titleID { let ids = Set(games.filter { $0.titleID.uppercased() == id }.map(\.id)); dropArt { ids.contains($0) } }   // only the game just made changed
         sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
         switch builder.stage {
@@ -626,7 +632,7 @@ final class Model: ObservableObject {
                 }
             }
         case "Stopped":
-            if let j = powerStop { powerStop = nil; queue.current = nil; queue.waiting.insert(j, at: 0); tell("Converting \(j.title) paused on battery. It carries on from where it stopped when your Mac is plugged in."); reload(); startNext() }
+            if let j = powerStop { powerStop = nil; queue.current = nil; queue.waiting.insert(j, at: 0); tell("Converting \(j.title) paused because the Mac is on battery or in Low Power Mode. It carries on from where it stopped when the Mac is plugged in and Low Power Mode is off."); reload(); startNext() }
             else { queue.stopped(); reload() }
         default:
             let (t, b) = Notify.text(done: nil, failed: job?.title ?? builder.title, left: queue.waiting.count, problems: 0); Notify.say(t, b)
@@ -854,7 +860,8 @@ final class Model: ObservableObject {
         retry?.cancel(); retry = nil
         guard !builder.running, moving == nil, !removing, !installing, !queue.paused, !engineBusy, !checkingGame else { return }
         guard ready else { if !checks.isEmpty, !queue.waiting.isEmpty { queue.paused = true }; return }
-        if !queue.waiting.isEmpty, let why = Power.shared.wait(convertWhen) {   // looked at again every 5 minutes, and at once when the power changes
+        let now = convertOnce; convertOnce = false   // Convert Now starts this batch without changing the saved choice
+        if !queue.waiting.isEmpty, let why = now ? nil : Power.shared.wait(convertWhen) {   // looked at again every 5 minutes, and at once when the power changes
             convertWaiting = why; let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: w); return
         }
         convertWaiting = nil
@@ -863,7 +870,7 @@ final class Model: ObservableObject {
                 let input = try resolveInput(j.urls, family: j.family)
                 buildPlace = j.placeURL; buildSources = j.sources
                 builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, speed: j.speed, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone; Notify.ask()
-                if builder.running { return }
+                if builder.running { if now { oneOffRunning = true }; return }
                 queue.failed(builder.error ?? "The conversion engine did not start.")
             } catch { queue.problems.append(Problem(title: j.title, reason: error.localizedDescription)); queue.done() }
         }

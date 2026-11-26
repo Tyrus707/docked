@@ -228,16 +228,16 @@ enum ConvertWhen: String, Codable, CaseIterable {
     var note: String {
         switch self {
         case .now: return "Games start converting as soon as you add them."
-        case .plugged: return "Games convert only on the power adapter. Unplug and it pauses, keeping its finished steps; plug in and it carries on."
-        case .overnight: return "Games convert while you're away: on the power adapter, from 11 PM to 7 AM or after 15 minutes without use."
+        case .plugged: return "Games convert only on the power adapter, with Low Power Mode off. Unplug or turn Low Power Mode on and it pauses, keeping its finished steps."
+        case .overnight: return "Games convert while you're away: on the power adapter, Low Power Mode off, from 11 PM to 7 AM or after 15 minutes without use."
         }
     }
 }
 // Why converting waits now, or nil when it may go. idle: seconds since the keyboard, mouse or a controller was last used.
 func convertWait(_ w: ConvertWhen, onPower: Bool, lowPower: Bool, hour: Int, idle: Double) -> String? {
     guard w != .now else { return nil }
-    if !onPower { return "Waiting for the power adapter" }
-    if lowPower { return "Waiting until Low Power Mode is off" }
+    if !onPower { return lowPower ? "Waiting for the power adapter and Low Power Mode to turn off" : "Waiting for the power adapter" }
+    if lowPower { return "Waiting for Low Power Mode to turn off" }
     if w == .overnight, !(hour >= 23 || hour < 7), idle < 900 { return "Waiting for tonight" }
     return nil
 }

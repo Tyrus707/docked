@@ -42,9 +42,9 @@ enum Offload {
         do {
             for f in all { let t = folder.appendingPathComponent(String(f.path.dropFirst(here.path.count + 1))); try Organize.transfer(f, to: t, move: true); done.append((f, t)) }
         } catch {
-            var stuck = false   // what had gone comes back; if some of it can't, the player is told where it is
-            for (a, b) in done.reversed() { do { try Organize.transfer(b, to: a, move: true) } catch { stuck = true } }
-            if stuck { throw OffloadError.split(folder.path, error.localizedDescription) }
+            var stuck = false, why: String?   // what had gone comes back; if some of it can't, the player is told where it is and why
+            for (a, b) in done.reversed() { do { try Organize.transfer(b, to: a, move: true) } catch { stuck = true; if why == nil { why = error.localizedDescription } } }
+            if stuck { throw OffloadError.split(folder.path, why ?? error.localizedDescription) }
             try? fm.removeItem(at: folder); throw error
         }
         return folder

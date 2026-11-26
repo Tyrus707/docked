@@ -14,7 +14,7 @@ enum DockedLink: Equatable {
         case "resume": return .resume
         case "couch": return .couch
         case "health": return .health
-        case "join": guard let r = q("room"), let k = q("key"), let g = q("game"), Invite.valid(r), k.count <= 64 else { return nil }; return .join(Invite(room: r, key: k, game: g))
+        case "join": guard let r = q("room"), let k = q("key"), let g = q("game"), Invite.valid(r), k.configSafe, g.configClean, k.count <= 64 else { return nil }; return .join(Invite(room: r, key: k, game: g))
         default: return nil
         }
     }

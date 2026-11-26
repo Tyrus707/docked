@@ -22,6 +22,15 @@ struct Bios {
     var names: String { folder != nil ? "a BIOS file" : files.map { "\($0.file) (\($0.label))" }.joined(separator: " or ") }
 }
 
+// RetroArch's file is one setting per line: no value may carry a new line, a quote or an escape into it.
+private let configInjection = CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "\"\\\n\r\u{2028}\u{2029}"))
+private let configHostile = configInjection.union(CharacterSet(charactersIn: "#;$`"))
+extension String {
+    var configClean: Bool { !isEmpty && unicodeScalars.allSatisfy { !configInjection.contains($0) } }
+    var configSafe: Bool { configClean && unicodeScalars.allSatisfy { !configHostile.contains($0) } }
+    var configText: String { String(unicodeScalars.filter { !configInjection.contains($0) }) }
+}
+
 enum RetroArch {
     // The reviewed release, and its download's SHA-256. A different file is refused.
     static let version = "1.22.2"
@@ -79,7 +88,7 @@ enum RetroArch {
             + line("video_shader_dir", Shaders.slang.path) + line("video_shader_enable", shader ? "true" : "false") + Cheevos.lines() + Pads.lines()
         try mine.write(to: docked, atomically: true, encoding: .utf8)
     }
-    static func line(_ k: String, _ v: String) -> String { "\(k) = \"\(v.replacingOccurrences(of: "\"", with: ""))\"\n" }
+    static func line(_ k: String, _ v: String) -> String { "\(k.configText) = \"\(v.configText)\"\n" }
     // With full screen off, games open in a window as big as the screen, like the green button with Option held: no Space of
     // their own, and the menu bar and Dock stay. RetroArch's own full screen on a Mac always takes a Space (video_windowed_fullscreen is not
     // used there), so it is a window placed over the screen instead. Control-Command-F or RetroArch's F key still gives full screen.

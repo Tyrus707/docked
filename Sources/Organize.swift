@@ -132,7 +132,12 @@ enum Organize {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
             var done: [(URL, URL)] = []   // a set moves whole or not at all: what had moved goes back
             do { for f in all { let t = folder.appendingPathComponent(rel(f)); try fm.createDirectory(at: t.deletingLastPathComponent(), withIntermediateDirectories: true); try fm.moveItem(at: f, to: t); done.append((f, t)) } }
-            catch { for (a, b) in done.reversed() { try? fm.moveItem(at: b, to: a) }; if done.allSatisfy({ fm.fileExists(atPath: $0.0.path) }) { try? fm.removeItem(at: folder) }; throw error }
+            catch {
+                var stuck: [URL] = []
+                for (a, b) in done.reversed() { do { try fm.moveItem(at: b, to: a) } catch { if fm.fileExists(atPath: b.path) { stuck.append(b) } } }
+                if stuck.isEmpty { try? fm.removeItem(at: folder) } else { stuck.forEach(LeftBehind.note) }
+                throw error
+            }
             return folder.appendingPathComponent(rom.lastPathComponent)
         }
         if !sameVolume(here, folder.deletingLastPathComponent()) { try ensureSpace(all.reduce(0) { $0 + folderSize($1) }, at: folder.deletingLastPathComponent()) }
