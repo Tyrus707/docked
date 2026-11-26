@@ -260,6 +260,27 @@ struct LibraryData: Codable, Equatable {
     }
 }
 
+// What the library reads from disk: the folders' games, and whether each known file is there. Gathered off the main thread when it can be,
+// as a drive that is asleep can take seconds to answer. A path not looked at is asked about directly.
+struct DiskLook {
+    var apps: [Game] = []
+    var known = Set<String>(), there = Set<String>()
+    func exists(_ p: String) -> Bool { known.contains(p) ? there.contains(p) : FileManager.default.fileExists(atPath: p) }
+    static func take(dirs: [URL], apps: [String], removed: Set<String>, roms: [String], offloaded: [String], ids: DriveIDs = .shared) -> DiskLook {
+        let fm = FileManager.default
+        var d = DiskLook(), seen = Set<String>()
+        func look(_ p: String) -> Bool { if d.known.insert(p).inserted, fm.fileExists(atPath: p) { d.there.insert(p) }; return d.there.contains(p) }
+        for g in dirs.flatMap(libraryFolders).flatMap({ scanLibrary($0) }) where seen.insert(g.id).inserted && !removed.contains(g.url.path) { d.apps.append(g) }
+        for p in apps where !seen.contains(p) {   // known games outside the folders, read once each
+            if let g = gameAt(URL(fileURLWithPath: p)) { seen.insert(g.id); if !removed.contains(p) { d.apps.append(g) } }
+        }
+        for g in d.apps { d.known.insert(g.url.path); d.there.insert(g.url.path) }
+        for p in apps + roms + offloaded where !look(p) { _ = look((p as NSString).deletingLastPathComponent) }   // a missing file's folder says whether it was deleted
+        ids.remember(d.apps.map(\.url.path) + roms.filter { d.there.contains($0) })
+        return d
+    }
+}
+
 func playTimeText(_ s: Double) -> String { s < 60 ? "Not played yet" : s < 3600 ? "\(Int(s / 60)) min played" : String(format: "%.1f hours played", s / 3600) }
 func lastPlayedText(_ d: Date?, now: Date = Date(), calendar c: Calendar = .current) -> String {
     guard let d else { return "Never played" }

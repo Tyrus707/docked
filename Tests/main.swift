@@ -772,6 +772,15 @@ do {
     check(deletedFile("/g/b", exists: { ex.contains($0) }) && !deletedFile("/g/a", exists: { ex.contains($0) }), "a file gone from a folder that is still there was deleted")
     check(!deletedFile("/moved/b", exists: { ex.contains($0) }), "a whole folder gone may have moved: kept as missing")
     check(!deletedFile("/Volumes/NoSuchDriveHere/Games/x.sfc", exists: { _ in false }), "a drive that isn't connected: never deleted")
+    // two drives with one name: the other one plugged in is not this one, so its games are not deleted
+    let vol = "/Volumes/" + (((try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []).first { !$0.hasPrefix(".") } ?? "X")   // any drive that is mounted
+    var driveNow = "A"; let dIDs = DriveIDs(store: UserDefaults(suiteName: "docked-drives-\(UUID())")!, id: { _ in driveNow })
+    let onA = vol + "/Games/Switch/Game.app", there: Set<String> = [vol + "/Games/Switch", vol]
+    dIDs.remember([onA, "/Users/me/x.app"]); check(dIDs.matches(onA) && dIDs.matches("/Users/me/x.app") && dIDs.matches(vol + "/never/seen.app"), "the drive a game was seen on")
+    driveNow = "B"; check(!dIDs.matches(onA) && !deletedFile(onA, exists: { there.contains($0) }, ids: dIDs), "another drive with the same name: the game is away, not deleted")
+    driveNow = "A"; check(deletedFile(onA, exists: { there.contains($0) }, ids: dIDs) == FileManager.default.fileExists(atPath: vol), "its own drive, and it isn't there: deleted")
+    let dl = DiskLook.take(dirs: [], apps: [], removed: [], roms: ["/nope/a.sfc", NSTemporaryDirectory()], offloaded: [], ids: dIDs)
+    check(!dl.exists("/nope/a.sfc") && dl.known.contains("/nope") && dl.exists(NSTemporaryDirectory()) && dl.apps.isEmpty, "the library's look at the disk, taken once")
     check(artStem("snes:abc/1") == "snes-abc-1", "art named for its game")
     let a = Artwork.tile("snes:abc", from: "k1"), b = Artwork.tile("snes:abc", from: "k2")
     check(a != b && a.lastPathComponent.hasPrefix("snes-abc~") && Artwork.tile("snes:abc", from: "k1") == a, "made cover named for its art")

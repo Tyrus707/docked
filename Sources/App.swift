@@ -7,7 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var leaving: () -> Void = {}
     static var waiting: () -> Int = { 0 }
     func applicationWillFinishLaunching(_ n: Notification) { Style.apply() }
-    func applicationWillTerminate(_ n: Notification) { Self.leaving() }
+    func applicationWillTerminate(_ n: Notification) { Self.leaving(); Friends.forgetShared() }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { !(Self.builder?.running ?? false) && !Self.moving() }
     func applicationShouldTerminate(_ s: NSApplication) -> NSApplication.TerminateReply {
         if Self.moving() { let a = NSAlert(); a.messageText = "A game is being moved."; a.informativeText = "Quit Docked when it has finished."; a.runModal(); return .terminateCancel }
@@ -197,6 +197,12 @@ final class Model: ObservableObject {
     func hasArt(_ g: Game) -> Bool { FileManager.default.fileExists(atPath: Cover.custom(g).path) }
     func forgetArt(_ g: Game) { dropArt(g); reload() }
     func dropArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers.removeObject(forKey: g.id as NSString); coverReady() }
+    // Only the art of games whose place matches: the rest of a big library keeps what it has drawn
+    func dropArt(where hit: (String) -> Bool) {
+        for k in icons.keys where hit(k) { icons[k] = nil }; for k in washes.keys where hit(k) { washes[k] = nil }
+        for g in games where hit(g.id) { covers.removeObject(forKey: g.id as NSString) }
+        coverReady()
+    }
     // Dropped on a game: a picture becomes its cover, sound its theme, anything else is added as usual.
     func dropped(_ urls: [URL], on g: Game) { if urls.count == 1, pictureTypes.contains(urls[0].pathExtension.lowercased()) { setArt(g, urls[0]) } else if urls.count == 1, soundTypes.contains(urls[0].pathExtension.lowercased()) { setTheme(g, urls[0]) } else { add(urls) } }
     let covers: NSCache<NSString, NSImage> = { let c = NSCache<NSString, NSImage>(); c.totalCostLimit = 220 << 20; return c }()   // about 500 covers; the rest load again from disk
@@ -368,7 +374,7 @@ final class Model: ObservableObject {
     @Published var importing: Importing?
     @Published var tidying: [Tidy]?
     @Published var askingMode: PendingAdd?
-    @Published var filing: String?
+    @Published var filing: String? { didSet { if filing == nil, oldValue != nil { sayLeftBehind() } } }
     @Published var newlyAdded: String?
     @Published var missingGame: Game?
     var lastWatch = Date.distantPast, skipped = Set<String>()
@@ -388,7 +394,13 @@ final class Model: ObservableObject {
     @Published var cleaning: CleanUp?
     @Published var removing = false
     private var retry: DispatchWorkItem?
-    @Published var moving: String?
+    @Published var moving: String? { didSet { if moving == nil, oldValue != nil { sayLeftBehind() } } }
+    // A move that copied but could not remove the original: said, so the player knows the room wasn't freed
+    private func sayLeftBehind() {
+        let l = LeftBehind.take(); guard !l.isEmpty else { return }
+        let names = l.prefix(3).map { "\($0.lastPathComponent) in \(FileManager.default.displayName(atPath: $0.deletingLastPathComponent().path))" }.joined(separator: ", ")
+        tell((l.count == 1 ? "The original of " : "\(l.count) originals, including ") + names + (l.count == 1 ? ", was copied but couldn't be removed, so it still takes space. You can delete it yourself." : ", were copied but couldn't be removed, so they still take space. You can delete them yourself."), good: false)
+    }
     @Published var quick = UserDefaults.standard.bool(forKey: "skipPipeline") { didSet { UserDefaults.standard.set(quick, forKey: "skipPipeline") } }
     @Published var speed = UserDefaults.standard.string(forKey: "conversionSpeed").flatMap(Speed.init(rawValue:)) ?? (UserDefaults.standard.object(forKey: "conversionEffort") as? Int).map(Speed.init(effort:)) ?? .full { didSet { UserDefaults.standard.set(speed.rawValue, forKey: "conversionSpeed") } }
     @Published var checkingGame = false   // a game just converted is being checked
@@ -516,19 +528,19 @@ final class Model: ObservableObject {
     // Every game Docked knows: converted games in its folders and wherever they were added from, games for other consoles where they are kept.
     // One that can't be found stays, marked missing, so a drive that is unplugged takes nothing out of the library.
     // One whose file was deleted, from a folder that is still there, leaves the library; its play time stays in case it comes back.
-    func reload() {
-        var seen = Set<String>(), l = library
-        let removed = Set(l.removed), dirs = ([Paths.games, libraryFolder] + folders.map { URL(fileURLWithPath: $0) }).flatMap(libraryFolders)
-        var found = (dirs.flatMap { scanLibrary($0) } + l.apps.keys.compactMap { p in seen.contains(p) ? nil : gameAt(URL(fileURLWithPath: p)) }).filter { seen.insert($0.id).inserted && !removed.contains($0.url.path) }
-        found += l.settle(found: found)
+    func reload(_ disk: DiskLook? = nil) {
+        var l = library
+        let removed = Set(l.removed)
+        let d = disk ?? DiskLook.take(dirs: libraryDirs, apps: Array(l.apps.keys), removed: removed, roms: l.roms.map(\.path), offloaded: Array(l.offloaded.keys))
+        var found = d.apps.filter { !removed.contains($0.url.path) }   // also one removed since the look was taken
+        found += l.settle(found: found, exists: d.exists)
         var all = found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        all += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !FileManager.default.fileExists(atPath: $0.path)) }
+        all += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !d.exists($0.path)) }
         // An offloaded game is away, not deleted. One whose file is back here by other means is just here.
-        let fm = FileManager.default
-        for (home, _) in l.offloaded where fm.fileExists(atPath: home) { l.offloaded[home] = nil }
+        for (home, _) in l.offloaded where d.exists(home) { l.offloaded[home] = nil }
         for i in all.indices where all[i].missing { all[i].away = l.offloaded[all[i].url.path] }
         let busy = moving != nil || filing != nil || removing
-        let deleted = busy ? [] : all.filter { $0.missing && $0.away == nil && deletedFile($0.url.path) }
+        let deleted = busy ? [] : all.filter { $0.missing && $0.away == nil && deletedFile($0.url.path, exists: d.exists) }
         if !deleted.isEmpty {
             for g in deleted { if g.rom != nil { l.removeRom(g.titleID) } else { l.removeApp(g.url.path) } }
             let gone = Set(deleted.map(\.id)); all.removeAll { gone.contains($0.id) }
@@ -536,6 +548,17 @@ final class Model: ObservableObject {
         }
         games = all
         l.meet(games); if l != library { library = l }; offers = offers.filter { o in games.contains { $0.id == o.id } }; if let s = selected, !games.contains(where: { $0.id == s }) { selected = nil }
+        refreshSpotlight()
+    }
+    private var libraryDirs: [URL] { [Paths.games, libraryFolder] + folders.map { URL(fileURLWithPath: $0) } }
+    // The same, with the disk read off the main thread: for drives coming and going, which may be slow to wake. The newest ask wins.
+    private var reloadAsked = 0
+    func reloadSoon() {
+        reloadAsked += 1; let n = reloadAsked, l = library, dirs = libraryDirs
+        DispatchQueue.global(qos: .userInitiated).async {
+            let d = DiskLook.take(dirs: dirs, apps: Array(l.apps.keys), removed: Set(l.removed), roms: l.roms.map(\.path), offloaded: Array(l.offloaded.keys))
+            DispatchQueue.main.async { if n == self.reloadAsked { self.reload(d) } }
+        }
     }
     // Many games out of the library at once. Their files stay where they are. A converted game kept in the library's own folders stays, as its file is the library.
     @discardableResult func forget(_ list: [Game]) -> (gone: Int, kept: Int) {
@@ -549,7 +572,8 @@ final class Model: ObservableObject {
     }
 
     private func finished() {
-        icons = [:]; covers.removeAllObjects(); sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
+        if let id = builder.titleID { let ids = Set(games.filter { $0.titleID.uppercased() == id }.map(\.id)); dropArt { ids.contains($0) } }   // only the game just made changed
+        sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
         switch builder.stage {
         case "Done":
             if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
@@ -634,7 +658,7 @@ final class Model: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try placeGame(app, in: dir) }
             DispatchQueue.main.async {
-                self.moving = nil; self.icons = [:]; self.covers.removeAllObjects()
+                self.moving = nil; self.dropArt { $0 == app.path }
                 switch result {
                 case .success: if dir.path != Paths.games.path, !self.folders.contains(dir.path) { self.folders.append(dir.path) }
                 case .failure(let e): self.message = "\(app.deletingPathExtension().lastPathComponent) stayed in \(app.deletingLastPathComponent().lastPathComponent). \(e.localizedDescription)"
@@ -966,7 +990,7 @@ final class Model: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
         for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched(); self?.evictOffloaded() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
-        for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers.removeAllObjects(); self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
+        for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.dropArt { $0.hasPrefix("/Volumes/") }; self?.reloadSoon(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
         lookInWatched(force: true)
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil { DispatchQueue.global(qos: .utility).async { Update.clearBackups(Paths.root.appendingPathComponent("Backups")) } }
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }

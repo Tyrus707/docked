@@ -42,9 +42,13 @@ enum Friends {
     // A copy to send to a friend (AirDrop, Messages, Mail), with a name that says what it is
     static func shareable() -> URL? {
         guard ready, let d = try? Data(contentsOf: pass) else { return nil }
+        forgetShared()   // the pass is the circle's key: only the newest copy waits in the temporary folder
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("docked-pass-\(UUID().uuidString)"), u = dir.appendingPathComponent("Docked Friends Pass.cfg")
         guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil, FileManager.default.createFile(atPath: u.path, contents: d, attributes: [.posixPermissions: 0o600]) else { return nil }
         return u
+    }
+    static func forgetShared(in tmp: URL = FileManager.default.temporaryDirectory) {
+        for n in (try? FileManager.default.contentsOfDirectory(atPath: tmp.path)) ?? [] where n.hasPrefix("docked-pass-") && UUID(uuidString: String(n.dropFirst(12))) != nil { try? FileManager.default.removeItem(at: tmp.appendingPathComponent(n)) }
     }
     // Is Play with friends switched on in this game's own settings
     static func on(_ app: URL) -> Bool {
