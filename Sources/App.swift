@@ -928,7 +928,6 @@ final class Model: ObservableObject {
                 logActivity("\(j.title) could not start", detail: error.localizedDescription, warn: true)
             }
         }
-        }
         // Only games that are open are left: look again shortly.
         if !queue.waiting.isEmpty { let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: w) }
     }
