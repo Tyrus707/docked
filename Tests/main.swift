@@ -766,6 +766,17 @@ do {
     check(Compat.parse(Data("nope".utf8)).isEmpty && Compat(tier: "Profile only", fps: "", platforms: [], issues: 0, engine: "").label == "Not tested yet", "compat edge cases")
 }
 
+// library health
+do {
+    let nowhere = URL(fileURLWithPath: "/nope/Gone.app")
+    let h = healthOf(app: nowhere, titleID: "0100000000010000", name: "Gone", engine: "old", active: "new", kept: false, hasOriginals: true, compat: Compat(tier: "Doesn't run yet", fps: "", platforms: [], issues: 0, engine: ""), verify: { _ in true }, friends: { _ in false })
+    check(h.problems.count == 1 && h.better.count == 3 && h.canRebuild && !h.good, "a game short of a part, older engine, no friends, reported not running")
+    let k = healthOf(app: nowhere, titleID: "x", name: "K", engine: nil, active: "new", kept: true, hasOriginals: true, compat: nil, verify: { _ in true }, friends: { _ in true })
+    check(!k.canRebuild && k.better.isEmpty, "a kept build is never rebuilt, and an unknown engine isn't called old")
+    var fine = h; fine.problems = []; fine.better = []
+    check(healthSummary([fine, fine]) == "All 2 converted games look good." && healthSummary([fine, h]) == "1 looks good. 1 needs attention." && healthSummary([]).hasPrefix("There are no"), "health in words")
+}
+
 // artwork: where it is, and what no game uses
 do {
     let ex: Set<String> = ["/g/a", "/g"]

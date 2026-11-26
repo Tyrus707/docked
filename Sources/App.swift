@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Button("Organize Library…") { model.planTidy() }.disabled(!model.organized)
                 Menu("Add Update or DLC") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.addTo(g) } } }.disabled(model.games.isEmpty)
                 Button("Clean Up…") { model.cleanUp(nil) }
+                Button("Check Library Health…") { model.checkHealth() }.disabled(!model.games.contains { $0.rom == nil })
                 Menu("Move Game to Folder") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.moveGame(g) } } }.disabled(model.games.isEmpty)
             }
             CommandGroup(after: .sidebar) { Button(model.couch ? "Leave Couch Mode" : "Couch Mode") { model.toggleCouch() }.keyboardShortcut("b", modifiers: [.command, .shift]).disabled(model.games.isEmpty && !model.couch) }
@@ -93,6 +94,7 @@ final class Model: ObservableObject {
     @Published var asking: (files: [URL], choices: [Console])?   // a file several consoles use
     @Published var retitling: Game?
     @Published var showConsoles = false
+    @Published var health: HealthState?   // Library Health, while it is open (HealthView.swift)
     // ---- covers and details, found online once the player has said yes (Lookup.swift) ----
     @Published var lookUp = UserDefaults.standard.object(forKey: "lookUp") as? Bool { didSet { UserDefaults.standard.set(lookUp, forKey: "lookUp"); refreshCompat() } }
     @Published var askLookUp = false
@@ -577,6 +579,7 @@ final class Model: ObservableObject {
         switch builder.stage {
         case "Done":
             if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
+            if let id = builder.titleID, job?.phone != true { library.edit(id) { $0.engine = activeEngine } }   // Library Health tells games made with an older engine
             queue.done()
             if let j = job, j.phone { finishPhone(j); return }
             // Checked before it is called done, off the main thread: the signature check reads the app
@@ -629,7 +632,7 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil || health != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSetup(_ f: @escaping () -> Void) { showSetup = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
@@ -1089,6 +1092,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showSetup) { SetupView() }
         .sheet(isPresented: $model.showXcode) { XcodeStepsView() }
         .sheet(isPresented: $model.showConsoles) { ConsolesView() }
+        .sheet(isPresented: .init(get: { model.health != nil }, set: { if !$0 { model.health = nil } })) { HealthView() }
         .sheet(item: $model.wantsBios) { BiosView(ask: $0) }
         .sheet(isPresented: .init(get: { model.importing != nil }, set: { if !$0 { model.importing = nil } })) { ImportView() }
         .sheet(isPresented: .init(get: { model.tidying != nil }, set: { if !$0 { model.tidying = nil } })) { TidyView() }

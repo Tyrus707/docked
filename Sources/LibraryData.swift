@@ -12,6 +12,7 @@ struct Entry: Codable, Equatable {
     var plays = 0      // how many times it has been played
     var kept = false   // Keep This Build: converting the game again won't replace the app that plays well
     var meta: Meta?    // critic score, popularity and details from Wikidata, once looked up
+    var engine: String?   // the engine its build was made with (Library Health); unknown for games made before 1.11
     enum Status: String, Codable, CaseIterable { case none = "Not started", playing = "Playing", finished = "Finished", aside = "Set aside" }
     init(favorite: Bool = false, status: Status = .none, collections: [String] = [], added: Date = Date(), lastPlayed: Date? = nil, seconds: Double = 0, rating: Int = 0, plays: Int = 0, meta: Meta? = nil) {
         self.favorite = favorite; self.status = status; self.collections = collections; self.added = added; self.lastPlayed = lastPlayed; self.seconds = seconds; self.rating = rating; self.plays = plays; self.meta = meta
@@ -29,6 +30,7 @@ struct Entry: Codable, Equatable {
         plays = try c.decodeIfPresent(Int.self, forKey: .plays) ?? 0
         meta = try? c.decodeIfPresent(Meta.self, forKey: .meta)
         kept = try c.decodeIfPresent(Bool.self, forKey: .kept) ?? false
+        engine = try? c.decodeIfPresent(String.self, forKey: .engine)
     }
 }
 
