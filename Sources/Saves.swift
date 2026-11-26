@@ -26,7 +26,7 @@ struct SaveMenu: View {
 }
 
 extension Model {
-    func reveal(_ u: URL) { FileManager.default.fileExists(atPath: u.path) ? NSWorkspace.shared.activateFileViewerSelecting([u]) : NSWorkspace.shared.open(u.deletingLastPathComponent()) }
+    func reveal(_ u: URL) { if FileManager.default.fileExists(atPath: u.path) { NSWorkspace.shared.activateFileViewerSelecting([u]) } else { _ = NSWorkspace.shared.open(u.deletingLastPathComponent()) } }
 
     func backUpSave(_ g: Game) {
         do { if try GameData(g.titleID).backUp() != nil { tell("\(g.name)'s save is backed up.") } else { tell("\(g.name) has no save yet.", good: false) } }
