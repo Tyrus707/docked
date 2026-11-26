@@ -10,6 +10,7 @@ struct Entry: Codable, Equatable {
     var seconds: Double = 0
     var rating = 0     // the player's own stars, 1 to 5; 0 is not rated
     var plays = 0      // how many times it has been played
+    var kept = false   // Keep This Build: converting the game again won't replace the app that plays well
     var meta: Meta?    // critic score, popularity and details from Wikidata, once looked up
     enum Status: String, Codable, CaseIterable { case none = "Not started", playing = "Playing", finished = "Finished", aside = "Set aside" }
     init(favorite: Bool = false, status: Status = .none, collections: [String] = [], added: Date = Date(), lastPlayed: Date? = nil, seconds: Double = 0, rating: Int = 0, plays: Int = 0, meta: Meta? = nil) {
@@ -27,6 +28,7 @@ struct Entry: Codable, Equatable {
         rating = min(max(try c.decodeIfPresent(Int.self, forKey: .rating) ?? 0, 0), 5)
         plays = try c.decodeIfPresent(Int.self, forKey: .plays) ?? 0
         meta = try? c.decodeIfPresent(Meta.self, forKey: .meta)
+        kept = try c.decodeIfPresent(Bool.self, forKey: .kept) ?? false
     }
 }
 

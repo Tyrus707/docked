@@ -94,8 +94,11 @@ final class Model: ObservableObject {
     @Published var retitling: Game?
     @Published var showConsoles = false
     // ---- covers and details, found online once the player has said yes (Lookup.swift) ----
-    @Published var lookUp = UserDefaults.standard.object(forKey: "lookUp") as? Bool { didSet { UserDefaults.standard.set(lookUp, forKey: "lookUp") } }
+    @Published var lookUp = UserDefaults.standard.object(forKey: "lookUp") as? Bool { didSet { UserDefaults.standard.set(lookUp, forKey: "lookUp"); refreshCompat() } }
     @Published var askLookUp = false
+    @Published var compat: [String: Compat] = Compat.load()   // how well each game runs, from the community list (Compat.swift)
+    // One cloud saves folder for every converted game, written into each game's own settings before it starts ("" is off)
+    @Published var cloudSaves = UserDefaults.standard.string(forKey: "cloudSaves") ?? "" { didSet { UserDefaults.standard.set(cloudSaves, forKey: "cloudSaves"); applyCloudSaves(was: oldValue) } }
     @Published var picking: Picking?
     @Published var finding = Set<String>()
     @Published var scoring = Set<String>()   // games whose scores and details are being looked up, by title ID
@@ -326,7 +329,7 @@ final class Model: ObservableObject {
         tracker.identify = { [weak self] u in self?.games.first { u.path == $0.url.path || u.path.hasPrefix($0.url.path + "/") }?.titleID.uppercased() }
         tracker.countedUntil = { [weak self] id in self?.library.entry(id).lastPlayed }
         AppDelegate.leaving = { [weak self] in self?.tracker.flush(); self?.saveNow() }
-        tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack() }
+        tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack(); self?.checkCrash(id, since: a) }
         tracker.changed = { [weak self] in guard let s = self else { return }; s.runningIDs = s.tracker.running; s.themeUpdate() }
         tracker.start()
     }
@@ -746,6 +749,7 @@ final class Model: ObservableObject {
     // Adds the game on the review screen to the queue. It starts at once when nothing else is converting.
     func convert() -> Bool {
         guard review.blocker == nil else { return false }
+        if let g = existing, library.entry(g.titleID).kept { reviewNote = "You chose to keep this build of \(g.name). Turn off Keep This Build in its ••• menu to convert it again."; return false }
         if let e = placeProblem(reviewPlace), reviewPlace.path != Paths.games.path { reviewNote = e.localizedDescription; return false }
         do {
             let parts = review.parts.map(\.url), dir = (try? parts.first?.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
@@ -952,7 +956,7 @@ final class Model: ObservableObject {
     private var launched = false
     // Once, when the window first appears. A failed look says nothing: being offline is not a problem worth a message.
     func windowAppeared() {
-        guard !launched else { return }; launched = true
+        guard !launched else { return }; launched = true; refreshCompat()
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
         for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched(); self?.evictOffloaded() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
@@ -985,6 +989,7 @@ final class Model: ObservableObject {
         if let r = g.rom { playRom(g, r); return }
         if isRunning(g), let a = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.path == g.url.path }) { a.activate(); return }
         if let why = g.cannot { message = "\(g.name) cannot run here. \(why)."; return }
+        if !cloudSaves.isEmpty { CloudSaves.apply(cloudSaves, was: "", to: g.url) }
         let c = NSWorkspace.OpenConfiguration()
         if !settings { c.environment = ["DM_LAUNCHER": "0"] }   // straight into the game
         NSWorkspace.shared.openApplication(at: g.url, configuration: c) { _, e in

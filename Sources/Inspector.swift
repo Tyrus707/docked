@@ -34,6 +34,8 @@ struct Inspector: View {
                         fact("Size", game.missing ? "Not available" : model.size(game).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Measuring…"); if let r = game.rom { fact("Plays in", RetroArch.core(console(r.console) ?? consoles[0]) == nil ? "RetroArch, set up when you first play" : "RetroArch") }
                         if let r = game.rom, let p = Cheevos.of(r) { fact("Achievements", Cheevos.text(p)) }
                         fact("In", (drive(of: game.url.path).map { "\($0.name), " } ?? "") + FileManager.default.displayName(atPath: game.url.deletingLastPathComponent().path)); if !e.collections.isEmpty { fact("Collections", e.collections.joined(separator: ", ")) }
+                        if game.rom == nil, let c = model.compat[game.titleID.uppercased()] { fact("Runs", c.label + (c.fps.isEmpty ? "" : ", \(c.fps)") + (c.issues > 0 ? ", \(c.issues) open report\(c.issues == 1 ? "" : "s")" : "")) }
+                        if e.kept { fact("Build", "Kept") }
                         if let c = e.meta?.critic { fact("Critic score", "\(c) out of 100") }; if let v = e.meta?.views { fact("Popularity", readersText(v)) }
                         if let i = game.rom?.info { if let d = i.developer { fact("Made by", d) }; if let p = i.publisher, p != i.developer { fact("Published by", p) }; if let g = i.genre { fact("Genre", g) } }
                         else if let m = e.meta { if let d = m.developer { fact("Made by", d) }; if let p = m.publisher, p != m.developer { fact("Published by", p) }; if let g = m.genre { fact("Genre", g) } }
@@ -46,6 +48,7 @@ struct Inspector: View {
                             Button(notes.isEmpty ? "Engine notes for this game" : "All engine notes") { NSWorkspace.shared.open(GameNotes.page(game.titleID)) }.buttonStyle(.plain).font(.caption).foregroundStyle(style.accent)
                         }
                     }
+                    if game.rom == nil, !game.missing { saves }
                     VStack(alignment: .leading, spacing: 6) {
                         link("Choose Cover…", "photo") { model.pickArt(game) }
                         if let r = game.rom { if model.finding.contains(r.id) { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finding details…").font(.callout).foregroundStyle(style.soft) } } else { link(r.info == nil ? "Find Cover and Details…" : "Wrong Game? Find Again…", "magnifyingglass") { model.find(r.id, byHand: true) } } }
@@ -59,6 +62,20 @@ struct Inspector: View {
                 }.padding(18)
             }
         }.frame(width: 280).frame(maxHeight: .infinity).background(style.bottom)
+    }
+    // The game's save at a glance: when it last changed, its newest copies, and the two things people do with them
+    @ViewBuilder var saves: some View {
+        let d = GameData(game.titleID), list = d.list()
+        let when: Date? = d.hasSave ? (try? d.save.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate : nil
+        VStack(alignment: .leading, spacing: 7) {
+            Text("SAVES").font(.caption.weight(.semibold)).tracking(1.2).foregroundStyle(style.soft).accessibilityAddTraits(.isHeader)
+            Text(when.map { "Saved \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "No save yet").font(.callout.weight(.semibold)).foregroundStyle(style.text)
+            Text(model.cloudSaves.isEmpty ? "\(list.count) backup\(list.count == 1 ? "" : "s") on this Mac" : "\(list.count) backup\(list.count == 1 ? "" : "s") · syncs through \((model.cloudSaves as NSString).lastPathComponent)").font(.caption).foregroundStyle(style.soft)
+            HStack(spacing: 14) {
+                Button("Back Up Now") { model.backUpSave(game) }.disabled(!d.hasSave)
+                if let b = list.first { Button("Restore Newest…") { model.restoreSave(game, from: b.url) } }
+            }.buttonStyle(.plain).font(.callout).foregroundStyle(style.accent)
+        }
     }
     func fact(_ a: String, _ b: String) -> some View { HStack(alignment: .firstTextBaseline) { Text(a).foregroundStyle(style.soft); Spacer(minLength: 12); Text(b).foregroundStyle(style.text).multilineTextAlignment(.trailing) }.font(.callout).accessibilityElement(children: .combine) }
     func link(_ t: String, _ s: String, _ f: @escaping () -> Void) -> some View { Button(action: f) { Label(t, systemImage: s).font(.callout).foregroundStyle(style.accent).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain) }

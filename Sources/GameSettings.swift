@@ -73,7 +73,8 @@ struct GameSettings {
     func set(_ s: LaunchSetting, _ v: String) {
         guard !isFixed(s), v.utf8.count <= 256 else { return }
         if s.kind == .choice, let o = s.options, !o.contains(where: { $0.first == v }) { return }
-        saved.set(v, forKey: Self.prefix + s.env)
+        // Only a choice that differs from the tested default is kept, so a later build's better default reaches the player (nxnative docs/frontends.md)
+        if v == s.default { saved.removeObject(forKey: Self.prefix + s.env) } else { saved.set(v, forKey: Self.prefix + s.env) }
     }
 
     // Back to the settings the game was tested with, like the window's own Reset button. Other choices it keeps (microphone, save sync) stay.
