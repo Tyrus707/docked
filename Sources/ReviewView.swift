@@ -70,7 +70,7 @@ struct ReviewView: View {
                     Toggle("Skip the pipeline step", isOn: $model.quick)
                     Text("Converts faster, but the game's first start takes longer and may stutter.").font(.caption).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack { Text("How much of your Mac can converting use?"); Spacer(); Text("\(model.effort)%").font(.caption).monospacedDigit().foregroundStyle(.secondary) }
+                        HStack { Text("Conversion speed"); Spacer(); Text("\(model.effort)%").font(.caption).monospacedDigit().foregroundStyle(.secondary) }
                         Slider(value: model.effortSlider, in: 0.1...1, step: 0.05)
                         Text(conversionEffortNote(model.effort)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         Text("Lower is slower to convert; the finished game is the same.").font(.caption).foregroundStyle(.secondary)
