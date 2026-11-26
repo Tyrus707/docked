@@ -1,11 +1,14 @@
 import SwiftUI
 import CoreImage
+import ImageIO
 
-// Covers are made once at the size they are shown, from art already on this Mac, and kept in memory while Docked is open. Nothing is downloaded.
+// Covers are made once at the size they are shown, from art already on this Mac, and kept in Metadata/Tiles so the next launch shows them at once (Artwork.swift).
+// The ones on screen lately stay in memory; the rest load again from that folder. Nothing is downloaded.
 enum Cover {
     static let size = NSSize(width: 312, height: 372)   // shown at 156 x 186: close to the square art most games have, so little is left to fill
     static let shape: CGFloat = 312.0 / 372
-    static func custom(_ g: Game) -> URL { Paths.root.appendingPathComponent("Artwork/" + g.titleID.replacingOccurrences(of: ":", with: "-").replacingOccurrences(of: "/", with: "-") + ".png") }
+    static func custom(_ g: Game) -> URL { custom(g.titleID) }
+    static func custom(_ id: String) -> URL { Artwork.yours.appendingPathComponent(artStem(id) + ".png") }
     static func aspect(_ i: NSImage) -> CGFloat { guard let r = i.representations.max(by: { $0.pixelsWide < $1.pixelsWide }), r.pixelsHigh > 0 else { return i.size.height > 0 ? i.size.width / i.size.height : 1 }; return CGFloat(r.pixelsWide) / CGFloat(r.pixelsHigh) }
 
     static func bitmap(_ w: Int, _ h: Int, _ draw: () -> Void) -> NSBitmapImageRep {
@@ -46,7 +49,28 @@ enum Cover {
         }
         let o = NSImage(size: NSSize(width: size.width / 2, height: size.height / 2)); o.addRepresentation(rep); return o
     }
-    static let queue = DispatchQueue(label: "covers", qos: .userInitiated)
+    // Several at once, so a big library fills in quickly
+    static let work: OperationQueue = { let q = OperationQueue(); q.name = "covers"; q.qualityOfService = .userInitiated; q.maxConcurrentOperationCount = max(2, min(6, ProcessInfo.processInfo.activeProcessorCount - 2)); return q }()
+    static let cost = Int(size.width * size.height * 4)
+    // One game's cover, from the made covers folder when it is there, otherwise made from the best art on this Mac and kept there. Off the main thread.
+    static func tile(id: String, rom: Rom?, app: URL) -> NSImage {
+        let fm = FileManager.default, own = custom(id), icns = app.appendingPathComponent("Contents/Resources/AppIcon.icns")
+        let art: URL? = fm.fileExists(atPath: own.path) ? own : rom != nil ? RetroArch.art(rom!) : fm.fileExists(atPath: icns.path) ? icns : nil
+        let key = art.flatMap(Artwork.fingerprint) ?? rom.map { "letter|\($0.name)|\($0.console)" } ?? "plain"
+        let file = Artwork.tile(id, from: key)
+        if let i = load(file) { return i }
+        let picture = art.flatMap { NSImage(contentsOf: $0) } ?? rom.map(Model.romIcon) ?? Model.plainIcon()
+        let made = make(art: picture)
+        if let rep = made.representations.first as? NSBitmapImageRep, let d = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.86]) {
+            try? fm.createDirectory(at: Artwork.made, withIntermediateDirectories: true); try? d.write(to: file, options: .atomic)
+        }
+        return made
+    }
+    // Read whole now, so drawing it on screen costs nothing
+    static func load(_ u: URL) -> NSImage? {
+        guard let s = CGImageSourceCreateWithURL(u as CFURL, nil), let c = CGImageSourceCreateImageAtIndex(s, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else { return nil }
+        let o = NSImage(size: NSSize(width: size.width / 2, height: size.height / 2)); o.addRepresentation(NSBitmapImageRep(cgImage: c)); return o
+    }
     // A picture the player chose, made small enough to load at once
     static func keep(_ i: NSImage, at u: URL) -> Bool {
         let a = aspect(i); guard i.size.width > 0, a.isFinite, a > 0.2, a < 5 else { return false }
@@ -94,6 +118,7 @@ struct CoverTile: View {
     var favorite = false, running = false, note = ""
     var chosen = false
     let select: () -> Void, play: () -> Void
+    var fave: () -> Void = {}
     @ViewBuilder var actions: () -> AnyView
     @State private var over = false
     @State private var landed = true
@@ -118,8 +143,11 @@ struct CoverTile: View {
                     }.padding(.top, 8)
                 }.padding(.horizontal, 8).padding(.top, 8).frame(maxWidth: .infinity, alignment: .top).contentShape(Rectangle())
             }.buttonStyle(Press(still: still)).focused($focused).noFocusRing().simultaneousGesture(TapGesture(count: 2).onEnded(play)).accessibilityLabel(game.name).accessibilityAddTraits(chosen ? .isSelected : []).accessibilityAction(named: "Play", play)
-            Menu { actions() } label: { Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).frame(width: 28, height: 28).background(.black.opacity(0.5), in: Circle()).contentShape(Circle()) }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().padding(.trailing, 15).padding(.top, 15).opacity(lit ? 1 : 0).accessibilityLabel("More for \(game.name)").help("More")
+            HStack(spacing: 4) {
+                if lit { FaveButton(on: favorite, name: game.name, tint: .white, backed: true, action: fave) }
+                Menu { actions() } label: { Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).frame(width: 28, height: 28).background(.black.opacity(0.5), in: Circle()).contentShape(Circle()) }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().opacity(lit ? 1 : 0).accessibilityLabel("More for \(game.name)").help("More")
+            }.padding(.trailing, 15).padding(.top, 15)
         }
         .onHover { over = $0 }
         .animation(still ? nil : .easeOut(duration: 0.16), value: over)

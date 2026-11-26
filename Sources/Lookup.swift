@@ -146,16 +146,20 @@ enum Lookup {
         "Atari - 2600": "8c91fd5d4cdadb6e66e146ab5b5334aebd3c82e9",
     ]
     static var wikipedia: String? = "https://en.wikipedia.org"   // nil: no descriptions from it
-    static let consent = "Docked can fill in each game's cover, year, publisher and description. It downloads libretro's public game list for that console once and compares your files with it on this Mac, so your files never leave it. Covers and in-game pictures come from libretro's picture collection on GitHub, and some descriptions from Wikipedia. Both see only the game's name. You can change this in Settings."
+    static let consent = "Docked can fill in each game's cover, year, publisher and description. It downloads libretro's public game list for that console once and compares your files with it on this Mac, so your files never leave it. Covers and in-game pictures come from libretro's picture collection on GitHub, and some descriptions from Wikipedia. Critic scores, popularity and details for every game, Switch games too, come from Wikidata and Wikipedia's reader counts. All of them see only the game's name. Switch banners for Couch Mode come from the nlib title API, which sees only the game's title ID. You can change this in Settings."
     static var home: URL { Paths.root.appendingPathComponent("Metadata") }
     static func artFile(_ id: String) -> URL { home.appendingPathComponent("Covers/" + id.replacingOccurrences(of: ":", with: "-") + ".png") }
     static let queue = DispatchQueue(label: "lookup", qos: .utility)
+    // Games looked up on their own, a few at a time: most of the wait is the network, so a big library is done several times sooner
+    static let work: OperationQueue = { let q = OperationQueue(); q.name = "lookup"; q.qualityOfService = .utility; q.maxConcurrentOperationCount = 4; return q }()
     static let biggest = 512 << 20   // larger files are matched by name: reading them all would take too long
 
     // ---- the game list ----
     private static var loaded: [String: GameList] = [:]
-    private static let lock = NSLock()
+    private static let lock = NSLock(), loading = NSLock()
     static func list(_ c: Console) throws -> GameList {
+        lock.lock(); if let l = loaded[c.folder] { lock.unlock(); return l }; lock.unlock()
+        loading.lock(); defer { loading.unlock() }   // games looked up together wait for one download of their list
         lock.lock(); if let l = loaded[c.folder] { lock.unlock(); return l }; lock.unlock()
         guard let sha = lists[c.folder] else { throw RetroError("Docked has no game list for \(c.name).") }
         let file = home.appendingPathComponent("Lists/\(c.folder).rdb")
@@ -341,12 +345,16 @@ enum Lookup {
     }
 
     // ---- fetching small files ----
+    // One session for every lookup, so connections to the same server are reused rather than opened again for each file
+    static let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil; c.urlCache = nil; c.timeoutIntervalForRequest = 20; c.timeoutIntervalForResource = 60
+        c.httpAdditionalHeaders = ["User-Agent": "Docked/\(appVersion) (https://github.com/Tyrus707/docked)"]; c.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: c)
+    }()
     static func get(_ u: URL, limit: Int) throws -> Data? {
         if u.isFileURL { return FileManager.default.fileExists(atPath: u.path) ? try Data(contentsOf: u) : nil }   // a local copy, used by the tests
         guard u.scheme == "https" else { throw RetroError("Docked only downloads over a secure connection.") }
-        let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil; c.urlCache = nil; c.timeoutIntervalForRequest = 20; c.timeoutIntervalForResource = 60
-        c.httpAdditionalHeaders = ["User-Agent": "Docked/\(appVersion) (https://github.com/Tyrus707/docked)"]
-        let s = URLSession(configuration: c); defer { s.invalidateAndCancel() }
+        let s = session
         let done = DispatchSemaphore(value: 0); var out: Data?, status = 0, failed: Error?
         s.dataTask(with: u) { d, r, e in out = d; status = (r as? HTTPURLResponse)?.statusCode ?? 0; failed = e; done.signal() }.resume(); done.wait()
         if status == 404 { return nil }

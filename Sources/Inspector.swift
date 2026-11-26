@@ -15,7 +15,7 @@ struct Inspector: View {
                         .aspectRatio(Cover.shape, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12)).frame(maxWidth: 190).frame(maxWidth: .infinity).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(game.name).font(.title3.weight(.semibold)).foregroundStyle(style.text).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                        Text(([consoleName(consoleOf(game.titleID)) + (game.rom == nil && !game.version.isEmpty ? ", version \(game.version)" : "")] + [game.rom?.info?.year.map(String.init)].compactMap { $0 }).joined(separator: " · ")).font(.callout).foregroundStyle(style.soft)
+                        Text(([consoleName(consoleOf(game.titleID)) + (game.rom == nil && !game.version.isEmpty ? ", version \(game.version)" : "")] + [model.library.year(game).map(String.init)].compactMap { $0 }).joined(separator: " · ")).font(.callout).foregroundStyle(style.soft)
                     }
                     if game.missing { VStack(alignment: .leading, spacing: 8) { Label(drive(of: game.url.path).map { !$0.connected ? "On \($0.name). Connect the drive to play." : "Can't be found where it was." } ?? "Can't be found where it was.", systemImage: drive(of: game.url.path) != nil ? "externaldrive.badge.xmark" : "questionmark.folder").font(.callout).foregroundStyle(style.text); HStack { Button("Locate…") { model.locate(game) }; Button("Remove from Library") { model.forget(game) } }.controlSize(.small) }.padding(10).frame(maxWidth: .infinity, alignment: .leading).background(style.tile, in: RoundedRectangle(cornerRadius: 10)) }
                     else if let why = game.cannot { Label(why, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(style.warn) }
@@ -24,12 +24,15 @@ struct Inspector: View {
                         Button { model.edit(game) { $0.favorite.toggle() } } label: { Image(systemName: e.favorite ? "heart.fill" : "heart").foregroundStyle(e.favorite ? style.accent : style.text).frame(width: 18, height: 24) }.controlSize(.large).help(e.favorite ? "Remove from Favorites" : "Favorite").accessibilityLabel(e.favorite ? "Remove from Favorites" : "Favorite")
                         Menu { GameActions(game: game, deleting: $deleting) } label: { Image(systemName: "ellipsis").frame(width: 18, height: 24) }.menuStyle(.button).buttonStyle(.bordered).menuIndicator(.hidden).fixedSize().controlSize(.large).help("More").accessibilityLabel("More")
                     }
+                    Stars(rating: e.rating) { n in model.edit(game) { $0.rating = $0.rating == n ? 0 : n } }
                     Picker("Progress", selection: .init(get: { e.status }, set: { v in model.edit(game) { $0.status = v } })) { ForEach(Entry.Status.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     VStack(alignment: .leading, spacing: 9) {
-                        fact("Played", playTimeText(e.seconds)); fact("Last played", e.lastPlayed == nil ? "Never" : lastPlayedText(e.lastPlayed).replacingOccurrences(of: "Played ", with: "").firstCapital); if e.added > .distantPast { fact("Added", e.added.formatted(date: .abbreviated, time: .omitted)) }
+                        fact("Played", playTimeText(e.seconds)); if e.plays > 0 { fact("Times played", "\(e.plays)") }; fact("Last played", e.lastPlayed == nil ? "Never" : lastPlayedText(e.lastPlayed).replacingOccurrences(of: "Played ", with: "").firstCapital); if e.added > .distantPast { fact("Added", e.added.formatted(date: .abbreviated, time: .omitted)) }
                         fact("Size", game.missing ? "Not available" : model.size(game).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Measuring…"); if let r = game.rom { fact("Plays in", RetroArch.core(console(r.console) ?? consoles[0]) == nil ? "RetroArch, set up when you first play" : "RetroArch") }
                         fact("In", (drive(of: game.url.path).map { "\($0.name), " } ?? "") + FileManager.default.displayName(atPath: game.url.deletingLastPathComponent().path)); if !e.collections.isEmpty { fact("Collections", e.collections.joined(separator: ", ")) }
+                        if let c = e.meta?.critic { fact("Critic score", "\(c) out of 100") }; if let v = e.meta?.views { fact("Popularity", readersText(v)) }
                         if let i = game.rom?.info { if let d = i.developer { fact("Made by", d) }; if let p = i.publisher, p != i.developer { fact("Published by", p) }; if let g = i.genre { fact("Genre", g) } }
+                        else if let m = e.meta { if let d = m.developer { fact("Made by", d) }; if let p = m.publisher, p != m.developer { fact("Published by", p) }; if let g = m.genre { fact("Genre", g) } }
                     }.padding(12).background(style.tile, in: RoundedRectangle(cornerRadius: 10))
                     if let i = game.rom?.info { GameAbout(info: i) }
                     if game.rom == nil, FileManager.default.fileExists(atPath: GameNotes.file(game.titleID).path) {
@@ -45,6 +48,7 @@ struct Inspector: View {
                         if model.addingTheme { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Adding music…").font(.callout).foregroundStyle(style.soft) } }
                         else if model.hasTheme(game) { link("Change Theme Music…", "music.note") { model.pickTheme(game) }; link("Remove Theme Music", "minus.circle") { model.clearTheme(game) }; link(model.themes ? "Turn Theme Music Off" : "Turn Theme Music On", model.themes ? "speaker.slash" : "speaker.wave.2") { model.themes.toggle() } }
                         else { link("Choose Theme Music…", "music.note") { model.pickTheme(game) } }
+                        if game.rom == nil, model.lookUp == true { if model.scoring.contains(game.titleID.uppercased()) { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finding details…").font(.callout).foregroundStyle(style.soft) } } else { link(e.meta == nil ? "Find Details" : "Find Details Again", "sparkle.magnifyingglass") { model.findMeta(game, force: true) } } }
                         if game.rom == nil { if !game.missing { link("Game Settings…", "slider.horizontal.3") { model.openSettings(game) } }; link("Play with Settings…", "play.circle") { model.play(game, settings: true) }; link("Add Update or DLC…", "plus.square.on.square") { model.addTo(game) }; link("Clean Up…", "sparkles") { model.cleanUp(game) } }
                         if !game.missing { link("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) } }
                     }
@@ -54,4 +58,22 @@ struct Inspector: View {
     }
     func fact(_ a: String, _ b: String) -> some View { HStack(alignment: .firstTextBaseline) { Text(a).foregroundStyle(style.soft); Spacer(minLength: 12); Text(b).foregroundStyle(style.text).multilineTextAlignment(.trailing) }.font(.callout).accessibilityElement(children: .combine) }
     func link(_ t: String, _ s: String, _ f: @escaping () -> Void) -> some View { Button(action: f) { Label(t, systemImage: s).font(.callout).foregroundStyle(style.accent).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain) }
+}
+
+// The player's own rating: click a star to set it, the same star again to clear it.
+struct Stars: View {
+    let rating: Int
+    let set: (Int) -> Void
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("Rating").font(.callout).foregroundStyle(style.soft)
+            Spacer()
+            ForEach(1...5, id: \.self) { n in
+                Button { set(n) } label: { Image(systemName: n <= rating ? "star.fill" : "star").font(.system(size: 14)).foregroundStyle(n <= rating ? style.accent : style.soft).frame(width: 22, height: 22).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).help(n == rating ? "Clear rating" : "\(n) star\(n == 1 ? "" : "s")")
+            }
+        }
+        .accessibilityElement(children: .ignore).accessibilityLabel("Rating").accessibilityValue(rating == 0 ? "Not rated" : "\(rating) of 5 stars")
+        .accessibilityAdjustableAction { d in switch d { case .increment: if rating < 5 { set(rating + 1) }; case .decrement: if rating > 0 { set(rating - 1) }; default: break } }
+    }
 }
