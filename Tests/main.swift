@@ -666,4 +666,24 @@ do {
     check(GameSettings(app: tmp.appendingPathComponent("Bare.app")) == nil, "no settings list: none")
 }
 
+// artwork: where it is, and what no game uses
+do {
+    let ex: Set<String> = ["/g/a", "/g"]
+    check(deletedFile("/g/b", exists: { ex.contains($0) }) && !deletedFile("/g/a", exists: { ex.contains($0) }), "a file gone from a folder that is still there was deleted")
+    check(!deletedFile("/moved/b", exists: { ex.contains($0) }), "a whole folder gone may have moved: kept as missing")
+    check(!deletedFile("/Volumes/NoSuchDriveHere/Games/x.sfc", exists: { _ in false }), "a drive that isn't connected: never deleted")
+    check(artStem("snes:abc/1") == "snes-abc-1", "art named for its game")
+    let a = Artwork.tile("snes:abc", from: "k1"), b = Artwork.tile("snes:abc", from: "k2")
+    check(a != b && a.lastPathComponent.hasPrefix("snes-abc~") && Artwork.tile("snes:abc", from: "k1") == a, "made cover named for its art")
+    _ = mk("Artwork/snes-abc.png"); _ = mk("Artwork/gone-1.png", "xxxx"); _ = mk("Metadata/Covers/snes-abc.png"); _ = mk("Metadata/Covers/old-2.png")
+    _ = mk("Metadata/Tiles/" + b.lastPathComponent); Thread.sleep(forTimeInterval: 1.1); _ = mk("Metadata/Tiles/" + a.lastPathComponent)
+    let p = Dictionary(uniqueKeysWithValues: Artwork.survey(ids: ["SNES:ABC"]).map { ($0.id, $0) })
+    let ys = Set(p["yours"]?.spare.map(\.lastPathComponent) ?? []), fs = Set(p["found"]?.spare.map(\.lastPathComponent) ?? [])
+    check(ys.contains("gone-1.png") && !ys.contains("snes-abc.png"), "a chosen cover with no game is left over")
+    check(fs.contains("old-2.png") && !fs.contains("snes-abc.png"), "a found cover with no game is left over")
+    check(p["made"]?.files == 2 && p["made"]?.spare.map(\.lastPathComponent) == [b.lastPathComponent], "an older made cover is left over, the newest stays")
+    Artwork.removeSpare(Array(p.values).filter { $0.id != "yours" })
+    check(!fm.fileExists(atPath: b.path) && fm.fileExists(atPath: a.path) && !fm.fileExists(atPath: Artwork.found.appendingPathComponent("old-2.png").path) && fm.fileExists(atPath: Artwork.found.appendingPathComponent("snes-abc.png").path), "only leftovers removed")
+}
+
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
