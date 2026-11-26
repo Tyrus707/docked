@@ -105,6 +105,7 @@ A converted game's graphics are prepared for the Mac that made it. On a differen
 - **Bring in what you already have.** **Find Games on This Mac** finds games Docked converted before and games in OpenEmu, RetroArch and Ryujinx, or look through any folder or drive. Docked asks whether to copy, move or leave the files where they are, and can remember your answer.
 - **Watched folders.** New games in a folder you choose are added on their own and stay where they are. A drive's games show as not connected while it's unplugged, and come back when it's plugged in.
 - **Feels like a console.** Docked opens filling the screen, and you can get around with a controller or the arrow keys.
+- **Couch Mode.** For the TV: press the TV button, Command-Shift-B, or your controller's Home button, and your library fills the screen one shelf at a time, with the chosen game's art behind it, soft menu sounds and its theme music. B or Escape takes you back.
 - **Covers made from each game's own art**, or drop any picture onto a game.
 - **Covers and details found for you.** Add a game from another console and Docked can fill in its box art, year, maker, genre and description, the way a launcher's game database does. It matches the file's checksum or disc serial first, then its name, and asks you when more than one game fits. Off until you say yes.
 - **Theme music.** Give a game its own tune and it plays while that game is selected.

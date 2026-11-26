@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var builder: Builder?
@@ -42,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Button("Clean Up…") { model.cleanUp(nil) }
                 Menu("Move Game to Folder") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.moveGame(g) } } }.disabled(model.games.isEmpty)
             }
+            CommandGroup(after: .sidebar) { Button(model.couch ? "Leave Couch Mode" : "Couch Mode") { model.toggleCouch() }.keyboardShortcut("b", modifiers: [.command, .shift]).disabled(model.games.isEmpty && !model.couch) }
             CommandGroup(replacing: .help) { Button("How to Use Docked") { model.showHelp = true }.keyboardShortcut("?") }
         }
     }
@@ -197,7 +199,7 @@ final class Model: ObservableObject {
     @Published var addingTheme = false
     func hasTheme(_ g: Game) -> Bool { Theme.has(g) }
     // Only in front, and never over a game
-    func themeUpdate() { theme.play(chosen, on: themes && NSApp?.isActive != false && runningIDs.isEmpty) }
+    func themeUpdate() { theme.play(couch ? couchGame() : chosen, on: themes && NSApp?.isActive != false && runningIDs.isEmpty) }
     func pickTheme(_ g: Game) {
         let p = NSOpenPanel(); p.allowedContentTypes = [.audio, .mpeg4Audio]; p.message = "Choose music for \(g.name). Docked keeps the first 90 seconds and leaves your file as it is."
         if p.runModal() == .OK, let u = p.url { setTheme(g, u) }
@@ -245,7 +247,7 @@ final class Model: ObservableObject {
         NSApp.unhide(nil)
         for w in NSApp.windows where w.isMiniaturized { w.deminiaturize(nil) }
         if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
-        NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+        if couch, let w = couchWindow { w.makeKeyAndOrderFront(nil); couchBack() } else { NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil) }
     }
 
     func shown(_ s: Section, by: SortBy = .name) -> [Game] { library.show(games, in: s, search: search, by: by) }
@@ -277,7 +279,7 @@ final class Model: ObservableObject {
         asideForGame = false
         NSApp.unhide(nil)
         if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
-        NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+        if couch, let w = couchWindow { w.makeKeyAndOrderFront(nil); couchBack() } else { NSApp.windows.first { $0.canBecomeMain && !($0 is CouchWindow) }?.makeKeyAndOrderFront(nil) }
     }
 
     let builder = Builder()
@@ -723,7 +725,16 @@ final class Model: ObservableObject {
         return r.map { (id: $0.0, games: $0.1) }
     }
     var sections: [Section] { [.home, .all, .favorites] + consolesShown.map { .console($0.id) } + [.status(.playing), .status(.finished), .status(.aside), .status(.none)] + library.collections.map { .collection($0) } + library.smart.map { .smart($0) } }
+    // ---- Couch Mode (Couch.swift) ----
+    @Published var couch = false
+    @Published var couchSpot = CouchSpot()
+    @Published var couchIdle = false
+    var couchWindow: CouchWindow?, couchTimer: Timer?, couchSaved: String?, couchWatch: AnyCancellable?
+    let couchSound = CouchSound()
+    @Published var couchSounds = UserDefaults.standard.object(forKey: "couchSounds") as? Bool ?? true { didSet { UserDefaults.standard.set(couchSounds, forKey: "couchSounds") } }
     func move(_ m: Move, pad: Bool) {
+        if m == .home { toggleCouch(); return }
+        if couch { couchMove(m, pad: pad); return }
         guard !sheetUp else { return }
         if pad != padUsed { padUsed = pad }
         let on = cursor.flatMap { c in games.first { $0.id == c.game } } ?? chosen
@@ -733,6 +744,7 @@ final class Model: ObservableObject {
         case .back: if selected != nil { selected = nil } else if section != .home { go(.home) }
         case .favorite: if let g = on { edit(g) { $0.favorite.toggle() } }
         case .play: if let g = on { play(g) }
+        case .home: break
         case .nextSection, .previousSection: let l = sections, i = l.firstIndex(of: section) ?? 0; go(l[(i + (m == .nextSection ? 1 : l.count - 1)) % l.count])
         }
     }
@@ -834,7 +846,7 @@ final class Model: ObservableObject {
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }
         // Fills the screen the way the green button does with Option held: still a window on the desktop, no Space of its own. Control-Command-F still gives true full screen.
         else if fullScreen { DispatchQueue.main.async { if let w = NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }), !w.styleMask.contains(.fullScreen), let s = w.screen ?? NSScreen.main { w.setFrame(s.visibleFrame, display: true) } } }
-        navigator.act = { [weak self] m, pad in self?.move(m, pad: pad) }; navigator.start()
+        navigator.act = { [weak self] m, pad in self?.move(m, pad: pad) }; navigator.couch = { [weak self] in self?.couch == true }; navigator.start()
         if updatesAtLaunch { checkForUpdate { if case let .available(v) = $0 { self.update = v } }; if Paths.unpacked, cannotConvert() == nil { lookForEngine(quiet: true) } }
     }
     func lookForUpdate() {
@@ -895,6 +907,7 @@ struct ContentView: View {
         .alert("Rename Collection", isPresented: .init(get: { model.renaming != nil }, set: { if !$0 { model.renaming = nil } })) { TextField("Name", text: $newName); Button("Rename") { if let o = model.renaming { model.renameCollection(o, newName) }; newName = "" }; Button("Cancel", role: .cancel) { newName = "" } }
         .toolbar {
             Button { model.pickGame() } label: { Label("Add Game", systemImage: "plus") }
+            Button { model.toggleCouch() } label: { Label("Couch Mode", systemImage: "tv") }.help("Couch Mode: your library full screen, for a controller (Command-Shift-B)").disabled(model.games.isEmpty)
             Button { model.openSettings() } label: { Label("Settings", systemImage: "gearshape") }.help("Settings (Command-Comma)")
         }
         .sheet(isPresented: $model.showSettings) { SettingsSheet() }
