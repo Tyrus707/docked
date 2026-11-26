@@ -452,6 +452,7 @@ check(Engine.answer(em, sigText, active: here, app: "2.0", key: epub) == .availa
 let old = manifest(date: "2001-01-01T00:00:00Z"); check(Engine.answer(old, Data(esig(old).base64EncodedString().utf8), active: here, key: epub) == .newest, "an older one is not")
 let laterEngine = manifest(minApp: "99.0"); check(Engine.answer(laterEngine, Data(esig(laterEngine).base64EncodedString().utf8), active: here, key: epub) == .needsApp("99.0"), "one for a newer Docked waits for it")
 check(Engine.answer(em, Data("junk".utf8), active: here, key: epub) == .unknown && Engine.answer(nil, nil, active: here, key: epub) == .unknown, "no answer, no offer")
+check(Engine.answer(nil, nil, active: here, published: false, key: epub) == .newest && Engine.answer(nil, nil, active: nil, published: false, key: epub) == .unknown, "no engine release yet means the one in use is the newest")
 // putting it in place
 func fetchFrom(_ p: EngineInfo.Pack, _ dir: URL) -> URL? { let to = dir.appendingPathComponent(".engine-\(UUID().uuidString).download"); try? fm.copyItem(at: eg.appendingPathComponent("pub/" + p.name), to: to); return to }
 var fetched: [String] = []
