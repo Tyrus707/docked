@@ -92,4 +92,8 @@ enum Friends {
         settings.set(s, s.on ?? "1")
         return on(app)
     }
+    // Why an older game can't be rebuilt yet. The links Docked keeps in Inputs are no use once the originals are gone.
+    static func missingOriginals(_ name: String) -> String {
+        "Docked can't find \(name)'s original files. If you chose to move them to the Trash and haven't emptied it, put them back. Otherwise add the game again from where you keep your games, with its update and DLC. The links in Docked's Inputs folder only help while the original files are still there. Your save stays, and Play with friends is already switched on for this conversion."
+    }
 }

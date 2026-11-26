@@ -209,7 +209,7 @@ struct FriendsSettings: View {
             line("Multiplayer for older games", "For a game converted before multiplayer: converts it again, then turns Play with friends on. Its save stays, but this takes a while.") {
                 Button("Add Multiplayer to Game…") { choosing = true }
             }
-            line("In each game", "Turn on Play with friends in a game's Game Settings, then start its local wireless mode. Older games need the button above first.") { EmptyView() }
+            line("In each game", "Turn on Play with friends in a game's Game Settings, then start its local wireless mode. For an older game, use Add Multiplayer here or the button in its Game Settings.") { EmptyView() }
             line("For smooth play", "Ethernet plays best. On Wi-Fi, let Docked pause AirDrop while you play. A slower Mac slows both players, so set its Upscaling to Standard. Keep Connection smoothing off for fighting and racing games.") { EmptyView() }
             line("Pause AirDrop on Wi-Fi", "Keeps Wi-Fi on your network during friends games. Asks for your password each time.") {
                 Picker("Pause AirDrop on Wi-Fi", selection: $airDrop) { Text("Ask").tag(""); Text("Always").tag("pause"); Text("Never").tag("leave") }.labelsHidden().fixedSize()
@@ -238,7 +238,7 @@ struct FriendsGamePicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add Multiplayer to Game").font(.title2.weight(.semibold))
-            Text("Choose a Switch game converted before multiplayer. Docked converts it again, then turns on Play with friends. Its save stays; the original game files must still be on this Mac.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Choose a Switch game converted before multiplayer. Docked converts it again, then turns on Play with friends. Its save stays. If Docked can't find the originals, check the Trash before emptying it, or add the game file again; links in Docked's Inputs folder need the original file.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ScrollView {
                 if games.isEmpty {
                     Text("Every converted game here already has multiplayer. Turn on Play with friends in a game's Game Settings.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.vertical, 12)

@@ -929,6 +929,15 @@ do {
     try? Data(#"{"schema":1,"settings":[{"env":"DM_FRIENDS","kind":"toggle","section":"Game","label":"Play with friends","default":"0","on":"1","off":"0"}]}"#.utf8).write(to: rd.appendingPathComponent("launcher.json"))
     check(Friends.enable(on: ready) && Friends.on(ready), "multiplayer is switched on in the game's own settings")
     check(!Friends.enable(on: base.appendingPathComponent("Old.app")), "an older game cannot be switched on")
+    // An older game can still have readable settings. That is the one that gets the Add Multiplayer row.
+    let older = base.appendingPathComponent("OldSettings.app"), od = older.appendingPathComponent("Contents/Resources/dm")
+    try? fm.createDirectory(at: od, withIntermediateDirectories: true)
+    NSDictionary(dictionary: ["CFBundleIdentifier": "local.docked.friends.old.\(UUID().uuidString)"]).write(to: older.appendingPathComponent("Contents/Info.plist"), atomically: true)
+    try? Data(#"{"schema":1,"settings":[{"env":"DM_OPMODE","kind":"choice","section":"Game","label":"Mode","default":"0","options":[["0","Single"],["1","Double"]]}]}"#.utf8).write(to: od.appendingPathComponent("launcher.json"))
+    check(GameSettings(app: older) != nil && !Friends.supported(older), "an older game with settings still needs Add Multiplayer")
+    check(!Friends.enable(on: older), "a game without the switch cannot be turned on")
+    let missing = Friends.missingOriginals("Old Game")
+    check(missing.contains("Old Game") && missing.contains("Trash") && missing.contains("Inputs") && missing.contains("save stays"), "missing originals explain the Trash and the links in Inputs")
     try? fm.removeItem(at: base)
 }
 
