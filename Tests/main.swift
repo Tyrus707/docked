@@ -766,6 +766,10 @@ do {
     check(Compat.parse(Data("nope".utf8)).isEmpty && Compat(tier: "Profile only", fps: "", platforms: [], issues: 0, engine: "").label == "Not tested yet", "compat edge cases")
 }
 
+// convert when
+check(convertWait(.now, onPower: false, lowPower: true, hour: 12, idle: 0) == nil && convertWait(.plugged, onPower: false, lowPower: false, hour: 2, idle: 9999) == "Waiting for the power adapter" && convertWait(.plugged, onPower: true, lowPower: true, hour: 2, idle: 0) != nil && convertWait(.plugged, onPower: true, lowPower: false, hour: 12, idle: 0) == nil, "plugged in")
+check(convertWait(.overnight, onPower: true, lowPower: false, hour: 15, idle: 60) == "Waiting for tonight" && convertWait(.overnight, onPower: true, lowPower: false, hour: 23, idle: 0) == nil && convertWait(.overnight, onPower: true, lowPower: false, hour: 6, idle: 0) == nil && convertWait(.overnight, onPower: true, lowPower: false, hour: 15, idle: 1200) == nil, "overnight, or while nobody is using the Mac")
+
 // library health
 do {
     let nowhere = URL(fileURLWithPath: "/nope/Gone.app")

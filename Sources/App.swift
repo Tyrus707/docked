@@ -364,6 +364,7 @@ final class Model: ObservableObject {
         builder.onFinish = { [weak self] in self?.finished() }
         let hide = organized
         DispatchQueue.global(qos: .utility).async { finishRemovals(); Engine.tidy(); RetroArch.hideEarlier(); if hide { Organize.hideBuildFolders() } }
+        Power.shared.changed = { [weak self] in self?.powerChanged() }; Power.shared.start()
         reload(); trackPlay(); recheck(first: true)
     }
 
@@ -404,6 +405,14 @@ final class Model: ObservableObject {
         tell((l.count == 1 ? "The original of " : "\(l.count) originals, including ") + names + (l.count == 1 ? ", was copied but couldn't be removed, so it still takes space. You can delete it yourself." : ", were copied but couldn't be removed, so they still take space. You can delete them yourself."), good: false)
     }
     @Published var quick = UserDefaults.standard.bool(forKey: "skipPipeline") { didSet { UserDefaults.standard.set(quick, forKey: "skipPipeline") } }
+    @Published var convertWhen = ConvertWhen(rawValue: UserDefaults.standard.string(forKey: "convertWhen") ?? "") ?? .now { didSet { UserDefaults.standard.set(convertWhen.rawValue, forKey: "convertWhen"); startNext() } }
+    @Published var convertWaiting: String?   // why the queue waits for Convert When, said in the tray
+    private var powerStop: Job?   // the game stopped because the power adapter went: first in line again
+    // Unplugged, or Low Power Mode on, while converting with Convert When set: it stops, keeping its finished steps, and carries on later
+    private func powerChanged() {
+        if builder.running, powerStop == nil, convertWhen != .now, !Power.shared.onPower || Power.shared.lowPower, let j = queue.current, !j.phone { powerStop = j; builder.cancel() }
+        else { startNext() }
+    }
     @Published var speed = UserDefaults.standard.string(forKey: "conversionSpeed").flatMap(Speed.init(rawValue:)) ?? (UserDefaults.standard.object(forKey: "conversionEffort") as? Int).map(Speed.init(effort:)) ?? .full { didSet { UserDefaults.standard.set(speed.rawValue, forKey: "conversionSpeed") } }
     @Published var checkingGame = false   // a game just converted is being checked
     @Published var converting = false   // kept apart from the builder, whose every progress report would redraw the library
@@ -593,7 +602,9 @@ final class Model: ObservableObject {
                     if place.path != Paths.games.path { self.move(app, to: place) { self.settle(job, c) } } else { self.reload(); self.settle(job, c) }
                 }
             }
-        case "Stopped": queue.stopped(); reload()
+        case "Stopped":
+            if let j = powerStop { powerStop = nil; queue.current = nil; queue.waiting.insert(j, at: 0); tell("Converting \(j.title) paused on battery. It carries on from where it stopped when your Mac is plugged in."); reload(); startNext() }
+            else { queue.stopped(); reload() }
         default:
             let (t, b) = Notify.text(done: nil, failed: job?.title ?? builder.title, left: queue.waiting.count, problems: 0); Notify.say(t, b)
             queue.failed(builder.error ?? "It stopped without saying why.", report: builder.report); reload(); startNext()
@@ -820,6 +831,10 @@ final class Model: ObservableObject {
         retry?.cancel(); retry = nil
         guard !builder.running, moving == nil, !removing, !installing, !queue.paused, !engineBusy, !checkingGame else { return }
         guard ready else { if !checks.isEmpty, !queue.waiting.isEmpty { queue.paused = true }; return }
+        if !queue.waiting.isEmpty, let why = Power.shared.wait(convertWhen) {   // looked at again every 5 minutes, and at once when the power changes
+            convertWaiting = why; let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: w); return
+        }
+        convertWaiting = nil
         while let j = queue.next(verdict) {
             do {
                 let input = try resolveInput(j.urls, family: j.family)
