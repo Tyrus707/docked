@@ -238,7 +238,8 @@ final class Model: ObservableObject {
     func clearTheme(_ g: Game) { theme.stop(0.2); Theme.remove(g); objectWillChange.send() }
     var chosen: Game? { selected.flatMap { id in games.first { $0.id == id } } }
     func select(_ g: Game) { if cursor != nil, cursor?.game != g.id { cursor = nil }; if selected != g.id { selected = g.id } }   // a second click of a double-click must not close it again
-    private var sizes: [String: Int64] = [:], noted: [String: [String]] = [:]
+    var sizes: [String: Int64] = [:]
+    private var noted: [String: [String]] = [:]
     func notes(_ g: Game) -> [String] { if let n = noted[g.titleID] { return n }; let n = GameNotes.of(g.titleID); noted[g.titleID] = n; return n }
     func size(_ g: Game) -> Int64? {
         if let s = sizes[g.id] { return s }
