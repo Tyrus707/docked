@@ -109,7 +109,7 @@ extension Model {
                 DispatchQueue.main.async { self.filing = head + "…" }
                 do {
                     guard Cloud.exists(away) else { throw OffloadError.gone(name) }
-                    let left = Cloud.waiting(away).left, need = left + (sameVolume(away, home.deletingLastPathComponent()) ? 0 : folderSize(away)), free = Offload.free(at: home)
+                    let left = Cloud.waiting(away).left, need = left + (sameVolume(away, home.deletingLastPathComponent()) ? 0 : folderSize(away)), free = freeSpace(at: home)
                     if need > 0, free < need + 500_000_000 { throw OffloadError.room(need, free) }
                     try Cloud.fetch(away, from: name) { p in DispatchQueue.main.async { self.filing = "\(head), \(Int(p * 100))%…" } }
                     try Offload.bring(away, home: home)

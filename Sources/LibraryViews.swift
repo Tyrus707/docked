@@ -182,5 +182,5 @@ struct ArtworkRow: View {
         guard let p = places else { return }; clearing = true
         DispatchQueue.global(qos: .utility).async { let freed = Artwork.removeSpare(p); DispatchQueue.main.async { clearing = false; model.tell("Cleared \(size(freed)) of leftover artwork."); measure() } }
     }
-    func size(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
+    func size(_ n: Int64) -> String { byteText(n) }
 }

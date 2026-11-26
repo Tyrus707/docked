@@ -142,11 +142,10 @@ struct GameData {
 // One folder serves every game: each keeps its own <title ID>/save.dmsync in it.
 enum CloudSaves {
     static let key = "cloudSaves.folder"
-    static func bundleID(_ app: URL) -> String? { NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))?["CFBundleIdentifier"] as? String }
-    static func folder(of app: URL) -> String? { bundleID(app).flatMap { UserDefaults(suiteName: $0)?.string(forKey: key) }.flatMap { $0.isEmpty ? nil : $0 } }
+    static func folder(of app: URL) -> String? { gamePrefs(app)?.string(forKey: key).flatMap { $0.isEmpty ? nil : $0 } }
     // Docked's folder for every game, or "" for off. Off only clears a game whose folder was Docked's, so a folder chosen in a game's own window stays.
     static func apply(_ folder: String, was: String, to app: URL) {
-        guard let b = bundleID(app), let d = UserDefaults(suiteName: b) else { return }
+        guard let d = gamePrefs(app) else { return }
         if !folder.isEmpty { d.set(folder, forKey: key) } else if !was.isEmpty, d.string(forKey: key) == was { d.removeObject(forKey: key) }
     }
 }

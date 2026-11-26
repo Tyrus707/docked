@@ -10,18 +10,8 @@ func spaceForQueue(_ jobs: [Job]) -> Int64 {
     }
     return worst
 }
-func spaceText(need: Int64, free: Int64) -> (text: String, short: Bool) {
-    let f = ByteCountFormatter(); f.countStyle = .file
-    return free >= need ? ("Needs about \(f.string(fromByteCount: need)) while converting. You have \(f.string(fromByteCount: free)).", false)
-        : ("Needs about \(f.string(fromByteCount: need)) while converting, but you have \(f.string(fromByteCount: free)). Free up about \(f.string(fromByteCount: need - free)).", true)
-}
 
 func byteText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
-
-// The plain numbers behind the warning, so a screen can show "needs / have / left" without parsing a sentence.
-func spaceLines(need: Int64, free: Int64) -> (need: String, free: String, after: String, short: Bool) {
-    (byteText(need), byteText(free), byteText(free - need), free < need)
-}
 
 // Free room on the volume a path is on. A missing folder is followed up to the nearest one that exists.
 func freeSpace(at u: URL) -> Int64 {
@@ -30,8 +20,8 @@ func freeSpace(at u: URL) -> Int64 {
     if parts.count > 2, parts[1] == "Volumes", !FileManager.default.fileExists(atPath: "/Volumes/\(parts[2])") { return 0 }
     var d = u
     while !FileManager.default.fileExists(atPath: d.path), d.pathComponents.count > 1 { d.deleteLastPathComponent() }
-    let v = try? d.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-    return v?.volumeAvailableCapacityForImportantUsage ?? 0
+    let v = try? d.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+    return v?.volumeAvailableCapacityForImportantUsage ?? Int64(v?.volumeAvailableCapacity ?? 0)   // some external drives only report the plain figure
 }
 
 struct SpaceEstimate: Equatable {
@@ -71,8 +61,7 @@ func redact(_ s: String, home: String = NSHomeDirectory(), user: String = NSUser
     return t
 }
 func makeReport(title: String, step: String, error: String, log: [String], version: String, os: String, chip: String, space: Int64) -> String {
-    let f = ByteCountFormatter(); f.countStyle = .file
-    return redact("Docked \(version), engine \(activeEngine.prefix(12))\nmacOS \(os), \(chip), \(f.string(fromByteCount: space)) free\nGame: \(title)\nStopped at: \(step)\n\n\(error)\(friendlyError(error) == error ? "" : "\n(shown as: \(friendlyError(error)))")\n\nLast lines:\n" + log.suffix(60).joined(separator: "\n"))
+    redact("Docked \(version), engine \(activeEngine.prefix(12))\nmacOS \(os), \(chip), \(byteText(space)) free\nGame: \(title)\nStopped at: \(step)\n\n\(error)\(friendlyError(error) == error ? "" : "\n(shown as: \(friendlyError(error)))")\n\nLast lines:\n" + log.suffix(60).joined(separator: "\n"))
 }
 func chipName() -> String { var n = 0; guard sysctlbyname("machdep.cpu.brand_string", nil, &n, nil, 0) == 0, n > 0 else { return "unknown chip" }; var b = [CChar](repeating: 0, count: n); sysctlbyname("machdep.cpu.brand_string", &b, &n, nil, 0); return String(cString: b) }
 
