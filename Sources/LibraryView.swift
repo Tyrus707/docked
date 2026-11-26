@@ -61,7 +61,7 @@ struct Sidebar: View {
         let on = model.section == s, n = s == .home ? nil : model.count(s)
         return Button { withAnimation(still ? nil : .easeOut(duration: 0.18)) { model.section = s } } label: {
             HStack(spacing: 9) {
-                Image(systemName: on && s == .favorites ? "heart.fill" : s.symbol).frame(width: 18).foregroundStyle(on ? style.accent : style.soft)
+                Image(systemName: on && s == .favorites ? "heart.fill" : s.symbol).frame(width: 18).foregroundStyle(s.machine?.color ?? (on ? style.accent : style.soft))
                 Text(s.title).foregroundStyle(style.text).lineLimit(1)
                 Spacer()
                 if let n { Text("\(n)").font(.caption).monospacedDigit().foregroundStyle(style.soft) }
@@ -98,18 +98,19 @@ struct Home: View {
         }.whenChanged(model.cursor) { if let c = model.cursor { withAnimation(.easeOut(duration: 0.15)) { p.scrollTo(c.row) } } } }
     }
     func shelf(_ t: String, _ s: Section, _ l: [Game]) -> some View {
-        Shelf(title: t, count: l.count, all: { model.section = s }) { ForEach(l) { g in Tile(game: g, deleting: $deleting, row: t).frame(width: 164).id("\(t)|\(g.id)") } }.id(t)
+        Shelf(title: t, count: l.count, all: { model.section = s }, dot: s.machine?.color) { ForEach(l) { g in Tile(game: g, deleting: $deleting, row: t).frame(width: 164).id("\(t)|\(g.id)") } }.id(t)
     }
 }
 
 struct Shelf<C: View>: View {
     @EnvironmentObject var model: Model
-    let title: String; var count = 0; var all: (() -> Void)?
+    let title: String; var count = 0; var all: (() -> Void)?; var dot: Color? = nil   // a console's own colour beside its name
     private var cursor: Cursor? { model.cursor }
     @ViewBuilder var content: () -> C
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
+                if let dot { Circle().fill(dot).frame(width: 9, height: 9).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }.accessibilityHidden(true) }
                 Text(title).font(.title3.weight(.semibold)).foregroundStyle(style.text).accessibilityAddTraits(.isHeader)
                 Spacer()
                 if let all, count > 3 { Button("See All") { all() }.buttonStyle(.plain).font(.callout).foregroundStyle(style.accent) }
@@ -206,7 +207,7 @@ struct GameActions: View {
         let e = model.library.entry(game.titleID)
         if game.missing { Button("Locate…") { model.locate(game) }; Button("Remove from Library") { model.forget(game) }; Divider() }
         Button("Play") { model.play(game) }.disabled(game.missing)
-        if game.rom == nil { Button("Play with Settings…") { model.play(game, settings: true) } }
+        if game.rom == nil { Button("Game Settings…") { model.openSettings(game) }.disabled(game.missing); Button("Play with Settings…") { model.play(game, settings: true) } }
         Divider()
         Button(e.favorite ? "Remove from Favorites" : "Favorite") { model.edit(game) { $0.favorite.toggle() } }
         Menu("Progress") { ForEach(Entry.Status.allCases, id: \.self) { s in Toggle(s.rawValue, isOn: .init(get: { e.status == s }, set: { if $0 { model.edit(game) { $0.status = s } } })) } }

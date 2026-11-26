@@ -22,7 +22,7 @@ struct SmartEditor: View {
                 Picker("Played for more than", selection: $s.moreThanHours) { Text("Any").tag(Int?.none); ForEach([1, 5, 10, 25, 50, 100], id: \.self) { Text($0 == 1 ? "1 hour" : "\($0) hours").tag(Int?.some($0)) } }
             }
             HStack {
-                Text(problem.isEmpty ? (s.empty ? "Choose at least one rule." : matches == 1 ? "1 game matches now." : "\(matches) games match now.") : problem).font(.callout).foregroundStyle(problem.isEmpty ? Color.secondary : Color(light: 0xB3261E, dark: 0xFF8A80))
+                Text(problem.isEmpty ? (s.empty ? "Choose at least one rule." : matches == 1 ? "1 game matches now." : "\(matches) games match now.") : problem).font(.callout).foregroundStyle(problem.isEmpty ? Color.secondary : style.danger)
                 Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { if model.library.keepSmart(s) { let k = model.library.smart.first { $0.id == s.id }; if let k { model.section = .smart(k) }; dismiss() } else { problem = s.name.trimmingCharacters(in: .whitespaces).isEmpty ? "Give it a name." : "That name is taken." } }.keyboardShortcut(.defaultAction).tint(style.button).disabled(s.empty)
             }

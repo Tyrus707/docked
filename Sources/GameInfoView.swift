@@ -116,6 +116,7 @@ struct GamePicker: View {
 
 // What the game list knows, beside the game
 struct GameAbout: View {
+    private let look = style
     let info: GameInfo
     @State private var more = false
     var body: some View {

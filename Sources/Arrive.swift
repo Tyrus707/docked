@@ -20,8 +20,8 @@ enum Arrive {
         return nil
     }
 
-    // Copied beside its place, checked, and put there in one step. An older one is kept in backups.
-    static func go(_ me: URL, _ o: Offer, backups: URL) throws {
+    // Copied beside its place, checked, and put there in one step. The older one is not kept.
+    static func go(_ me: URL, _ o: Offer) throws {
         let fm = FileManager.default, app = o.app, dir = app.deletingLastPathComponent()
         guard fm.isWritableFile(atPath: dir.path) else { throw UpdateError("Docked is not allowed to change the \(dir.lastPathComponent) folder. Drag it there yourself.") }
         let work = dir.appendingPathComponent(".docked-update-\(UUID().uuidString)"); try fm.createDirectory(at: work, withIntermediateDirectories: false); defer { try? fm.removeItem(at: work) }
@@ -32,10 +32,10 @@ enum Arrive {
         guard p.terminationStatus == 0 else { throw UpdateError("This copy of Docked is damaged. Download it again. Nothing was changed.") }
         guard offer(me: me, places: [dir]) == o else { throw UpdateError("The Docked in \(dir.lastPathComponent) has changed, so nothing was replaced.") }
         switch o {
-        case let .update(_, has): try Update.swap(new, app, was: has, backups: backups)
+        case .update: try Update.swap(new, app)
         case .move: guard renamex_np(new.path, app.path, UInt32(RENAME_EXCL)) == 0 else { throw UpdateError("Docked could not be moved. Drag it to \(dir.lastPathComponent) yourself.") }
         }
     }
     static func title(_ o: Offer) -> String { switch o { case let .update(_, has): return "Update Docked \(has) to \(appVersion)?"; case .move: return "Move Docked to Applications?" } }
-    static func text(_ o: Offer) -> String { switch o { case let .update(a, has): return "Docked \(has) is in \(a.deletingLastPathComponent().lastPathComponent). This copy is newer and can take its place. Your games, saves and settings stay, and the old version is kept in the Docked folder, in Backups."; case .move: return "It opens from there from now on. You can delete the download afterwards." } }
+    static func text(_ o: Offer) -> String { switch o { case let .update(a, has): return "Docked \(has) is in \(a.deletingLastPathComponent().lastPathComponent). This copy is newer and can take its place. Your games, saves and settings stay."; case .move: return "It opens from there from now on. You can delete the download afterwards." } }
 }

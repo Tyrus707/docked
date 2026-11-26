@@ -15,8 +15,8 @@ enum Update {
     }
     private static func run(_ tool: String, _ a: [String]) throws { let p = Process(); p.executableURL = URL(fileURLWithPath: tool); p.arguments = a; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice; try p.run(); p.waitUntilExit(); if p.terminationStatus != 0 { throw UpdateError("The update could not be prepared.") } }
 
-    // Checks the update, builds the new app beside the old one, and swaps them in one step. Returns where the old one was kept.
-    @discardableResult static func install(_ zip: Data, _ sig: Data, version: String, over app: URL, backups: URL, current: String = appVersion, key: String = publicKey) throws -> URL {
+    // Checks the update, builds the new app beside the old one, and swaps them in one step.
+    static func install(_ zip: Data, _ sig: Data, version: String, over app: URL, current: String = appVersion, key: String = publicKey) throws {
         let fm = FileManager.default
         guard version.range(of: #"^\d+(\.\d+){0,3}$"#, options: .regularExpression) != nil, newer(version, than: current) else { throw UpdateError("That is not a newer version.") }
         guard zip.count < limit, genuine(zip, sig, version: version, key: key) else { throw UpdateError("The update could not be verified, so nothing was changed. Download it from the Docked page instead.") }
@@ -36,15 +36,17 @@ enum Update {
             i["DSPayloadSHA256"] = want; if let m = oldInfo["DSToolsMinimum"] { i["DSToolsMinimum"] = m }
             try PropertyListSerialization.data(fromPropertyList: i, format: .xml, options: 0).write(to: pl); try run("/usr/bin/codesign", ["--force", "--sign", "-", new.path]); try run("/usr/bin/codesign", ["--verify", "--strict", new.path])
         }
-        return try swap(new, app, was: current, backups: backups)
+        try swap(new, app)
     }
-    // The old one is kept, then both change places in one step
-    @discardableResult static func swap(_ new: URL, _ app: URL, was current: String, backups: URL) throws -> URL {
+    // Both change places in one step. The old one is left in the caller's work folder and goes with it: older versions are on the Docked page, so none is kept.
+    static func swap(_ new: URL, _ app: URL) throws {
+        guard renamex_np(new.path, app.path, UInt32(RENAME_SWAP)) == 0 else { throw UpdateError(errno == EPERM || errno == EACCES ? "macOS did not allow Docked to replace itself. In System Settings, open Privacy & Security, then App Management, and turn on Docked." : "Docked could not be replaced. Nothing was changed.") }
+    }
+    // Up to 1.5 every update left a whole old app in Docked's Backups folder, and macOS listed each one as another Docked. They go, and the folder too once empty. Nothing else in it is touched.
+    static func clearBackups(_ backups: URL) {
         let fm = FileManager.default
-        try fm.createDirectory(at: backups, withIntermediateDirectories: true); let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd HHmmss"; let keep = backups.appendingPathComponent("Docked \(current) before \(f.string(from: Date())).app")
-        if clonefile(app.path, keep.path, 0) != 0 { try fm.copyItem(at: app, to: keep) }
-        guard renamex_np(new.path, app.path, UInt32(RENAME_SWAP)) == 0 else { try? fm.removeItem(at: keep); throw UpdateError(errno == EPERM || errno == EACCES ? "macOS did not allow Docked to replace itself. In System Settings, open Privacy & Security, then App Management, and turn on Docked." : "Docked could not be replaced. Nothing was changed.") }
-        return keep
+        for n in (try? fm.contentsOfDirectory(atPath: backups.path)) ?? [] where n.hasPrefix("Docked ") && ((n.contains(" before ") && n.hasSuffix(".app")) || n.hasSuffix("(previous version).zip")) { try? fm.removeItem(at: backups.appendingPathComponent(n)) }
+        if (try? fm.contentsOfDirectory(atPath: backups.path))?.allSatisfy({ $0 == ".DS_Store" }) == true { try? fm.removeItem(at: backups) }
     }
     static func fetch(_ version: String, _ done: @escaping (Result<(Data, Data), Error>) -> Void) {
         let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil; c.timeoutIntervalForResource = 300; let s = URLSession(configuration: c), at = base + "v\(version)/Docked-Update.zip"

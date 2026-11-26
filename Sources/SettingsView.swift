@@ -19,8 +19,12 @@ struct SettingsSheet: View {
     func flip(_ t: String, _ d: String, _ b: Binding<Bool>) -> some View { line(t, d) { Toggle(t, isOn: b).labelsHidden().toggleStyle(.switch).tint(style.button) } }
     @ViewBuilder var general: some View {
         VStack(spacing: 14) {
+            line("Theme", "Docked keeps its own look, whatever your Mac's light or dark setting.") {
+                HStack(spacing: 8) { ForEach(Style.all) { t in ThemeSwatch(theme: t, on: model.palette == t) { model.palette = t } } }
+            }
             line("Show games as", "") { Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
             flip("Open filling the screen", "A window as big as the screen, without a separate Space. From the next time Docked opens.", $model.fullScreen)
+            flip("Step aside while playing", "Docked hides when a game starts and comes back when it closes.", $model.hideWhilePlaying)
             flip("Theme music", "Plays a game's own theme while it is selected.", $model.themes)
             flip("Find covers and details", "For games from other consoles. Your files are matched on this Mac; libretro and Wikipedia see only a game's name.", .init(get: { model.lookUp == true }, set: { model.lookUp = $0; if $0 { model.lookUpAll() } }))
             flip("Check for updates at launch", "Asks GitHub for the newest version numbers of Docked and its engine. Nothing else is sent.", $model.updatesAtLaunch)
@@ -82,5 +86,21 @@ struct FinishCard: View {
         .padding(18).background { RoundedRectangle(cornerRadius: 18).fill(style.tile).shadow(color: .black.opacity(0.4), radius: 22, y: 8) }.overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(style.line, lineWidth: 1) }.frame(maxWidth: 560)
         .onAppear { if still { landed = true } else { withAnimation(.spring(response: 0.55, dampingFraction: 0.6).delay(0.18)) { landed = true } } }
         .accessibilityElement(children: .contain)
+    }
+}
+
+// One theme to pick: its window colours, with its accent and button
+struct ThemeSwatch: View {
+    let theme: Style, on: Bool, pick: () -> Void
+    var body: some View {
+        Button(action: pick) {
+            VStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 7).fill(LinearGradient(colors: [theme.top, theme.bottom], startPoint: .top, endPoint: .bottom))
+                    .overlay(alignment: .bottomLeading) { HStack(spacing: 3) { Capsule().fill(theme.button).frame(width: 16, height: 6); Circle().fill(theme.accent).frame(width: 6, height: 6) }.padding(6) }
+                    .overlay { RoundedRectangle(cornerRadius: 7).strokeBorder(on ? style.accent : theme.line, lineWidth: on ? 2.5 : 1) }
+                    .frame(width: 52, height: 34)
+                Text(theme.name).font(.caption).foregroundStyle(on ? style.text : style.soft)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel("\(theme.name) theme").accessibilityAddTraits(on ? .isSelected : []).help(theme.name)
     }
 }

@@ -1,4 +1,4 @@
-import Foundation
+import SwiftUI
 
 // A console Docked can keep games for. Switch and Switch 2 are native; the rest play in RetroArch, which Docked sets up inside its own folder.
 struct Console: Identifiable, Equatable {
@@ -12,6 +12,8 @@ struct Console: Identifiable, Equatable {
     static func == (a: Console, b: Console) -> Bool { a.id == b.id }
     var native: Bool { cores.isEmpty }
 }
+
+extension Console { var color: Color { Color(hue: hue, saturation: 0.55, brightness: 0.78) } }   // its own colour, on its shelf and in the sidebar
 
 let consoles: [Console] = [
     Console(id: "switch", name: "Switch", maker: "Nintendo", types: [], shared: [], cores: [], folder: "", hue: 0.99),
@@ -38,6 +40,7 @@ let consoles: [Console] = [
     Console(id: "a26", name: "Atari 2600", maker: "Atari", types: ["a26"], shared: [], cores: [("stella", "Stella"), ("stella2014", "Stella 2014")], folder: "Atari - 2600", hue: 0.1),
 ]
 func console(_ id: String) -> Console? { consoles.first { $0.id == id } }
+func consoleFor(id: String) -> Console? { console(id) }   // for types that have a `console` of their own
 func consoleOf(_ titleID: String) -> String {
     if titleID.uppercased().hasPrefix("ROM:") { return titleID.split(separator: ":").dropFirst().first.map { $0.lowercased() } ?? "" }
     return titleID.hasPrefix("04") ? "switch2" : "switch"
