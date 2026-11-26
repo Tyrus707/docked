@@ -221,6 +221,27 @@ func engineEnvironment(speed: Speed = .full) -> [String: String] {
     return conversionEnvironment(e, speed: speed)
 }
 
+// When converting may run: at once, only on the power adapter, or overnight. Converting works a Mac hard for a long time.
+enum ConvertWhen: String, Codable, CaseIterable {
+    case now, plugged, overnight
+    var label: String { switch self { case .now: return "Right Away"; case .plugged: return "When Plugged In"; case .overnight: return "Overnight" } }
+    var note: String {
+        switch self {
+        case .now: return "Games start converting as soon as you add them."
+        case .plugged: return "Games convert only on the power adapter, with Low Power Mode off. Unplug or turn Low Power Mode on and it pauses, keeping its finished steps."
+        case .overnight: return "Games convert while you're away: on the power adapter, Low Power Mode off, from 11 PM to 7 AM or after 15 minutes without use."
+        }
+    }
+}
+// Why converting waits now, or nil when it may go. idle: seconds since the keyboard, mouse or a controller was last used.
+func convertWait(_ w: ConvertWhen, onPower: Bool, lowPower: Bool, hour: Int, idle: Double) -> String? {
+    guard w != .now else { return nil }
+    if !onPower { return lowPower ? "Waiting for the power adapter and Low Power Mode to turn off" : "Waiting for the power adapter" }
+    if lowPower { return "Waiting for Low Power Mode to turn off" }
+    if w == .overnight, !(hour >= 23 || hour < 7), idle < 900 { return "Waiting for tonight" }
+    return nil
+}
+
 // Needs about twice the game plus 10 GB while building.
 func spaceNeeded(_ bytes: Int64) -> Int64 { bytes * 2 + 10_000_000_000 }
 

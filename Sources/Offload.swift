@@ -16,11 +16,12 @@ func offloadName(_ path: String) -> String {
 }
 
 enum OffloadError: LocalizedError, Equatable {
-    case gone(String), stalled(String), room(Int64, Int64)
+    case gone(String), stalled(String), room(Int64, Int64), split(String, String)
     var errorDescription: String? {
         switch self {
         case .gone(let w): return "It isn't in \(w) any more."
         case .stalled(let w): return "\(w) stopped sending it. Check your internet connection and try again."
+        case let .split(folder, why): return "\(why) Some of its files couldn't come back and are still in \(folder). Move them back beside the game to play it."
         case let .room(need, free): return "It needs \(ByteCountFormatter.string(fromByteCount: need, countStyle: .file)) free on this Mac, and there is \(ByteCountFormatter.string(fromByteCount: free, countStyle: .file))."
         }
     }
@@ -41,7 +42,9 @@ enum Offload {
         do {
             for f in all { let t = folder.appendingPathComponent(String(f.path.dropFirst(here.path.count + 1))); try Organize.transfer(f, to: t, move: true); done.append((f, t)) }
         } catch {
-            for (a, b) in done.reversed() { try? Organize.transfer(b, to: a, move: true) }
+            var stuck = false, why: String?   // what had gone comes back; if some of it can't, the player is told where it is and why
+            for (a, b) in done.reversed() { do { try Organize.transfer(b, to: a, move: true) } catch { stuck = true; if why == nil { why = error.localizedDescription } } }
+            if stuck { throw OffloadError.split(folder.path, why ?? error.localizedDescription) }
             try? fm.removeItem(at: folder); throw error
         }
         return folder

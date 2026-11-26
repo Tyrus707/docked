@@ -12,14 +12,15 @@ struct Job: Codable, Equatable, Identifiable {
     var target: Target? = nil
     var viaXcode: Bool? = nil   // for iPhone: a project for Xcode, not an .ipa file
     var again: Bool? = nil   // converted a second time, because the first did not pass Docked's check
+    var friends: Bool? = nil   // turn Play with friends on in the finished game
     var phone: Bool { target == .phone }
     var xcode: Bool { phone && viaXcode == true }
     var urls: [URL] { parts.map { URL(fileURLWithPath: $0) } }
 
-    enum CodingKeys: String, CodingKey { case id, title, family, parts, place, quick, after, bytes, needsKeys, sources, target, viaXcode, again, speed, effort }
-    init(id: UUID = UUID(), title: String, family: String? = nil, parts: [String], place: String, quick: Bool = false, after: After = .ask, bytes: Int64 = 0, needsKeys: Bool = false, sources: [SourceFile] = [], target: Target? = nil, viaXcode: Bool? = nil, again: Bool? = nil, speed: Speed = .full) {
+    enum CodingKeys: String, CodingKey { case id, title, family, parts, place, quick, after, bytes, needsKeys, sources, target, viaXcode, again, friends, speed, effort }
+    init(id: UUID = UUID(), title: String, family: String? = nil, parts: [String], place: String, quick: Bool = false, after: After = .ask, bytes: Int64 = 0, needsKeys: Bool = false, sources: [SourceFile] = [], target: Target? = nil, viaXcode: Bool? = nil, again: Bool? = nil, friends: Bool? = nil, speed: Speed = .full) {
         self.id = id; self.title = title; self.family = family; self.parts = parts; self.place = place; self.quick = quick; self.after = after
-        self.bytes = bytes; self.needsKeys = needsKeys; self.sources = sources; self.target = target; self.viaXcode = viaXcode; self.again = again; self.speed = speed
+        self.bytes = bytes; self.needsKeys = needsKeys; self.sources = sources; self.target = target; self.viaXcode = viaXcode; self.again = again; self.friends = friends; self.speed = speed
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -36,6 +37,7 @@ struct Job: Codable, Equatable, Identifiable {
         target = try c.decodeIfPresent(Target.self, forKey: .target)
         viaXcode = try c.decodeIfPresent(Bool.self, forKey: .viaXcode)
         again = try c.decodeIfPresent(Bool.self, forKey: .again)
+        friends = try c.decodeIfPresent(Bool.self, forKey: .friends)
         // 1.8.1 saved a percentage; queues from before either keep full speed
         speed = try c.decodeIfPresent(Speed.self, forKey: .speed) ?? (try c.decodeIfPresent(Int.self, forKey: .effort)).map(Speed.init(effort:)) ?? .full
     }
@@ -44,7 +46,7 @@ struct Job: Codable, Equatable, Identifiable {
         try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encodeIfPresent(family, forKey: .family); try c.encode(parts, forKey: .parts)
         try c.encode(place, forKey: .place); try c.encode(quick, forKey: .quick); try c.encode(after, forKey: .after); try c.encode(bytes, forKey: .bytes)
         try c.encode(needsKeys, forKey: .needsKeys); try c.encode(sources, forKey: .sources); try c.encodeIfPresent(target, forKey: .target)
-        try c.encodeIfPresent(viaXcode, forKey: .viaXcode); try c.encodeIfPresent(again, forKey: .again); try c.encode(speed, forKey: .speed)
+        try c.encodeIfPresent(viaXcode, forKey: .viaXcode); try c.encodeIfPresent(again, forKey: .again); try c.encodeIfPresent(friends, forKey: .friends); try c.encode(speed, forKey: .speed)
     }
     var placeURL: URL { URL(fileURLWithPath: place) }
 }

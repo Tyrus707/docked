@@ -78,8 +78,10 @@ struct Tray: View {
                 Image(systemName: model.queue.paused ? "pause.circle" : "clock").foregroundStyle(style.accent).accessibilityHidden(true)
                 Text(waiting == 1 ? "1 game waiting to convert" : "\(waiting) games waiting to convert").font(.callout).foregroundStyle(style.text)
                 if model.queue.paused { Text("Paused").font(.caption).foregroundStyle(style.warn) }
+                else if let w = model.convertWaiting { Text(w).font(.caption).foregroundStyle(style.soft) }
             }
             if model.queue.paused { Button("Continue") { model.resumeQueue() } }
+            else if model.convertWaiting != nil { Button("Convert Now") { model.convertNowOnce() } }
             chip("Details")
         }
     }

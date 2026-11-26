@@ -12,6 +12,7 @@ struct Entry: Codable, Equatable {
     var plays = 0      // how many times it has been played
     var kept = false   // Keep This Build: converting the game again won't replace the app that plays well
     var meta: Meta?    // critic score, popularity and details from Wikidata, once looked up
+    var engine: String?   // the engine its build was made with (Library Health); unknown for games made before 1.11
     enum Status: String, Codable, CaseIterable { case none = "Not started", playing = "Playing", finished = "Finished", aside = "Set aside" }
     init(favorite: Bool = false, status: Status = .none, collections: [String] = [], added: Date = Date(), lastPlayed: Date? = nil, seconds: Double = 0, rating: Int = 0, plays: Int = 0, meta: Meta? = nil) {
         self.favorite = favorite; self.status = status; self.collections = collections; self.added = added; self.lastPlayed = lastPlayed; self.seconds = seconds; self.rating = rating; self.plays = plays; self.meta = meta
@@ -29,6 +30,7 @@ struct Entry: Codable, Equatable {
         plays = try c.decodeIfPresent(Int.self, forKey: .plays) ?? 0
         meta = try? c.decodeIfPresent(Meta.self, forKey: .meta)
         kept = try c.decodeIfPresent(Bool.self, forKey: .kept) ?? false
+        engine = try? c.decodeIfPresent(String.self, forKey: .engine)
     }
 }
 
@@ -36,6 +38,13 @@ struct Entry: Codable, Equatable {
 enum SortBy: String, CaseIterable {
     case recent = "Recently Played", name = "Name", added = "Recently Added", played = "Most Played", rating = "Rating", critic = "Critic Score", popular = "Popularity", plays = "Times Played", year = "Release Year"
     var title: String { self == .played ? "Hours Played" : rawValue }
+}
+
+// A disk or health scan: only the newest ask may write its answer, however late it finishes.
+struct ScanToken {
+    private var value = 0
+    mutating func start() -> Int { value += 1; return value }
+    func current(_ token: Int) -> Bool { value == token }
 }
 
 // Breaking a long list into labelled runs, so a big console reads like shelves, not one wall of games.
@@ -257,6 +266,27 @@ struct LibraryData: Codable, Equatable {
         let j = JSONEncoder(); j.dateEncodingStrategy = .iso8601; j.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let d = try? j.encode(self) { try? d.write(to: url, options: .atomic) }
+    }
+}
+
+// What the library reads from disk: the folders' games, and whether each known file is there. Gathered off the main thread when it can be,
+// as a drive that is asleep can take seconds to answer. A path not looked at is asked about directly.
+struct DiskLook {
+    var apps: [Game] = []
+    var known = Set<String>(), there = Set<String>()
+    func exists(_ p: String) -> Bool { known.contains(p) ? there.contains(p) : FileManager.default.fileExists(atPath: p) }
+    static func take(dirs: [URL], apps: [String], removed: Set<String>, roms: [String], offloaded: [String], ids: DriveIDs = .shared) -> DiskLook {
+        let fm = FileManager.default
+        var d = DiskLook(), seen = Set<String>()
+        func look(_ p: String) -> Bool { if d.known.insert(p).inserted, fm.fileExists(atPath: p) { d.there.insert(p) }; return d.there.contains(p) }
+        for g in dirs.flatMap(libraryFolders).flatMap({ scanLibrary($0) }) where seen.insert(g.id).inserted && !removed.contains(g.url.path) { d.apps.append(g) }
+        for p in apps where !seen.contains(p) {   // known games outside the folders, read once each
+            if let g = gameAt(URL(fileURLWithPath: p)) { seen.insert(g.id); if !removed.contains(p) { d.apps.append(g) } }
+        }
+        for g in d.apps { d.known.insert(g.url.path); d.there.insert(g.url.path) }
+        for p in apps + roms + offloaded where !look(p) { _ = look((p as NSString).deletingLastPathComponent) }   // a missing file's folder says whether it was deleted
+        ids.remember(d.apps.map(\.url.path) + roms.filter { d.there.contains($0) })
+        return d
     }
 }
 

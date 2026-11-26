@@ -37,6 +37,7 @@ struct Inspector: View {
                         if game.rom == nil, let c = model.compat[game.titleID.uppercased()] { fact("Runs", c.label + (c.fps.isEmpty ? "" : ", \(c.fps)") + (c.issues > 0 ? ", \(c.issues) open report\(c.issues == 1 ? "" : "s")" : "")) }
                         if e.kept { fact("Build", "Kept") }
                         if let c = e.meta?.critic { fact("Critic score", "\(c) out of 100") }; if let v = e.meta?.views { fact("Popularity", readersText(v)) }
+                        if game.rom == nil, e.meta?.manual == true { fact("Match", "Chosen by you") }
                         if let i = game.rom?.info { if let d = i.developer { fact("Made by", d) }; if let p = i.publisher, p != i.developer { fact("Published by", p) }; if let g = i.genre { fact("Genre", g) } }
                         else if let m = e.meta { if let d = m.developer { fact("Made by", d) }; if let p = m.publisher, p != m.developer { fact("Published by", p) }; if let g = m.genre { fact("Genre", g) } }
                     }.padding(12).background(style.tile, in: RoundedRectangle(cornerRadius: 10))
@@ -55,7 +56,11 @@ struct Inspector: View {
                         if model.addingTheme { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Adding music…").font(.callout).foregroundStyle(style.soft) } }
                         else if model.hasTheme(game) { link("Change Theme Music…", "music.note") { model.pickTheme(game) }; link("Remove Theme Music", "minus.circle") { model.clearTheme(game) }; link(model.themes ? "Turn Theme Music Off" : "Turn Theme Music On", model.themes ? "speaker.slash" : "speaker.wave.2") { model.themes.toggle() } }
                         else { link("Choose Theme Music…", "music.note") { model.pickTheme(game) } }
-                        if game.rom == nil, model.lookUp == true { if model.scoring.contains(game.titleID.uppercased()) { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finding details…").font(.callout).foregroundStyle(style.soft) } } else { link(e.meta == nil ? "Find Details" : "Find Details Again", "sparkle.magnifyingglass") { model.findMeta(game, force: true) } } }
+                        if game.rom == nil {
+                            if model.scoring.contains(game.titleID.uppercased()) || model.choosingMeta.contains(game.titleID.uppercased()) { HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Finding details…").font(.callout).foregroundStyle(style.soft) } }
+                            else if model.lookUp == true { link(e.meta == nil ? "Find Details" : "Find Details Again", "sparkle.magnifyingglass") { model.findMeta(game, force: true) } }
+                            link("Edit Metadata…", "square.and.pencil") { model.openMetaEditor(game) }.disabled(model.choosingMeta.contains(game.titleID.uppercased()))
+                        }
                         if game.rom == nil { if !game.missing { link("Game Settings…", "slider.horizontal.3") { model.openSettings(game) } }; link("Play with Settings…", "play.circle") { model.play(game, settings: true) }; link("Add Update or DLC…", "plus.square.on.square") { model.addTo(game) }; link("Clean Up…", "sparkles") { model.cleanUp(game) } }
                         if !game.missing { link("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) } }
                     }
