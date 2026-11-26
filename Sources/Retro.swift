@@ -51,20 +51,34 @@ enum RetroArch {
     // ---- starting a game ----
     static var settings: URL { support.appendingPathComponent("retroarch.cfg") }
     static var docked: URL { support.appendingPathComponent("docked.cfg") }
+    static var options: URL { support.appendingPathComponent("core-options.cfg") }   // the cores' own settings, kept with the rest
+    // Settings a core needs on a Mac, written once; what the player changes in RetroArch's menu afterwards stays.
+    // N64: GLideN64 draws only black on macOS's OpenGL, so ParaLLEl's renderer is used, on Vulkan (MoltenVK, inside RetroArch).
+    static let coreDefaults = [("mupen64plus-rdp-plugin", "parallel"), ("mupen64plus-rsp-plugin", "parallel")]
     // Its own settings, then Docked's folders on top, so nothing the player changes in RetroArch can move them.
     static func arguments(core: URL, rom: String) -> [String] { ["--config", settings.path, "--appendconfig", docked.path, "-L", core.path, rom] }
-    static func prepare() throws {
+    // Games open in RetroArch's own full screen unless the player turns it off in Settings; then a window as big as the screen.
+    static var fullScreen: Bool {
+        get { UserDefaults.standard.object(forKey: "retroFullScreen") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "retroFullScreen") }
+    }
+    static func prepare(full: Bool = fullScreen) throws {
         let fm = FileManager.default
         for d in ["cores", "system", "saves", "states", "screenshots", "thumbnails"] { try fm.createDirectory(at: support.appendingPathComponent(d), withIntermediateDirectories: true) }
         if !fm.fileExists(atPath: settings.path) { try line("config_save_on_exit", "true").write(to: settings, atomically: true, encoding: .utf8) }
+        let had = (try? String(contentsOf: options, encoding: .utf8)) ?? ""
+        let keys = Set(had.split(separator: "\n").compactMap { $0.split(separator: "=").first?.trimmingCharacters(in: .whitespaces) })
+        let add = coreDefaults.filter { !keys.contains($0.0) }.map { line($0.0, $0.1) }.joined()
+        if !add.isEmpty { try (had + (had.isEmpty || had.hasSuffix("\n") ? "" : "\n") + add).write(to: options, atomically: true, encoding: .utf8) }
         let mine = line("libretro_directory", cores.path) + line("system_directory", system.path) + line("savefile_directory", support.appendingPathComponent("saves").path)
             + line("savestate_directory", support.appendingPathComponent("states").path) + line("screenshot_directory", support.appendingPathComponent("screenshots").path)
-            + line("thumbnails_directory", support.appendingPathComponent("thumbnails").path) + line("quit_on_close_content", "2") + filling(screen())
+            + line("thumbnails_directory", support.appendingPathComponent("thumbnails").path) + line("quit_on_close_content", "2")
+            + line("global_core_options", "true") + line("core_options_path", options.path) + line("pause_nonactive", "false") + (full ? line("video_fullscreen", "true") : filling(screen()))
         try mine.write(to: docked, atomically: true, encoding: .utf8)
     }
     static func line(_ k: String, _ v: String) -> String { "\(k) = \"\(v.replacingOccurrences(of: "\"", with: ""))\"\n" }
-    // Games open in a window as big as the screen, like the green button with Option held: no Space of their own, and the
-    // menu bar and Dock stay. RetroArch's own full screen on a Mac always takes a Space (video_windowed_fullscreen is not
+    // With full screen off, games open in a window as big as the screen, like the green button with Option held: no Space of
+    // their own, and the menu bar and Dock stay. RetroArch's own full screen on a Mac always takes a Space (video_windowed_fullscreen is not
     // used there), so it is a window placed over the screen instead. Control-Command-F or RetroArch's F key still gives full screen.
     static func filling(_ r: CGRect?) -> String {
         var s = line("video_fullscreen", "false")

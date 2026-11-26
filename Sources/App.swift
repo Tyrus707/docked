@@ -238,7 +238,7 @@ final class Model: ObservableObject {
     }
     // RetroArch is known to the system a moment after it starts; play time counts from then.
     private func adoptRetro(_ pid: pid_t, as id: String, tries: Int) {
-        if let a = NSRunningApplication(processIdentifier: pid) { tracker.adopt(a, as: id); return }
+        if let a = NSRunningApplication(processIdentifier: pid) { tracker.adopt(a, as: id); a.activate(options: []); return }   // in front, so the game doesn't start behind Docked
         guard tries > 0, kill(pid, 0) == 0 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.adoptRetro(pid, as: id, tries: tries - 1) }
     }
