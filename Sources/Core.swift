@@ -240,7 +240,8 @@ struct Game: Identifiable, Equatable {
     var rom: Rom?
     var needs = ""   // the macOS a converted game asks for
     var missing = false   // its file is gone, or on a drive that isn't connected
-    var cannot: String? { missing ? whereMissing(url.path) : rom == nil ? cannotPlay(needs: needs) : nil }
+    var away: String?     // offloaded: where it is now. It is also missing, so nothing reads its file here
+    var cannot: String? { away.map { "Offloaded to \(offloadName($0)). Download it to play" } ?? (missing ? whereMissing(url.path) : rom == nil ? cannotPlay(needs: needs) : nil) }
 }
 
 // A converted game, read from its app
