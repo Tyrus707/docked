@@ -16,6 +16,51 @@ func spaceText(need: Int64, free: Int64) -> (text: String, short: Bool) {
         : ("Needs about \(f.string(fromByteCount: need)) while converting, but you have \(f.string(fromByteCount: free)). Free up about \(f.string(fromByteCount: need - free)).", true)
 }
 
+func byteText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+
+// The plain numbers behind the warning, so a screen can show "needs / have / left" without parsing a sentence.
+func spaceLines(need: Int64, free: Int64) -> (need: String, free: String, after: String, short: Bool) {
+    (byteText(need), byteText(free), byteText(free - need), free < need)
+}
+
+// Free room on the volume a path is on. A missing folder is followed up to the nearest one that exists.
+func freeSpace(at u: URL) -> Int64 {
+    // A drive that isn't plugged in has no room here; don't fall back to the startup disk.
+    let parts = u.pathComponents
+    if parts.count > 2, parts[1] == "Volumes", !FileManager.default.fileExists(atPath: "/Volumes/\(parts[2])") { return 0 }
+    var d = u
+    while !FileManager.default.fileExists(atPath: d.path), d.pathComponents.count > 1 { d.deleteLastPathComponent() }
+    let v = try? d.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+    return v?.volumeAvailableCapacityForImportantUsage ?? 0
+}
+
+struct SpaceEstimate: Equatable {
+    let need: Int64          // room the conversion work itself needs on the startup disk
+    let free: Int64          // room on the startup disk
+    let destinationFree: Int64?
+    let destinationNeed: Int64?
+    var short: Bool { free < need || (destinationNeed.map { (destinationFree ?? 0) < $0 } ?? false) }
+}
+
+func spaceEstimate(bytes: Int64, destination: URL? = nil, free: Int64 = freeSpace(), destinationFree: Int64? = nil) -> SpaceEstimate {
+    SpaceEstimate(need: spaceNeeded(bytes), free: free,
+                  destinationFree: destination.map { destinationFree ?? freeSpace(at: $0) },
+                  destinationNeed: destination == nil ? nil : bytes)
+}
+
+// "12 GB left" or "6 GB short", without a minus sign where it would only confuse.
+func roomText(free: Int64, need: Int64) -> String {
+    let left = free - need
+    return left >= 0 ? "\(byteText(left)) left after" : "\(byteText(-left)) short"
+}
+
+// One plain sentence for a warning, whichever of the two volumes is too full.
+func spaceAdvice(_ e: SpaceEstimate) -> String {
+    if e.free < e.need { return "Free up about \(byteText(e.need - e.free)) on this Mac before converting." }
+    if let need = e.destinationNeed, let free = e.destinationFree, free < need { return "Free up about \(byteText(need - free)) on the destination drive before converting." }
+    return ""
+}
+
 // ---- a report someone can post in public ----
 // Takes out what says who or where: the home folder, the user name, other disks, addresses, and anything that looks like a key.
 func redact(_ s: String, home: String = NSHomeDirectory(), user: String = NSUserName(), full: String = NSFullUserName()) -> String {

@@ -52,6 +52,8 @@ struct GuideView: View {
             if let now { VStack(alignment: .leading, spacing: 8) { action(now) }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(style.tile, in: RoundedRectangle(cornerRadius: 10)) }
             else if model.checks.isEmpty { HStack { ProgressView().controlSize(.small); Text("Checking your Mac…").foregroundStyle(style.soft) } }
             else { Label("Your Mac is ready.", systemImage: "checkmark.seal.fill").foregroundStyle(style.ok) }
+            SpaceCheck(estimate: room, compact: true)
+            Text("A game also needs about twice its own size while it converts.").font(.caption).foregroundStyle(style.soft)
             if let p = model.installProblem { Text(p).font(.callout).foregroundStyle(style.danger).fixedSize(horizontal: false, vertical: true) }
         }
     }
@@ -71,6 +73,7 @@ struct GuideView: View {
             Button(copied ? "Copied. Paste It in Terminal" : "Copy and Open Terminal") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.fix, forType: .string); copied = true; NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")); DispatchQueue.main.asyncAfter(deadline: .now() + 6) { copied = false } }
         } else { Text(c.detail).font(.callout).foregroundStyle(style.text) }
     }
+    private var room: SpaceEstimate { SpaceEstimate(need: 10_000_000_000, free: freeSpace(), destinationFree: nil, destinationNeed: nil) }
     var found: String? { findKeys(model.keys) }
     var keysOK: Bool { found.map { readKeys($0).usable } ?? false }
     @ViewBuilder var keys: some View {

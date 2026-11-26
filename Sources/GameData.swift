@@ -22,7 +22,21 @@ struct GameData {
     static func isSavePart(_ n: String) -> Bool { n == "save" || n == "save_device" || n == "save.users" || n.hasPrefix("save_user") }
     var hasSave: Bool { FileManager.default.fileExists(atPath: save.path) }
 
-    struct Backup: Equatable { let url: URL; let date: Date; let bytes: Int64; var name: String { url.lastPathComponent } }
+    struct Backup: Equatable {
+        let url: URL; let date: Date; let bytes: Int64
+        var name: String { url.lastPathComponent }
+        // Docked's dated folders say why they were made; plain language in the restore menu.
+        var reason: String {
+            let n = name.lowercased()
+            if n.contains("before convert") { return "before conversion" }
+            if n.contains("before engine") { return "before engine update" }
+            if n.contains("before update") { return "before update" }
+            if n.contains("before offload") { return "before offload" }
+            if n.contains("before trash") { return "before trash" }
+            if n.contains("before restore") { return "before restore" }
+            return n.contains("docked") ? "manual backup" : "backup"
+        }
+    }
 
     // Newest first. A backup is any folder in save-backups holding a save.
     func list() -> [Backup] {
@@ -51,6 +65,21 @@ struct GameData {
         var to = backups.appendingPathComponent("\(Self.stamp(now)) \(label)"), i = 2
         while fm.fileExists(atPath: to.path) { to = backups.appendingPathComponent("\(Self.stamp(now)) \(label) \(i)"); i += 1 }
         try fm.createDirectory(at: to, withIntermediateDirectories: true)
+        do { for n in try fm.contentsOfDirectory(atPath: root.path) where Self.isSavePart(n) { try fm.copyItem(at: root.appendingPathComponent(n), to: to.appendingPathComponent(n)) } }
+        catch { try? fm.removeItem(at: to); throw error }
+        return to
+    }
+
+    // A dated copy in a folder the player chose, such as iCloud Drive or another drive. Never copies keys or game files.
+    // The chosen folder is never replaced: the save goes in a new folder inside it, with a name saying what and when.
+    @discardableResult func export(into folder: URL, named name: String? = nil) throws -> URL? {
+        let fm = FileManager.default
+        guard hasSave else { return nil }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let base = name ?? "Docked save"
+        var to = folder.appendingPathComponent("\(Self.stamp(Date())) \(base)"), i = 2
+        while fm.fileExists(atPath: to.path) { to = folder.appendingPathComponent("\(Self.stamp(Date())) \(base) \(i)"); i += 1 }
+        try fm.createDirectory(at: to, withIntermediateDirectories: false)
         do { for n in try fm.contentsOfDirectory(atPath: root.path) where Self.isSavePart(n) { try fm.copyItem(at: root.appendingPathComponent(n), to: to.appendingPathComponent(n)) } }
         catch { try? fm.removeItem(at: to); throw error }
         return to

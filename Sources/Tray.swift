@@ -3,12 +3,28 @@ import SwiftUI
 // A short notice in the tray. Good news goes by itself after a few seconds; anything else stays until it's closed.
 struct Notice: Identifiable, Equatable { let id = UUID(); var text: String; var good = true }
 
+// What happened this session, newest first. Kept in memory only: no history file, no account.
+struct ActivityEntry: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let detail: String?
+    let at: Date
+    let warn: Bool
+    let report: String?
+}
+
 extension Model {
     // For news and small answers. Errors the player must act on still use `message`, a window alert.
     func tell(_ text: String, good: Bool = true) {
         let n = Notice(text: text, good: good); notice = n
         guard good else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in if self?.notice?.id == n.id { self?.notice = nil } }
+    }
+
+    func logActivity(_ title: String, detail: String? = nil, warn: Bool = false, report: String? = nil) {
+        let entry = ActivityEntry(title: title, detail: detail, at: Date(), warn: warn, report: report)
+        activity.insert(entry, at: 0)
+        if activity.count > 40 { activity = Array(activity.prefix(40)) }
     }
 }
 
@@ -19,6 +35,7 @@ struct Tray: View {
     @EnvironmentObject var builder: Builder
     @Environment(\.accessibilityReduceMotion) private var still
     @State private var open = false
+    @State private var showActivity = false
 
     private var waiting: Int { model.queue.waiting.count }
     private var hasTask: Bool { builder.running || model.retro != nil || model.moving != nil || model.filing != nil || model.removing || model.checkingGame || model.engineBusy || model.updating || waiting > 0 }
@@ -26,7 +43,7 @@ struct Tray: View {
     private var hasNotice: Bool { (builder.error != nil && !builder.running) || !model.queue.problems.isEmpty || model.update != nil || model.engine != nil || !model.xcodeReady.isEmpty || !model.phoneReady.isEmpty || model.newlyAdded != nil || model.notice != nil }
 
     var body: some View {
-        if hasTask || hasNotice {
+        if hasTask || hasNotice || !model.activity.isEmpty {
             VStack(spacing: 0) {
                 Divider()
                 if open && hasDetails {
@@ -34,9 +51,18 @@ struct Tray: View {
                     if waiting > 0 || !model.queue.problems.isEmpty { QueueBar() }
                     Divider()
                 }
+                if showActivity && !model.activity.isEmpty { ActivityList() }
                 HStack(spacing: 14) {
                     task
                     Spacer(minLength: 12)
+                    if !model.activity.isEmpty {
+                        Button { withAnimation(still ? nil : .easeOut(duration: 0.18)) { showActivity.toggle() } } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: showActivity ? "chevron.down" : "clock.arrow.circlepath")
+                                Text("Activity")
+                            }.font(.caption).foregroundStyle(style.text).padding(.horizontal, 10).frame(height: 24).background(style.line.opacity(0.6), in: Capsule())
+                        }.buttonStyle(.plain).help(showActivity ? "Hide activity" : "What happened this session").accessibilityLabel(showActivity ? "Hide activity" : "Show activity")
+                    }
                     notice.transition(still ? .opacity : .move(edge: .trailing).combined(with: .opacity))
                 }
                 .padding(.horizontal, 16).frame(minHeight: 56)
@@ -170,5 +196,38 @@ struct Tray: View {
         .background(style.tile, in: RoundedRectangle(cornerRadius: 10))
         .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(warn ? style.warn.opacity(0.55) : style.line, lineWidth: 1) }
         .accessibilityElement(children: .contain)
+    }
+}
+
+// The tray's history: what Docked finished or flagged this session, newest first.
+private struct ActivityList: View {
+    @EnvironmentObject var model: Model
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Activity").font(.headline).foregroundStyle(style.text)
+                Spacer()
+                Button("Clear") { model.activity = [] }.font(.caption)
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.activity) { e in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: e.warn ? "exclamationmark.triangle" : "checkmark.circle").foregroundStyle(e.warn ? style.warn : style.ok).accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(e.title).font(.callout.weight(.medium)).foregroundStyle(style.text)
+                                    Text(e.at.formatted(date: .omitted, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                                }
+                                if let d = e.detail { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                                if let r = e.report { Button("Copy Report") { model.copyReport(r) }.font(.caption) }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+            }.frame(maxHeight: 220)
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading).background(style.tile.opacity(0.5))
     }
 }

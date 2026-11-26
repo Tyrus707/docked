@@ -74,6 +74,7 @@ enum RetroArch {
         let mine = line("libretro_directory", cores.path) + line("system_directory", system.path) + line("savefile_directory", support.appendingPathComponent("saves").path)
             + line("savestate_directory", support.appendingPathComponent("states").path) + line("screenshot_directory", support.appendingPathComponent("screenshots").path)
             + line("thumbnails_directory", support.appendingPathComponent("thumbnails").path) + line("quit_on_close_content", "2")
+            + (Cheevos.hardcore ? "" : line("savestate_auto_save", "true") + line("savestate_auto_load", "true"))
             + line("global_core_options", "true") + line("core_options_path", options.path) + line("pause_nonactive", "false") + (full ? line("video_fullscreen", "true") : filling(screen()))
             + line("video_shader_dir", Shaders.slang.path) + line("video_shader_enable", shader ? "true" : "false") + Cheevos.lines() + Pads.lines()
         try mine.write(to: docked, atomically: true, encoding: .utf8)
@@ -189,6 +190,19 @@ enum RetroArch {
         let aside = hidden.appendingPathComponent("RetroArch earlier \(Int(Date().timeIntervalSince1970)).app")
         try? fm.moveItem(at: earlier, to: aside); unregister(aside)
     }
+    // SIGTERM lets RetroArch close its core cleanly, so saves and, when allowed, an automatic resume state are written.
+    // Returns once the old process is gone; a hard kill is never used here.
+    @discardableResult static func quitCleanly(_ app: NSRunningApplication, wait: TimeInterval = 8) -> Bool {
+        let pid = app.processIdentifier
+        guard pid > 0 else { return true }
+        let gone: () -> Bool = { app.isTerminated || kill(pid, 0) != 0 }
+        if gone() { return true }
+        guard kill(pid, SIGTERM) == 0 else { return gone() }
+        let until = Date().addingTimeInterval(wait)
+        while Date() < until, !gone() { Thread.sleep(forTimeInterval: 0.1) }
+        return gone()
+    }
+
     // Starts a game in Docked's RetroArch, as a program Docked runs, not an app opened through Launch Services (which would list it again).
     // ended runs on the main thread when RetroArch quits, which it does when the game is closed (quit_on_close_content).
     static func launch(core: URL, rom: String, shader: URL? = nil, ended: @escaping () -> Void) throws -> pid_t {
