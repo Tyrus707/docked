@@ -1,6 +1,5 @@
 import SwiftUI
 import UniformTypeIdentifiers
-import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var builder: Builder?
@@ -247,7 +246,7 @@ final class Model: ObservableObject {
         NSApp.unhide(nil)
         for w in NSApp.windows where w.isMiniaturized { w.deminiaturize(nil) }
         if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
-        if couch, let w = couchWindow { w.makeKeyAndOrderFront(nil); couchBack() } else { NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil) }
+        NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil); if couch { couchBack() }
     }
 
     func shown(_ s: Section, by: SortBy = .name) -> [Game] { library.show(games, in: s, search: search, by: by) }
@@ -279,7 +278,7 @@ final class Model: ObservableObject {
         asideForGame = false
         NSApp.unhide(nil)
         if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
-        if couch, let w = couchWindow { w.makeKeyAndOrderFront(nil); couchBack() } else { NSApp.windows.first { $0.canBecomeMain && !($0 is CouchWindow) }?.makeKeyAndOrderFront(nil) }
+        NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil); if couch { couchBack() }
     }
 
     let builder = Builder()
@@ -729,7 +728,9 @@ final class Model: ObservableObject {
     @Published var couch = false
     @Published var couchSpot = CouchSpot()
     @Published var couchIdle = false
-    var couchWindow: CouchWindow?, couchTimer: Timer?, couchSaved: String?, couchWatch: AnyCancellable?
+    var couchTimer: Timer?, couchSaved: String?, couchMadeFull = false
+    var couchArts: [String: NSImage] = [:], couchArtOrder: [String] = [], couchTried = Set<String>()
+    @Published var couchArtTick = 0
     let couchSound = CouchSound()
     @Published var couchSounds = UserDefaults.standard.object(forKey: "couchSounds") as? Bool ?? true { didSet { UserDefaults.standard.set(couchSounds, forKey: "couchSounds") } }
     func move(_ m: Move, pad: Bool) {
@@ -899,6 +900,8 @@ struct ContentView: View {
             Tray()
         }
         .background(Backdrop())
+        .overlay { if model.couch { CouchView().transition(.opacity) } }
+        .animation(still ? nil : .easeInOut(duration: 0.35), value: model.couch)
         .preferredColorScheme(model.palette.dark ? .dark : .light)
         .overlay { if dropping && !model.games.isEmpty { RoundedRectangle(cornerRadius: 12).strokeBorder(style.accent, lineWidth: 3).padding(6).allowsHitTesting(false) } }
         .onDrop(of: [.fileURL], isTargeted: $dropping) { loadDropped($0) { model.add($0) }; return true }
@@ -931,7 +934,7 @@ struct ContentView: View {
         .sheet(item: $model.editing) { SmartEditor(s: $0) }
         .sheet(item: $model.tuning) { g in if let gs = GameSettings(app: g.url) { GameSettingsView(game: g, gs: gs) } }
         .sheet(isPresented: .init(get: { model.cleaning != nil }, set: { if !$0 { model.cleaning = nil } })) { CleanUpView() }
-        .alert("Docked", isPresented: .init(get: { model.message != nil }, set: { if !$0 { model.message = nil } })) { Button("OK") {} } message: { Text(model.message ?? "") }
+        .alert("Docked", isPresented: .init(get: { model.message != nil && !model.couch }, set: { if !$0 { model.message = nil } })) { Button("OK") {} } message: { Text(model.message ?? "") }
         .confirmationDialog("Move \(deleting?.name ?? "") to the Trash?", isPresented: .init(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { g in
             Button("Move to Trash", role: .destructive) { model.trash(g.url) }
         } message: { _ in Text("Your saved progress is kept.") }
