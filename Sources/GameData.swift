@@ -22,7 +22,21 @@ struct GameData {
     static func isSavePart(_ n: String) -> Bool { n == "save" || n == "save_device" || n == "save.users" || n.hasPrefix("save_user") }
     var hasSave: Bool { FileManager.default.fileExists(atPath: save.path) }
 
-    struct Backup: Equatable { let url: URL; let date: Date; let bytes: Int64; var name: String { url.lastPathComponent } }
+    struct Backup: Equatable {
+        let url: URL; let date: Date; let bytes: Int64
+        var name: String { url.lastPathComponent }
+        // Docked's dated folders say why they were made; plain language in the restore menu.
+        var reason: String {
+            let n = name.lowercased()
+            if n.contains("before convert") { return "before conversion" }
+            if n.contains("before engine") { return "before engine update" }
+            if n.contains("before update") { return "before update" }
+            if n.contains("before offload") { return "before offload" }
+            if n.contains("before trash") { return "before trash" }
+            if n.contains("before restore") { return "before restore" }
+            return n.contains("docked") ? "manual backup" : "backup"
+        }
+    }
 
     // Newest first. A backup is any folder in save-backups holding a save.
     func list() -> [Backup] {
@@ -45,12 +59,42 @@ struct GameData {
     static func stamp(_ d: Date) -> String { let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd HH.mm.ss"; return f.string(from: d) }
 
     // Copies the save into save-backups/"<date> Docked". Nil when there is no save yet.
-    @discardableResult func backUp(now: Date = Date(), label: String = "Docked") throws -> URL? {
+    // One copy per save: when the newest copy already holds this save, that copy is the answer and nothing new is made.
+    // Then only the newest `keep` copies stay (nil keeps them all, for a caller that prunes once it is done).
+    @discardableResult func backUp(now: Date = Date(), label: String = "Docked", keep: Int? = kept) throws -> URL? {
         let fm = FileManager.default
         guard hasSave else { return nil }
+        if let newest = list().first, matches(newest.url) { return newest.url }
+        defer { if let keep { prune(keep: keep) } }
         var to = backups.appendingPathComponent("\(Self.stamp(now)) \(label)"), i = 2
         while fm.fileExists(atPath: to.path) { to = backups.appendingPathComponent("\(Self.stamp(now)) \(label) \(i)"); i += 1 }
         try fm.createDirectory(at: to, withIntermediateDirectories: true)
+        do { for n in try fm.contentsOfDirectory(atPath: root.path) where Self.isSavePart(n) { try fm.copyItem(at: root.appendingPathComponent(n), to: to.appendingPathComponent(n)) } }
+        catch { try? fm.removeItem(at: to); throw error }
+        return to
+    }
+
+    // Copies Docked made by itself ("<date> Docked before ...") beyond the newest few go. Copies the player made, or brought in, stay.
+    // A game keeps at most this many copies, newest first, so its save-backups folder stays small and tidy.
+    static let kept = 3
+    func prune(keep: Int = kept) { for b in list().dropFirst(max(keep, 1)) { try? FileManager.default.removeItem(at: b.url) } }
+    // True when a copy holds exactly the save there is now: the same parts, byte for byte.
+    func matches(_ copy: URL) -> Bool {
+        let fm = FileManager.default
+        let now = Set(((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).filter(Self.isSavePart)), then = Set(((try? fm.contentsOfDirectory(atPath: copy.path)) ?? []).filter(Self.isSavePart))
+        return !now.isEmpty && now == then && now.allSatisfy { fm.contentsEqual(atPath: root.appendingPathComponent($0).path, andPath: copy.appendingPathComponent($0).path) }
+    }
+
+    // A dated copy in a folder the player chose, such as iCloud Drive or another drive. Never copies keys or game files.
+    // The chosen folder is never replaced: the save goes in a new folder inside it, with a name saying what and when.
+    @discardableResult func export(into folder: URL, named name: String? = nil) throws -> URL? {
+        let fm = FileManager.default
+        guard hasSave else { return nil }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let base = name ?? "Docked save"
+        var to = folder.appendingPathComponent("\(Self.stamp(Date())) \(base)"), i = 2
+        while fm.fileExists(atPath: to.path) { to = folder.appendingPathComponent("\(Self.stamp(Date())) \(base) \(i)"); i += 1 }
+        try fm.createDirectory(at: to, withIntermediateDirectories: false)
         do { for n in try fm.contentsOfDirectory(atPath: root.path) where Self.isSavePart(n) { try fm.copyItem(at: root.appendingPathComponent(n), to: to.appendingPathComponent(n)) } }
         catch { try? fm.removeItem(at: to); throw error }
         return to
@@ -68,7 +112,8 @@ struct GameData {
     func restore(_ from: URL, now: Date = Date()) throws {
         let fm = FileManager.default
         guard let src = Self.saveIn(from) else { throw CocoaError(.fileReadNoSuchFile) }
-        try backUp(now: now, label: "before restore")
+        try backUp(now: now, label: "before restore", keep: nil)   // the copy being brought in may be among those a prune would take
+        defer { prune() }
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         let backup = fm.fileExists(atPath: src.appendingPathComponent("save").path)
         var parts: [(URL, String)] = [(src, "save")]

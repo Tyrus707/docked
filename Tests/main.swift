@@ -408,6 +408,13 @@ var gone: [URL] = []; let kf = mk("my/prod.keys", "k = 1"); check(trashKeys(kf.p
 // ---- space, reports, updates, notices ----
 func sj(_ gb: Int64, _ a: After) -> Job { var j = job("s\(gb)\(a)"); j.bytes = gb * 1_000_000_000; j.after = a; return j }
 check(spaceForQueue([]) == 0 && spaceForQueue([sj(10, .ask)]) == 30_000_000_000, "one game"); check(spaceForQueue([sj(10, .ask), sj(5, .ask)]) == 40_000_000_000 && spaceForQueue([sj(10, .leftovers), sj(5, .ask)]) == 30_000_000_000, "what earlier ones leave counts"); check(spaceText(need: 10_000_000_000, free: 50_000_000_000).short == false && spaceText(need: 50_000_000_000, free: 10_000_000_000).text.contains("Free up about 40 GB"), "said plainly")
+let roomOK = spaceEstimate(bytes: 1_000_000_000, destination: tmp, free: 100_000_000_000, destinationFree: 100_000_000_000)
+let roomTight = spaceEstimate(bytes: 10_000_000_000, destination: tmp, free: 1_000_000_000, destinationFree: 1_000_000_000)
+let destTight = spaceEstimate(bytes: 10_000_000_000, destination: tmp, free: 100_000_000_000, destinationFree: 1_000_000_000)
+check(!roomOK.short && roomOK.destinationNeed == 1_000_000_000 && roomText(free: 100, need: 40).contains("left after"), "both volumes read")
+check(roomTight.short && spaceAdvice(roomTight).contains("on this Mac") && destTight.short && spaceAdvice(destTight).contains("destination drive"), "the full volume is named")
+check(roomText(free: 10, need: 20).contains("short") && !roomText(free: 10, need: 20).contains("-"), "no minus sign in a warning")
+check(freeSpace(at: URL(fileURLWithPath: "/Volumes/NotMounted/x")) == 0, "an unplugged drive has no room")
 let rd = redact("at /Users/jo/Games/x.nsp and /Users/other/y on /Volumes/My Disk/z by Jo Smith (jo) jo@mail.example.com 192.168.1.20 key 0123456789abcdef0123456789abcdef ghp_abcdefghijkl1234 title 0100AAAAAAAAA000 joke", home: "/Users/jo", user: "jo", full: "Jo Smith"); check(!rd.contains("/Users") && !rd.contains("My Disk") && !rd.contains("mail.example") && !rd.contains("192.168") && !rd.contains("0123456789abcdef0") && !rd.contains("ghp_") && !rd.contains("Smith"), "who and where are taken out: " + rd); check(rd.contains("0100AAAAAAAAA000") && rd.contains("joke") && rd.contains("x.nsp"), "what helps stays")
 check(redact("user sam ran", home: "/Users/sam", user: "sam", full: "Sam Lee") == "user (name) ran" && redact("sample", home: "/Users/sam", user: "sam", full: "Sam Lee") == "sample", "names, not parts of words")
 let rp = makeReport(title: "G [0100]", step: "step 3", error: "broke in \(NSHomeDirectory())/x", log: (0..<200).map { "line \($0)" }, version: "1.1", os: "27.2", chip: "Apple M9", space: 5_000_000_000); check(rp.contains("Docked 1.1") && rp.contains("line 199") && !rp.contains("line 100\n") && rp.contains("broke in ~/x"), "report")
@@ -434,12 +441,26 @@ let gr: [(id: String, games: [String])] = [("grid", (0..<11).map(String.init))];
 for (from, mv, to) in [(0, Move.right, 1), (0, .left, 0), (10, .right, 10), (1, .down, 5), (5, .up, 1), (2, .up, 2), (7, .down, 10), (9, .down, 9), (4, .left, 3)] { check(step(c(from), mv, rows: gr, columns: 4) == c(to), "grid \(from) \(mv)") }
 let gg: [(id: String, games: [String])] = [("A", ["a0", "a1", "a2", "a3", "a4"]), ("B", ["b0", "b1"])]; check(step(Cursor(row: "A", game: "a4"), .down, rows: gg, columns: 4) == Cursor(row: "B", game: "b0") && step(Cursor(row: "A", game: "a1"), .down, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b1"), .up, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b0"), .up, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b1"), .down, rows: gg, columns: 4) == Cursor(row: "B", game: "b1"), "a grid in groups, across headings")
 let hr: [(id: String, games: [String])] = [("recent", ["a", "b", "c"]), ("Favorites", []), ("Switch", ["a", "b"])]; check(step(nil, .down, rows: hr, columns: nil) == Cursor(row: "recent", game: "a") && step(Cursor(row: "recent", game: "c"), .down, rows: hr, columns: nil) == Cursor(row: "Switch", game: "b") && step(Cursor(row: "Switch", game: "a"), .up, rows: hr, columns: nil) == Cursor(row: "recent", game: "a"), "rows, past an empty one"); check(step(Cursor(row: "gone", game: "z"), .left, rows: hr, columns: nil) == Cursor(row: "recent", game: "a") && step(nil, .left, rows: [], columns: 4) == nil, "lost, or nothing there")
-let cc = [3, 0, 2]; var spot = CouchSpot()
-spot = couchStep(spot, .right, counts: cc); spot = couchStep(spot, .right, counts: cc); spot = couchStep(spot, .right, counts: cc); check(spot.shelf == 0 && spot.index(3) == 2, "couch: right stops at the end")
-spot = couchStep(spot, .down, counts: cc); check(spot.shelf == 2 && spot.index(2) == 0, "couch: down skips an empty shelf")
-spot = couchStep(spot, .down, counts: cc); check(spot.shelf == 2, "couch: down stops at the last shelf")
-spot = couchStep(spot, .nextSection, counts: cc); check(spot.shelf == 0 && spot.index(3) == 2, "couch: shoulder goes round and the shelf keeps its place")
-check(couchStep(CouchSpot(), .left, counts: []) == CouchSpot() && CouchSpot(shelf: 0, at: [0: 9]).index(4) == 3, "couch: nothing there, or fewer games than before")
+let couchFixture: [(id: String, games: [String])] = [("continue", ["c0", "c1", "c2"]), ("favorites", []), ("all", ["a0", "a1"]), ("nes", ["n0", "n1", "n2", "n3"]), ("snes", ["s0"])]
+var spot = CouchSpot()
+spot = couchStep(spot, .right, rows: couchFixture); spot = couchStep(spot, .right, rows: couchFixture); spot = couchStep(spot, .right, rows: couchFixture); check(spot.index("continue", couchFixture[0].games) == 2 && spot.game == "c2", "couch: right stops at the end of a row")
+spot = couchStep(spot, .down, rows: couchFixture); check(spot.shelfID == "all" && spot.index("all", couchFixture[2].games) == 0, "couch: down skips an empty shelf")
+spot = couchStep(spot, .up, rows: couchFixture); check(spot.shelfID == "continue" && spot.index("continue", couchFixture[0].games) == 2, "couch: up keeps its place")
+for _ in 0..<4 { spot = couchStep(spot, .down, rows: couchFixture) }; check(spot.shelfID == "snes", "couch: down stops at the last shelf")
+spot = couchStep(spot, .down, rows: couchFixture); check(spot.shelfID == "snes", "couch: down stays there")
+spot = couchStep(spot, .nextSection, rows: couchFixture); check(spot.shelfID == "continue" && spot.index("continue", couchFixture[0].games) == 2, "couch: RB wraps and remembers the game")
+spot = couchStep(spot, .previousSection, rows: couchFixture); check(spot.shelfID == "snes" && spot.index("snes", couchFixture[4].games) == 0, "couch: LB wraps back")
+let few = CouchSpot(shelf: 9, at: ["continue": 9]), remembered = CouchSpot(shelf: 0, shelfID: "all", at: ["all": 1], gameID: ["all": "a1"], game: "a1")
+check(couchStep(CouchSpot(), .left, rows: []) == CouchSpot() && few.index("continue", couchFixture[0].games) == 2, "couch: nothing there, or fewer games than before")
+check(remembered.index("all", couchFixture[2].games) == 1, "couch: a shelf keeps its game by name")
+let beforeFav: [(id: String, games: [String])] = [("all", ["a", "b", "c"]), ("gems", ["x", "y"]), ("favorites", [])]
+let gemSpot = CouchSpot(shelf: 1, shelfID: "gems", at: ["gems": 0], gameID: ["gems": "x"], game: "x")
+let afterFav: [(id: String, games: [String])] = [("all", ["a", "b", "c"]), ("favorites", ["x"]), ("gems", ["y"])]
+let followed = gemSpot.resolved(afterFav)
+check(followed.shelfID == "favorites" && followed.index("favorites", afterFav[1].games) == 0 && followed.game == "x", "couch: a game follows its shelf into Favorites")
+check(couchStep(gemSpot, .right, rows: afterFav).game == "x", "couch: a move after a shelf appears keeps that game")
+check(followed.resolved(beforeFav).shelfID == "gems" && followed.resolved(beforeFav).game == "x", "couch: a game survives its shelf going away")
+check(couchDecadeName(1990) == "Best of the 90s" && couchDecadeName(1980) == "Best of the 80s" && couchDecadeName(2000) == "Best of the 2000s" && couchDecadeName(2010) == "Best of the 2010s" && couchDecadeName(1960) == nil && couchDecadeName(1995) == nil, "couch: decade rows are named plainly")
 // ---- updates ----
 let uk = Curve25519.Signing.PrivateKey(), upub = uk.publicKey.rawRepresentation.base64EncodedString(), ud = tmp.appendingPathComponent("upd"), ub = ud.appendingPathComponent("Backups")
 func sh(_ a: [String]) { let p = Process(); p.executableURL = URL(fileURLWithPath: a[0]); p.arguments = Array(a.dropFirst()); p.standardError = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; try! p.run(); p.waitUntilExit() }
@@ -755,14 +776,24 @@ do {
     check(d.root.lastPathComponent == "0100ABC000010000" && !d.hasSave && d.list().isEmpty, "no save yet")
     check((try! d.backUp()) == nil, "nothing to back up")
     _ = mk("nx/0100ABC000010000/save/0/file.bin", "one"); _ = mk("nx/0100ABC000010000/save_device/d.bin", "dev"); _ = mk("nx/0100ABC000010000/save.sync", "base x")
-    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
-    check(fm.fileExists(atPath: b.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b.appendingPathComponent("save.sync").path), "backup holds the save parts only")
-    let b2 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b2 != b, "same second, new folder")
-    check(d.list().count == 2 && d.list().allSatisfy { $0.bytes == 6 }, "backups listed")
+    let b0 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
+    check(fm.fileExists(atPath: b0.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b0.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b0.appendingPathComponent("save.sync").path), "backup holds the save parts only")
+    let b1 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b1 == b0 && d.list().count == 1 && d.list().allSatisfy { $0.bytes == 6 }, "an unchanged save makes no second copy")
+    for i in 0..<5 { try! Data("v\(i)".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02); _ = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_001_000 + Double(i)), label: "Docked before convert") }
+    check(d.list().count == GameData.kept && (try? String(contentsOf: d.list()[0].url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "v4", "a game keeps only its newest 3 copies")
+    try! Data("one".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02)
+    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_002_000))!
+    check(GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before convert"), date: Date(), bytes: 0).reason == "before conversion" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before engine update"), date: Date(), bytes: 0).reason == "before engine update" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked"), date: Date(), bytes: 0).reason == "manual backup", "backups say why they were made")
+    let carried = tmp.appendingPathComponent("carried")
+    let out1 = try! d.export(into: carried, named: "My Game")!
+    check(out1.lastPathComponent.contains("My Game") && fm.fileExists(atPath: out1.appendingPathComponent("save/0/file.bin").path), "a save can be copied out")
+    let keep = mk("carried/keep.txt", "mine")
+    let out2 = try! d.export(into: carried, named: "My Game")!
+    check(out2 != out1 && fm.fileExists(atPath: keep.path), "copying out never replaces a folder the player chose")
     try! Data("two".utf8).write(to: d.save.appendingPathComponent("0/file.bin"))
     try! d.restore(b)
     check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "one", "backup restored")
-    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" }, "the save it replaced is kept")
+    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" } && d.list().count <= GameData.kept, "the save it replaced is kept, still within 3 copies")
     let loose = mk("elsewhere/mysave/0/file.bin", "three").deletingLastPathComponent().deletingLastPathComponent()
     try! d.restore(loose); check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "three" && fm.fileExists(atPath: d.root.appendingPathComponent("save_device").path), "a bare save folder becomes the save")
     try? fm.createDirectory(at: tmp.appendingPathComponent("emptyfolder"), withIntermediateDirectories: true)
