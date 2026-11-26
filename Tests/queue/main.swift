@@ -44,6 +44,13 @@ check(queueUp(m, 8, "slow") && queueUp(m, 9) && queueUp(m, 10), "three"); try! f
 // a restart
 check(queueUp(m, 11, "slow") && queueUp(m, 12), "two"); check(wait { log().contains("start \(id(11))") }, "running"); let saved = Queue.load(); check(saved.paused && saved.waiting.map(\.title) == ["Game 11", "Game 12"], "a crash now would keep both, paused"); check(wait { m.queue.current == nil && !m.checkingGame && m.queue.waiting.isEmpty }, "finish"); check(!fm.fileExists(atPath: Queue.file.path) || !m.queue.problems.isEmpty, "no queue file is left")
 check(!log().contains("overlap") && log().filter { $0.hasPrefix("start") }.count == 17, "never two at once, each once"); check((try? String(contentsOf: root.appendingPathComponent("prod.keys"), encoding: .utf8)) == "k = 1", "the keys were never touched")
+// the chosen effort is remembered, carried into a job, and handed to the engine
+m.effort = 50; let wantWorkers = conversionWorkers(50)
+check(Model().effort == 50, "a fresh start reads the chosen effort")
+check(UserDefaults.standard.integer(forKey: "conversionEffort") == 50 && queueUp(m, 99) && m.queue.current?.effort == 50, "the choice is kept and goes into the queue")
+check(wait { m.queue.current == nil && !m.checkingGame && game(m, id(99)) != nil }, "a gentle conversion still finishes")
+check(log().contains("effort J=\(wantWorkers) DMSH_PROCS=\(wantWorkers) DM_REWRITE_J=\(wantWorkers)"), "the engine got only the byte-safe worker limit")
+m.effort = 100
 // covers
 func pic(_ n: String, _ w: Int, _ h: Int) -> URL { let r = Cover.bitmap(w, h) { NSColor.red.setFill(); NSRect(x: 0, y: 0, width: w, height: h).fill() }; let u = root.appendingPathComponent(n); try! r.representation(using: .png, properties: [:])!.write(to: u); return u }
 func px(_ i: NSImage) -> NSBitmapImageRep { i.representations.compactMap { $0 as? NSBitmapImageRep }.first! }

@@ -359,6 +359,8 @@ final class Model: ObservableObject {
     private var retry: DispatchWorkItem?
     @Published var moving: String?
     @Published var quick = UserDefaults.standard.bool(forKey: "skipPipeline") { didSet { UserDefaults.standard.set(quick, forKey: "skipPipeline") } }
+    @Published var effort = min(100, max(10, UserDefaults.standard.object(forKey: "conversionEffort") as? Int ?? 100)) { didSet { UserDefaults.standard.set(effort, forKey: "conversionEffort") } }
+    var effortSlider: Binding<Double> { Binding(get: { Double(self.effort) / 100 }, set: { self.effort = min(100, max(10, Int(round($0 * 100)))) }) }
     @Published var checkingGame = false   // a game just converted is being checked
     @Published var converting = false   // kept apart from the builder, whose every progress report would redraw the library
     var arrivingIcon: NSImage? { builder.titleID.flatMap { id in games.first { $0.titleID.uppercased() == id } }.map { icon($0) } }
@@ -719,7 +721,7 @@ final class Model: ObservableObject {
             if packages, findKeys(keys) == nil, !pickKeys() { return false }
             let kept = Set(review.family.map { keptFiles($0).map(\.path) } ?? []), before = review.family.flatMap { sources[$0] } ?? []
             let now = review.parts.filter { !kept.contains($0.url.path) && packageTypes.union(["nup"]).contains($0.url.pathExtension.lowercased()) }.map { SourceFile(path: $0.url.path, size: $0.bytes) }
-            let job = Job(title: existing?.name ?? jobTitle, family: review.family, parts: parts.map(\.path), place: reviewPlace.path, quick: quick, after: forXcode ? .ask : after, bytes: parts.reduce(0) { $0 + folderSize($1) }, needsKeys: packages, sources: before.filter { b in !now.contains { $0.path == b.path } } + now, target: target, viaXcode: forXcode ? true : nil)
+            let job = Job(title: existing?.name ?? jobTitle, family: review.family, parts: parts.map(\.path), place: reviewPlace.path, quick: quick, after: forXcode ? .ask : after, bytes: parts.reduce(0) { $0 + folderSize($1) }, needsKeys: packages, sources: before.filter { b in !now.contains { $0.path == b.path } } + now, target: target, viaXcode: forXcode ? true : nil, effort: effort)
             if existing == nil, !organized { destination = reviewPlace }
             let idle = queue.current == nil && queue.waiting.isEmpty
             // With nothing ahead of it, a problem is said here and now; otherwise it is checked again when its turn comes.
@@ -753,7 +755,7 @@ final class Model: ObservableObject {
             do {
                 let input = try resolveInput(j.urls, family: j.family)
                 buildPlace = j.placeURL; buildSources = j.sources
-                builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone
+                builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, effort: j.effort, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone
                 if builder.running { return }
                 queue.failed(builder.error ?? "The conversion engine did not start.")
             } catch { queue.problems.append(Problem(title: j.title, reason: error.localizedDescription)); queue.done() }

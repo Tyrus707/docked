@@ -86,6 +86,7 @@ Docked is tested on macOS 27.2. Older versions and Intel Macs are supported in t
 - **Native, not emulated.** nxnative converts the game itself, so you get a regular Mac app rather than a game running inside another program.
 - **Knows what's what.** Docked sorts the game, its update and its DLC for you, and warns you before starting if a piece is missing or nobody has tested that game yet.
 - **A queue that keeps going.** Add as many games as you like. The queue survives a restart, and if one game fails the rest carry on.
+- **Convert without losing your Mac.** Choose how much of your Mac converting may use, from full speed down to a slow setting that leaves room to play. Lower settings take longer but do not change the finished game.
 - **Add an update or DLC later.** Docked reuses the work it has already done and keeps your save.
 - **Play with Settings.** Choose frame rate, resolution and language, where the game allows it.
 - **Checked before it's called done.** When a game finishes, Docked makes sure the app is whole, holds everything it needs and has a signature that matches. If something is off, such as graphics that were only partly prepared, Docked converts the game once more, which redoes only the missing part. If it's still not right, Docked tells you and keeps what it needs to try again quickly.

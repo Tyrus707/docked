@@ -45,6 +45,12 @@ struct SettingsSheet: View {
             flip("Find details when a game is done", "Critic score, popularity, year and genre from Wikidata and Wikipedia, which see only the game's name.", .init(get: { model.lookUp == true && model.metaConverted ?? true }, set: { model.metaConverted = $0; if $0, model.lookUp != true { model.lookUp = true } }))
             line("When a game is done", "You can change this for each game.") { Picker("When a game is done", selection: $model.after) { ForEach(After.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
             flip("Skip the pipeline step", "Faster to convert, slower to start the first time.", $model.quick)
+            line("How much of your Mac can converting use?", "\(conversionEffortNote(model.effort)) Lower means a slower conversion, but more room for games. The finished game is the same. Changes apply to games added after this.") {
+                HStack(spacing: 8) {
+                    Slider(value: model.effortSlider, in: 0.1...1, step: 0.05).frame(width: 150)
+                    Text("\(model.effort)%").font(.caption).monospacedDigit().frame(width: 34, alignment: .trailing)
+                }
+            }
             if !phoneGames.isEmpty { line("Games for iPhone and iPad", phoneGames.map(\.name).joined(separator: ", ")) { Button("Open Steps…") { model.leaveSettings { model.showXcode = true } } } }
             line("Space", "Leftovers, original files and keys you no longer need.") { Button("Clean Up…") { model.leaveSettings { model.cleanUp(nil) } } }
         }

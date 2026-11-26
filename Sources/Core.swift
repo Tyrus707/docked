@@ -176,12 +176,43 @@ func buildArguments(_ input: BuildInput, keys: String?, quick: Bool = false, pho
     return a
 }
 
-func engineEnvironment() -> [String: String] {
+// The user's "how much of my Mac" choice, as workers the engine already understands.
+// Full speed leaves the engine's own default (every core) alone. Lower settings leave
+// at least one core for the desktop and never change what the engine produces.
+func conversionWorkers(_ effort: Int, cores: Int = ProcessInfo.processInfo.activeProcessorCount) -> Int {
+    let n = max(1, cores), want = min(100, max(10, effort))
+    guard want < 100 else { return n }
+    return max(1, min(n - 1, Int(round(Double(n) * Double(want) / 100))))
+}
+
+// Only worker-count switches. The prewarm thread count is deliberately not here: it
+// can change how archive files are grouped, even though the finished game still works.
+func conversionEnvironment(_ base: [String: String], effort: Int, cores: Int = ProcessInfo.processInfo.activeProcessorCount) -> [String: String] {
+    var e = base
+    guard effort < 100 else { return e }
+    let workers = String(conversionWorkers(effort, cores: cores))
+    e["J"] = workers
+    e["DMSH_PROCS"] = workers
+    e["DM_REWRITE_J"] = workers
+    return e
+}
+
+func conversionEffortNote(_ effort: Int) -> String {
+    switch min(100, max(10, effort)) {
+    case 100: return "Full speed. The finished game is unchanged."
+    case 75...99: return "Almost full speed, with a little left for games."
+    case 50...74: return "Around half speed, with room to play while it works."
+    case 25...49: return "Slower, leaving more of your Mac for games."
+    default: return "Slowest, leaving most of your Mac free."
+    }
+}
+
+func engineEnvironment(effort: Int = 100) -> [String: String] {
     var e = ProcessInfo.processInfo.environment
     e["DEVELOPER_DIR"] = Paths.xcode
     e["PATH"] = (Paths.unpacked ? Paths.tools.path + "/bin:" : Paths.root.path + "/venv/bin:") + "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     e["LANG"] = "en_US.UTF-8"
-    return e
+    return conversionEnvironment(e, effort: effort)
 }
 
 // Needs about twice the game plus 10 GB while building.
