@@ -32,6 +32,7 @@ struct PadHints: View {
 // ---- sidebar ----
 struct Sidebar: View {
     @EnvironmentObject var model: Model
+    @ObservedObject private var cheevos = CheevoStore.shared
     @State private var naming = false
     @Namespace private var mark
     @Environment(\.accessibilityReduceMotion) private var still
@@ -40,6 +41,7 @@ struct Sidebar: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 row(.home); row(.all); row(.favorites)
+                if !model.library.roms.isEmpty || Cheevos.user != nil { CheevoRow() }
                 head("Consoles"); ForEach(model.consolesShown, id: \.id) { row(.console($0.id)) }
                 head("Progress"); row(.status(.playing)); row(.status(.finished)); row(.status(.aside)); row(.status(.none))
                 HStack { head("Collections"); Spacer(); Menu { Button("New Collection…") { name = ""; naming = true }; Button("New Smart Collection…") { model.editing = SmartCollection(name: "") } } label: { Image(systemName: "plus").frame(width: 22, height: 22).contentShape(Rectangle()) }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().foregroundStyle(style.soft).help("New Collection").accessibilityLabel("New Collection").padding(.top, 12) }
@@ -70,8 +72,8 @@ struct Sidebar: View {
     }
     func head(_ t: String) -> some View { Text(t).font(.caption.weight(.semibold)).foregroundStyle(style.soft).padding(.leading, 10).padding(.top, 14).padding(.bottom, 3).accessibilityAddTraits(.isHeader) }
     func row(_ s: Section) -> some View {
-        let on = model.section == s, n = s == .home ? nil : model.count(s)
-        return Button { withAnimation(still ? nil : .easeOut(duration: 0.18)) { model.section = s } } label: {
+        let on = model.section == s && !cheevos.page, n = s == .home ? nil : model.count(s)
+        return Button { cheevos.page = false; withAnimation(still ? nil : .easeOut(duration: 0.18)) { model.section = s } } label: {
             HStack(spacing: 9) {
                 Group { if case let .console(id) = s { ConsoleIcon(id: id) } else { Image(systemName: on && s == .favorites ? "heart.fill" : s.symbol) } }.frame(width: 18).foregroundStyle(s.machine?.color ?? (on ? style.accent : style.soft))
                 Text(s.title).foregroundStyle(style.text).lineLimit(1)
@@ -86,9 +88,10 @@ struct Sidebar: View {
 // ---- main pane ----
 struct Pane: View {
     @EnvironmentObject var model: Model
+    @ObservedObject private var cheevos = CheevoStore.shared
     @Binding var deleting: Game?
     var body: some View {
-        ZStack { if model.section == .home && model.search.isEmpty { Home(deleting: $deleting).transition(.opacity) } else { Grid(deleting: $deleting).id(model.search.isEmpty ? model.section : .all).transition(.opacity) } }
+        ZStack { if cheevos.page && model.search.isEmpty { AchievementsPage().transition(.opacity) } else if model.section == .home && model.search.isEmpty { Home(deleting: $deleting).transition(.opacity) } else { Grid(deleting: $deleting).id(model.search.isEmpty ? model.section : .all).transition(.opacity) } }
             .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle()).onTapGesture { model.selected = nil }   // blank space; games and buttons take their own clicks
     }
 }
@@ -263,6 +266,7 @@ struct Tile: View {
             else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), small: small, select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
         }.opacity(game.away != nil ? 0.78 : game.missing ? 0.5 : 1)
         .overlay(alignment: .topTrailing) { if game.away != nil, !model.marking { Image(systemName: "icloud.and.arrow.down").font(.system(size: small || model.compact ? 12 : 15, weight: .semibold)).foregroundStyle(.white).padding(6).background(.black.opacity(0.55), in: Circle()).padding(8).help("Offloaded. Play or Download brings it back.").accessibilityLabel("Offloaded") } }
+        .overlay(alignment: .topLeading) { if !model.marking, let r = game.rom, let p = Cheevos.of(r), p.earned > 0 { CheevoPill(p: p).padding(small || model.compact ? 6 : 10) } }
         .onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
         .overlay { if model.marking { Mark(on: model.marked.contains(game.id)).contentShape(Rectangle()).onTapGesture { model.mark(game) }.accessibilityElement().accessibilityLabel(game.name).accessibilityAddTraits(model.marked.contains(game.id) ? [.isButton, .isSelected] : .isButton) } }
     }
