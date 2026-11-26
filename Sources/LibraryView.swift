@@ -145,14 +145,18 @@ struct Hero: View {
 struct Grid: View {
     @EnvironmentObject var model: Model
     @Binding var deleting: Game?
+    @State private var confirm: [Game]?
     var body: some View {
         let list = model.gridList, groups = model.gridGroups
-        GeometryReader { geo in let back = model.jumpBack(perRow(geo.size.width)); ScrollViewReader { p in ScrollView {
+        let lost = list.filter { $0.missing && drive(of: $0.url.path)?.connected != false }   // can't be found, and not because a drive is away
+        GeometryReader { geo in let back = model.marking ? [] : model.jumpBack(perRow(geo.size.width)); ScrollViewReader { p in ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .firstTextBaseline, spacing: 14) {
                     Text(model.search.isEmpty ? model.section.title : "Search").font(.title2.weight(.semibold)).foregroundStyle(style.text).accessibilityAddTraits(.isHeader)
                     Text("\(list.count)").foregroundStyle(style.soft).monospacedDigit()
                     Spacer()
+                    if !lost.isEmpty, !model.marking { Button("Remove \(lost.count) Missing") { confirm = lost }.buttonStyle(.plain).foregroundStyle(style.accent).help("Take games that can't be found out of the library") }
+                    if !list.isEmpty { Button(model.marking ? "Done" : "Select") { model.marking.toggle() }.buttonStyle(.plain).foregroundStyle(style.accent) }
                     Menu {
                         Picker("Sort by", selection: $model.sort) { ForEach(SortBy.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
                         Picker("Group by", selection: $model.group) { ForEach(GroupBy.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.inline)
@@ -166,6 +170,28 @@ struct Grid: View {
             }.padding(22)
         }.whenChanged(model.cursor) { if let c = model.cursor { withAnimation(.easeOut(duration: 0.15)) { p.scrollTo("\(c.row)|\(c.game)") } } } }
             .onAppear { model.columns = perRow(geo.size.width) }.whenChanged(geo.size.width) { model.columns = perRow(geo.size.width) }.whenChanged(model.compact) { model.columns = perRow(geo.size.width) } }
+            .safeAreaInset(edge: .bottom) { if model.marking { marks(list) } }
+            .onDisappear { model.marking = false }
+            .alert(confirm.map { $0.count == 1 ? "Remove \($0[0].name) from the library?" : "Remove \($0.count) games from the library?" } ?? "", isPresented: .init(get: { confirm != nil }, set: { if !$0 { confirm = nil } })) {
+                Button("Remove", role: .destructive) { if let c = confirm { remove(c) }; confirm = nil }
+                Button("Cancel", role: .cancel) { confirm = nil }
+            } message: { Text("Their files stay where they are, and their play time is kept if you add them again.") }
+    }
+    // Choosing several: a bar at the foot of the grid
+    func marks(_ list: [Game]) -> some View {
+        let n = model.marked.count
+        return HStack(spacing: 14) {
+            Text(n == 0 ? "Click games to choose them" : "\(n) chosen").foregroundStyle(style.text).monospacedDigit()
+            Spacer()
+            Button(n == list.count ? "Choose None" : "Choose All") { model.marked = n == list.count ? [] : Set(list.map(\.id)) }
+            Button("Remove from Library") { confirm = list.filter { model.marked.contains($0.id) } }.disabled(n == 0).tint(style.button)
+            Button("Done") { model.marking = false }
+        }.padding(.horizontal, 18).padding(.vertical, 10).background(style.tile.opacity(0.97)).overlay(alignment: .top) { Rectangle().fill(style.line).frame(height: 1) }
+    }
+    func remove(_ list: [Game]) {
+        let r = model.forget(list); model.marking = false
+        if r.kept > 0 { model.tell("\(r.kept) converted \(r.kept == 1 ? "game stays" : "games stay"): \(r.kept == 1 ? "it is" : "they are") in your library folder. Use Move Game to Trash to remove \(r.kept == 1 ? "it" : "them").", good: false) }
+        else if r.gone > 0 { model.tell(r.gone == 1 ? "1 game has left the library." : "\(r.gone) games have left the library.") }
     }
     var tile: CGFloat { model.compact ? 112 : 156 }
     // One run of the grid, under its own heading when it has one ("grid" is the untitled whole list).
@@ -178,7 +204,7 @@ struct Grid: View {
             }.padding(.top, 8)
         }
         LazyVGrid(columns: [GridItem(.adaptive(minimum: tile, maximum: tile + 44), spacing: 10, alignment: .top)], alignment: .leading, spacing: 10) {
-            if arriving && model.converting && model.section == .all && model.search.isEmpty { ArrivingTile() }
+            if arriving && model.converting && model.section == .all && model.search.isEmpty && !model.marking { ArrivingTile() }
             ForEach(l) { Tile(game: $0, deleting: $deleting, row: row, small: model.compact).id("\(row)|\($0.id)") }
         }
     }
@@ -215,6 +241,16 @@ struct Tile: View {
             if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
             else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), small: small, select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
         }.opacity(game.missing ? 0.5 : 1).onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
+        .overlay { if model.marking { Mark(on: model.marked.contains(game.id)).contentShape(Rectangle()).onTapGesture { model.mark(game) }.accessibilityElement().accessibilityLabel(game.name).accessibilityAddTraits(model.marked.contains(game.id) ? [.isButton, .isSelected] : .isButton) } }
+    }
+}
+
+// Over a tile while choosing several: a tick in the corner, and the whole tile takes the click
+struct Mark: View {
+    let on: Bool
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12).strokeBorder(on ? style.accent : .clear, lineWidth: 3).background(RoundedRectangle(cornerRadius: 12).fill(Color.black.opacity(on ? 0 : 0.18)))
+            .overlay(alignment: .topLeading) { Image(systemName: on ? "checkmark.circle.fill" : "circle").font(.system(size: 22, weight: .semibold)).foregroundStyle(on ? style.accent : .white).background(Circle().fill(Color.black.opacity(0.45)).padding(2)).padding(12) }
     }
 }
 

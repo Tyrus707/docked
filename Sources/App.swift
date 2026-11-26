@@ -49,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 final class Model: ObservableObject {
-    @Published var games: [Game] = []
+    @Published var games: [Game] = [] { didSet { memo = Memo() } }
     @Published var checks: [Check] = []
     @Published var checking = false
     @Published var message: String?   // an alert, for a problem the player must act on
@@ -63,9 +63,22 @@ final class Model: ObservableObject {
         didSet { UserDefaults.standard.set(keys, forKey: "keysPath") }   // only the location; the keys are never copied
     }
     // ---- library ----
-    @Published var library = LibraryData.load() { didSet { if library != oldValue { library.save() } } }
+    @Published var library = LibraryData.load() { didSet { if library != oldValue { memo = Memo(); saveSoon() } } }
     @Published var section = Section.home
-    @Published var search = ""
+    @Published var search = "" { didSet { if search != oldValue { memo = Memo() } } }
+    // Each shelf's games, sorted, and each section's count, worked out once until the games or the library change: a big library is never sorted again just to redraw
+    private struct Memo { var shown: [ShownKey: [Game]] = [:]; var counts: [Section: Int] = [:] }
+    private struct ShownKey: Hashable { let section: Section, by: SortBy }
+    private var memo = Memo()
+    // Saved a moment after the last change, off the main thread, and at once when Docked quits: a thousand covers found in a row is one write, not a thousand
+    private var saveLater: DispatchWorkItem?
+    private static let saver = DispatchQueue(label: "library-save", qos: .utility)
+    func saveSoon() {
+        saveLater?.cancel()
+        let w = DispatchWorkItem { [weak self] in guard let self else { return }; self.saveLater = nil; let l = self.library; Model.saver.async { l.save() } }
+        saveLater = w; DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: w)
+    }
+    func saveNow() { if let w = saveLater { w.cancel(); saveLater = nil; let l = library; Model.saver.sync { l.save() } } else { Model.saver.sync {} } }
     @Published var sort = SortBy(rawValue: UserDefaults.standard.string(forKey: "sort") ?? "") ?? .recent { didSet { UserDefaults.standard.set(sort.rawValue, forKey: "sort") } }
     @Published var group = GroupBy(rawValue: UserDefaults.standard.string(forKey: "group") ?? "") ?? .auto { didSet { UserDefaults.standard.set(group.rawValue, forKey: "group") } }
     @Published var compact = UserDefaults.standard.bool(forKey: "compact") { didSet { UserDefaults.standard.set(compact, forKey: "compact") } }
@@ -178,24 +191,34 @@ final class Model: ObservableObject {
     }
     func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); forgetArt(g) }
     func hasArt(_ g: Game) -> Bool { FileManager.default.fileExists(atPath: Cover.custom(g).path) }
-    func forgetArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers[g.id] = nil; reload() }
+    func forgetArt(_ g: Game) { dropArt(g); reload() }
+    func dropArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers.removeObject(forKey: g.id as NSString); coverReady() }
     // Dropped on a game: a picture becomes its cover, sound its theme, anything else is added as usual.
     func dropped(_ urls: [URL], on g: Game) { if urls.count == 1, pictureTypes.contains(urls[0].pathExtension.lowercased()) { setArt(g, urls[0]) } else if urls.count == 1, soundTypes.contains(urls[0].pathExtension.lowercased()) { setTheme(g, urls[0]) } else { add(urls) } }
-    var covers: [String: NSImage] = [:]
+    let covers: NSCache<NSString, NSImage> = { let c = NSCache<NSString, NSImage>(); c.totalCostLimit = 220 << 20; return c }()   // about 500 covers; the rest load again from disk
     private var making = Set<String>()
     @Published private var coverTick = 0
-    // Made in the background the first time it is wanted; the tile waits with a plain one.
+    private var tickSoon = false
+    // Made or loaded in the background the first time it is wanted; the tile waits with a plain one.
     func cover(_ g: Game) -> NSImage? {
-        if let c = covers[g.id] { return c }
+        if let c = covers.object(forKey: g.id as NSString) { return c }
         guard making.insert(g.id).inserted else { return nil }
-        let own = Cover.custom(g), box = g.rom.flatMap { RetroArch.art($0) }, icns = g.url.appendingPathComponent("Contents/Resources/AppIcon.icns"), plain = g.rom != nil || !FileManager.default.fileExists(atPath: icns.path) ? (hasArt(g) || box != nil ? nil : icon(g)) : nil
-        Cover.queue.async {
-            let c: NSImage? = autoreleasepool { let art = NSImage(contentsOf: own) ?? box.flatMap { NSImage(contentsOf: $0) } ?? plain ?? NSImage(contentsOf: icns); return art.map { Cover.make(art: $0) } }
-            DispatchQueue.main.async { self.making.remove(g.id); self.covers[g.id] = c ?? self.icon(g); if self.making.isEmpty || self.covers.count % 8 == 0 { self.coverTick += 1 } }
+        let key = g.id, id = g.titleID, rom = g.rom, app = g.url
+        Cover.work.addOperation {
+            let c = autoreleasepool { Cover.tile(id: id, rom: rom, app: app) }
+            DispatchQueue.main.async { self.making.remove(key); self.covers.setObject(c, forKey: key as NSString, cost: Cover.cost); self.coverReady() }
         }
         return nil
     }
-    // ---- the chosen game ----
+    // Covers that arrive together show together: one redraw at most every tenth of a second, not one per cover
+    private func coverReady() {
+        guard !tickSoon else { return }; tickSoon = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.tickSoon = false; self.coverTick &+= 1 }
+    }
+    // ---- the chosen game, or several chosen to remove together ----
+    @Published var marking = false { didSet { if !marking { marked = [] } } }
+    @Published var marked = Set<String>()
+    func mark(_ g: Game) { if marked.contains(g.id) { marked.remove(g.id) } else { marked.insert(g.id) } }
     @Published var selected: String? { didSet { if selected != oldValue { themeUpdate() } } }
     // ---- theme music ----
     let theme = ThemePlayer()
@@ -254,8 +277,14 @@ final class Model: ObservableObject {
         NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil); if couch { couchBack() }
     }
 
-    func shown(_ s: Section, by: SortBy = .name) -> [Game] { library.show(games, in: s, search: search, by: by) }
-    func count(_ s: Section) -> Int { games.reduce(0) { $0 + (library.has($1, s) ? 1 : 0) } }
+    func shown(_ s: Section, by: SortBy = .name) -> [Game] {
+        let k = ShownKey(section: s, by: by); if let l = memo.shown[k] { return l }
+        let l = library.show(games, in: s, search: search, by: by); memo.shown[k] = l; return l
+    }
+    func count(_ s: Section) -> Int {
+        if let n = memo.counts[s] { return n }
+        let n = games.reduce(0) { $0 + (library.has($1, s) ? 1 : 0) }; memo.counts[s] = n; return n
+    }
     func edit(_ g: Game, _ c: (inout Entry) -> Void) { library.edit(g.titleID, c) }
     func isRunning(_ g: Game) -> Bool { runningIDs.contains(g.titleID.uppercased()) }
     func newCollection(_ name: String, adding g: Game?) { if let n = library.addCollection(name), let g { edit(g) { if !$0.collections.contains(n) { $0.collections.append(n) } } } }
@@ -268,7 +297,7 @@ final class Model: ObservableObject {
     private func trackPlay() {
         tracker.identify = { [weak self] u in self?.games.first { u.path == $0.url.path || u.path.hasPrefix($0.url.path + "/") }?.titleID.uppercased() }
         tracker.countedUntil = { [weak self] id in self?.library.entry(id).lastPlayed }
-        AppDelegate.leaving = { [weak self] in self?.tracker.flush() }
+        AppDelegate.leaving = { [weak self] in self?.tracker.flush(); self?.saveNow() }
         tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack() }
         tracker.changed = { [weak self] in guard let s = self else { return }; s.runningIDs = s.tracker.running; s.themeUpdate() }
         tracker.start()
@@ -338,13 +367,13 @@ final class Model: ObservableObject {
 
     func icon(_ g: Game) -> NSImage {
         if let i = icons[g.id] { return i }
-        if let r = g.rom { let i = romIcon(r); icons[g.id] = i; return i }
+        if let r = g.rom { let i = Model.romIcon(r); icons[g.id] = i; return i }
         let has = FileManager.default.fileExists(atPath: g.url.appendingPathComponent("Contents/Resources/AppIcon.icns").path)
-        let i = autoreleasepool { Cover.small(has ? NSWorkspace.shared.icon(forFile: g.url.path) : plainIcon(), 256) }; icons[g.id] = i; return i   // the full-size art is let go at once
+        let i = autoreleasepool { Cover.small(has ? NSWorkspace.shared.icon(forFile: g.url.path) : Model.plainIcon(), 256) }; icons[g.id] = i; return i   // the full-size art is let go at once
     }
 
     // A game's box art, cropped to a tile, or its console's colour and name
-    private func romIcon(_ r: Rom) -> NSImage {
+    static func romIcon(_ r: Rom) -> NSImage {
         let art = RetroArch.art(r).flatMap { NSImage(contentsOf: $0) }, c = console(r.console)
         return NSImage(size: NSSize(width: 256, height: 256), flipped: false) { _ in
             let box = NSRect(x: 25, y: 25, width: 206, height: 206), p = NSBezierPath(roundedRect: box, xRadius: 47, yRadius: 47); p.addClip()
@@ -360,7 +389,7 @@ final class Model: ObservableObject {
     }
 
     // A game without art of its own
-    private func plainIcon() -> NSImage {
+    static func plainIcon() -> NSImage {
         NSImage(size: NSSize(width: 256, height: 256), flipped: true) { _ in
             guard let c = NSGraphicsContext.current?.cgContext else { return false }
             c.addPath(CGPath(roundedRect: CGRect(x: 25, y: 25, width: 206, height: 206), cornerWidth: 47, cornerHeight: 47, transform: nil)); c.setFillColor(CGColor(srgbRed: 0.12, green: 0.37, blue: 0.42, alpha: 1)); c.fillPath()
@@ -448,18 +477,37 @@ final class Model: ObservableObject {
 
     // Every game Docked knows: converted games in its folders and wherever they were added from, games for other consoles where they are kept.
     // One that can't be found stays, marked missing, so a drive that is unplugged takes nothing out of the library.
+    // One whose file was deleted, from a folder that is still there, leaves the library; its play time stays in case it comes back.
     func reload() {
         var seen = Set<String>(), l = library
-        let dirs = ([Paths.games, libraryFolder] + folders.map { URL(fileURLWithPath: $0) }).flatMap(libraryFolders)
-        var found = (dirs.flatMap { scanLibrary($0) } + l.apps.keys.compactMap { p in seen.contains(p) ? nil : gameAt(URL(fileURLWithPath: p)) }).filter { seen.insert($0.id).inserted && !l.removed.contains($0.url.path) }
+        let removed = Set(l.removed), dirs = ([Paths.games, libraryFolder] + folders.map { URL(fileURLWithPath: $0) }).flatMap(libraryFolders)
+        var found = (dirs.flatMap { scanLibrary($0) } + l.apps.keys.compactMap { p in seen.contains(p) ? nil : gameAt(URL(fileURLWithPath: p)) }).filter { seen.insert($0.id).inserted && !removed.contains($0.url.path) }
         found += l.settle(found: found)
-        games = found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        games += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !FileManager.default.fileExists(atPath: $0.path)) }
+        var all = found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        all += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !FileManager.default.fileExists(atPath: $0.path)) }
+        let busy = moving != nil || filing != nil || removing
+        let deleted = busy ? [] : all.filter { $0.missing && deletedFile($0.url.path) }
+        if !deleted.isEmpty {
+            for g in deleted { if g.rom != nil { l.removeRom(g.titleID) } else { l.removeApp(g.url.path) } }
+            let gone = Set(deleted.map(\.id)); all.removeAll { gone.contains($0.id) }
+            tell(deleted.count == 1 ? "\(deleted[0].name) was deleted, so it has left the library. Add it again and its play time comes back." : "\(deleted.count) games were deleted, so they have left the library. Add one again and its play time comes back.")
+        }
+        games = all
         l.meet(games); if l != library { library = l }; offers = offers.filter { o in games.contains { $0.id == o.id } }; if let s = selected, !games.contains(where: { $0.id == s }) { selected = nil }
+    }
+    // Many games out of the library at once. Their files stay where they are. A converted game kept in the library's own folders stays, as its file is the library.
+    @discardableResult func forget(_ list: [Game]) -> (gone: Int, kept: Int) {
+        var l = library, gone = 0, kept = 0
+        for g in list {
+            if g.rom != nil { l.removeRom(g.titleID); gone += 1 }
+            else if g.missing || !inLibrary(g.url) { l.removeApp(g.url.path); gone += 1 }
+            else { kept += 1 }
+        }
+        library = l; reload(); return (gone, kept)
     }
 
     private func finished() {
-        icons = [:]; covers = [:]; sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
+        icons = [:]; covers.removeAllObjects(); sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
         switch builder.stage {
         case "Done":
             if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
@@ -544,7 +592,7 @@ final class Model: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try placeGame(app, in: dir) }
             DispatchQueue.main.async {
-                self.moving = nil; self.icons = [:]; self.covers = [:]
+                self.moving = nil; self.icons = [:]; self.covers.removeAllObjects()
                 switch result {
                 case .success: if dir.path != Paths.games.path, !self.folders.contains(dir.path) { self.folders.append(dir.path) }
                 case .failure(let e): self.message = "\(app.deletingPathExtension().lastPathComponent) stayed in \(app.deletingLastPathComponent().lastPathComponent). \(e.localizedDescription)"
@@ -856,7 +904,7 @@ final class Model: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
         for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
-        for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers = [:]; self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
+        for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers.removeAllObjects(); self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
         lookInWatched(force: true)
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil { DispatchQueue.global(qos: .utility).async { Update.clearBackups(Paths.root.appendingPathComponent("Backups")) } }
         if ProcessInfo.processInfo.environment["DOCKED_ROOT"] == nil, let o = Arrive.offer(me: Bundle.main.bundleURL), UserDefaults.standard.string(forKey: "stayedPut") != appVersion { DispatchQueue.main.async { self.arrive(o) } }

@@ -20,7 +20,8 @@ extension Model {
 
     func find(_ id: String, byHand: Bool = false) {
         guard let r = library.roms.first(where: { $0.id == id }), let c = console(r.console), !c.native, finding.insert(id).inserted else { return }
-        Lookup.queue.async {
+        let run: (@escaping () -> Void) -> Void = byHand ? { Lookup.queue.async(execute: $0) } : { Lookup.work.addOperation($0) }   // one asked for by hand doesn't wait behind the rest
+        run {
             let m = Result { try Lookup.match(r) }
             // Sure of it: details and cover straight away. By hand, the player always sees the choices, the best first.
             if !byHand, case .success(.found(let best)) = m {
@@ -80,13 +81,18 @@ extension Model {
         if rename || r.name == cleanName(URL(fileURLWithPath: r.path)) { r.name = info.name }
         r.info = info; library.roms[i] = r
         if let g = games.first(where: { $0.titleID == id }) { findMeta(Game(url: g.url, name: info.name, titleID: id, rom: r), force: true) }
-        if let g = games.first(where: { $0.titleID == id }) { forgetArt(g) } else { reload() }
+        refresh(r)
     }
     func forgetInfo(_ id: String) {
         guard let i = library.roms.firstIndex(where: { $0.id == id }) else { return }
         try? FileManager.default.removeItem(at: Lookup.artFile(id))
         library.roms[i].info = nil; library.roms[i].name = cleanName(URL(fileURLWithPath: library.roms[i].path))
-        if let g = games.first(where: { $0.titleID == id }) { forgetArt(g) } else { reload() }
+        refresh(library.roms[i])
+    }
+    // The game's new name, details and cover, without looking through every folder again: a big library found in a row stays smooth
+    private func refresh(_ r: Rom) {
+        guard let j = games.firstIndex(where: { $0.rom?.id == r.id }) else { reload(); return }
+        var g = games[j]; g.rom = r; g.name = r.name; games[j] = g; dropArt(g)
     }
 }
 

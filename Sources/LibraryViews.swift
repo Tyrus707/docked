@@ -140,6 +140,7 @@ extension SettingsSheet {
             line("Games from other folders", model.addMode?.detail ?? "Docked asks each time.") { Picker("Games from other folders", selection: $model.addMode) { Text("Ask Each Time").tag(AddMode?.none); Divider(); ForEach(AddMode.allCases, id: \.self) { Text($0.label).tag(AddMode?.some($0)) } }.labelsHidden().fixedSize() }
             line("Organize", "Puts games in Docked's folders where they belong, after showing you the list.") { Button("Organize…") { model.planTidy() }.disabled(!model.organized) }
             line("Find games", "Converted games, OpenEmu, RetroArch, Ryujinx, and any folder or drive.") { Button("Find…") { model.findGames() } }
+            ArtworkRow()
             VStack(alignment: .leading, spacing: 6) {
                 line("Watched folders", "New games in these are added on their own and stay where they are. A drive's games come back when it's connected.") { Button("Add Folder…") { model.addWatched() } }
                 ForEach(model.watched, id: \.self) { w in
@@ -154,4 +155,31 @@ extension SettingsSheet {
             }
         }
     }
+}
+
+// Where covers are kept and how much room they take, with a way to clear what no game uses
+struct ArtworkRow: View {
+    @EnvironmentObject var model: Model
+    @State private var places: [ArtPlace]?
+    @State private var clearing = false
+    var body: some View {
+        let all = places ?? [], bytes = all.reduce(0) { $0 + $1.bytes }, spare = all.reduce(0) { $0 + $1.spareBytes }, files = all.reduce(0) { $0 + $1.files }
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Artwork")
+                Text(places == nil ? "Measuring…" : files == 0 ? "No covers yet." : "\(size(bytes)) in \(files) files. Covers you chose are in Docked › Artwork; found and ready-to-show ones in Docked › Metadata." + (spare > 0 ? " \(size(spare)) is left over from games no longer here." : " Nothing is left over."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if clearing { ProgressView().controlSize(.small) }
+            Button("Show") { let u = [Artwork.yours, Artwork.found, Artwork.made].filter { FileManager.default.fileExists(atPath: $0.path) }; NSWorkspace.shared.activateFileViewerSelecting(u.isEmpty ? [Paths.root] : u) }
+            Button("Clear Leftovers") { clear() }.disabled(spare == 0 || clearing).help("Covers you chose go to the Trash. Others can be found or made again.")
+        }.onAppear(perform: measure)
+    }
+    func measure() { let ids = model.games.map(\.titleID); DispatchQueue.global(qos: .utility).async { let p = Artwork.survey(ids: ids); DispatchQueue.main.async { places = p } } }
+    func clear() {
+        guard let p = places else { return }; clearing = true
+        DispatchQueue.global(qos: .utility).async { let freed = Artwork.removeSpare(p); DispatchQueue.main.async { clearing = false; model.tell("Cleared \(size(freed)) of leftover artwork."); measure() } }
+    }
+    func size(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
 }

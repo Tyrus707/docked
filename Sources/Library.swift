@@ -160,7 +160,7 @@ extension Model {
                     if let r = t.game.rom, let i = l.roms.firstIndex(where: { $0.id == r.id }) { l.roms[i].path = u.path }
                     else if t.game.rom == nil { l.apps[t.game.url.path] = nil; l.apps[u.path] = t.game.titleID.uppercased() }
                 }
-                self.library = l; self.icons = [:]; self.covers = [:]; self.reload()
+                self.library = l; self.icons = [:]; self.covers.removeAllObjects(); self.reload()
                 var say: [String] = []
                 if !busy.isEmpty { say.append("Quit \(busy.map(\.game.name).joined(separator: ", ")) and organize again to move \(busy.count == 1 ? "it" : "them").") }
                 if !failed.isEmpty { say.append("These stayed where they were. " + failed.prefix(4).joined(separator: " ")) }
@@ -198,6 +198,6 @@ extension Model {
             guard let t = titleID(of: u), t.uppercased() == g.titleID.uppercased() else { message = "That isn't \(g.name). Choose the game Docked converted."; return }
             l.apps[g.url.path] = nil; l.addApp(u.path, t)
         } else if let i = l.roms.firstIndex(where: { $0.id == g.titleID }) { l.roms[i].path = u.path }
-        library = l; icons[g.id] = nil; covers[g.id] = nil; reload()
+        library = l; icons[g.id] = nil; covers.removeObject(forKey: g.id as NSString); reload()
     }
 }
