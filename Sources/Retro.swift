@@ -57,7 +57,8 @@ enum RetroArch {
     static let coreDefaults = [("mupen64plus-rdp-plugin", "parallel"), ("mupen64plus-rsp-plugin", "parallel")]
     // Its own settings, then Docked's folders on top, so nothing the player changes in RetroArch can move them.
     // A retro look comes as its own argument, so it is used for this game only and never saved over the player's own choice.
-    static func arguments(core: URL, rom: String, shader: URL? = nil) -> [String] { ["--config", settings.path, "--appendconfig", docked.path] + (shader.map { ["--set-shader", $0.path] } ?? []) + ["-L", core.path, rom] }
+    // Online play (Netplay.swift) adds its own settings file after Docked's, and its own arguments.
+    static func arguments(core: URL, rom: String, shader: URL? = nil, net: [String] = []) -> [String] { ["--config", settings.path, "--appendconfig", docked.path + (net.isEmpty ? "" : "|" + Netplay.file.path)] + (shader.map { ["--set-shader", $0.path] } ?? []) + net + ["-L", core.path, rom] }
     // Games open in RetroArch's own full screen unless the player turns it off in Settings; then a window as big as the screen.
     static var fullScreen: Bool {
         get { UserDefaults.standard.object(forKey: "retroFullScreen") as? Bool ?? true }
@@ -191,10 +192,11 @@ enum RetroArch {
     }
     // Starts a game in Docked's RetroArch, as a program Docked runs, not an app opened through Launch Services (which would list it again).
     // ended runs on the main thread when RetroArch quits, which it does when the game is closed (quit_on_close_content).
-    static func launch(core: URL, rom: String, shader: URL? = nil, ended: @escaping () -> Void) throws -> pid_t {
-        let p = Process(); p.executableURL = app.appendingPathComponent("Contents/MacOS/RetroArch"); p.arguments = arguments(core: core, rom: rom, shader: shader)
+    static func launch(core: URL, rom: String, shader: URL? = nil, net: Netplay.Role? = nil, ended: @escaping () -> Void) throws -> pid_t {
+        if let net { try Netplay.lines(net).write(to: Netplay.file, atomically: true, encoding: .utf8) } else { try? FileManager.default.removeItem(at: Netplay.file) }
+        let p = Process(); p.executableURL = app.appendingPathComponent("Contents/MacOS/RetroArch"); p.arguments = arguments(core: core, rom: rom, shader: shader, net: net.map(Netplay.arguments) ?? [])
         p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { _ in Cheevos.scrub(settings); Cheevos.scrub(docked); DispatchQueue.main.async(execute: ended); DispatchQueue.global(qos: .utility).async { unregister(app) } }
+        p.terminationHandler = { _ in Cheevos.scrub(settings); Cheevos.scrub(docked); try? FileManager.default.removeItem(at: Netplay.file); DispatchQueue.main.async(execute: ended); DispatchQueue.global(qos: .utility).async { unregister(app) } }
         try p.run(); return p.processIdentifier
     }
     // A RetroArch the player had before keeps going in Docked's: its saves, save states and system files are copied over, never moved.

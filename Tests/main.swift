@@ -776,6 +776,16 @@ let lg = [Game(url: URL(fileURLWithPath: "/a.app"), name: "Pokémon Legends", ti
 check(gameFor(id: "0100bbbb00000000", name: nil, in: lg)?.name == "Mario Kart 8 Deluxe" && gameFor(id: nil, name: "mario", in: lg)?.name == "Mario" && gameFor(id: nil, name: "kart deluxe", in: lg)?.name == "Mario Kart 8 Deluxe" && gameFor(id: nil, name: "pokemon", in: lg)?.name == "Pokémon Legends" && gameFor(id: nil, name: "zelda", in: lg) == nil, "the game a link means")
 check(DockedLink.play("0100BBBB00000000") == "docked://play?id=0100BBBB00000000", "a game's link")
 
+// retro games online
+do {
+    var n: UInt8 = 0; let inv = Invite.make(game: "Super Game") { n &+= 7; return n }
+    check(Invite.valid(inv.room) && inv.key.count == 10 && DockedLink.parse(URL(string: inv.link)!) == .join(inv), "an invite goes through its own link: \(inv.link)")
+    check(DockedLink.parse(URL(string: "docked://join?room=evil;rm&key=x&game=y")!) == nil, "only Docked's own room names")
+    let lobbyList = Data(#"[{"fields":{"username":"Other","ip":"1.1.1.1","port":55435}},{"fields":{"username":"Docked-ABC","ip":"2.2.2.2","port":55435,"mitm_ip":"3.3.3.3","mitm_port":55001,"mitm_session":"s1"}},{"username":"Docked-DIR","ip":"4.4.4.4","port":"55435","mitm_ip":""}]"#.utf8)
+    check(Netplay.room(lobbyList, named: "Docked-ABC") == Netplay.Room(ip: "3.3.3.3", port: 55001, session: "s1") && Netplay.room(lobbyList, named: "Docked-DIR") == Netplay.Room(ip: "4.4.4.4", port: 55435, session: nil) && Netplay.room(lobbyList, named: "Nobody") == nil && Netplay.room(Data("x".utf8), named: "a") == nil, "the host's room in the lobby")
+    check(Netplay.arguments(.join(inv, Netplay.Room(ip: "3.3.3.3", port: 55001, session: "s1"))) == ["--connect", "3.3.3.3", "--port", "55001", "--mitm-session", "s1"] && Netplay.arguments(.host(inv)) == ["--host"] && Netplay.lines(.host(inv)).contains("netplay_password = \"\(inv.key)\""), "RetroArch told how to meet")
+}
+
 // library health
 do {
     let nowhere = URL(fileURLWithPath: "/nope/Gone.app")

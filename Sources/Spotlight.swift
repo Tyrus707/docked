@@ -34,6 +34,7 @@ extension Model {
             select(g); play(g)
         case .couch: if !couch { toggleCouch() }
         case .health: checkHealth()
+        case let .join(i): joinOnline(i)
         }
     }
     func copyLink(_ g: Game) {

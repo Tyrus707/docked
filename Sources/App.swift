@@ -96,6 +96,7 @@ final class Model: ObservableObject {
     @Published var asking: (files: [URL], choices: [Console])?   // a file several consoles use
     @Published var retitling: Game?
     @Published var showConsoles = false
+    @Published var joining: String?   // the online room being looked for
     @Published var health: HealthState?   // Library Health, while it is open (HealthView.swift)
     // ---- covers and details, found online once the player has said yes (Lookup.swift) ----
     @Published var lookUp = UserDefaults.standard.object(forKey: "lookUp") as? Bool { didSet { UserDefaults.standard.set(lookUp, forKey: "lookUp"); refreshCompat() } }
@@ -265,22 +266,40 @@ final class Model: ObservableObject {
     @Published var palette = Style.current { didSet { UserDefaults.standard.set(palette.id, forKey: "theme"); Style.current = palette; Style.apply() } }
     @Published var look = Look(rawValue: UserDefaults.standard.string(forKey: "look") ?? "") ?? .covers { didSet { UserDefaults.standard.set(look.rawValue, forKey: "look") } }
     var arrived: String?   // a game that has just been converted, until its tile has come down on the shelf
-    private func playRom(_ g: Game, _ r: Rom) {
+    private func playRom(_ g: Game, _ r: Rom, net: Netplay.Role? = nil) {
         guard let c = console(r.console) else { return }
         if let p = RetroArch.problem(c, rom: r.path) { message = p; return }
-        if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r) }; if retro == nil { tell("Docked is getting \(c.name) games ready. The game starts when it's done.") }; return }
-        if let b = RetroArch.missingBios(c, rom: r.path), b.required || !biosAsked(c) { askBios(c) { [weak self] in self?.playRom(g, r) }; return }
+        if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r, net: net) }; if retro == nil { tell("Docked is getting \(c.name) games ready. The game starts when it's done.") }; return }
+        if let b = RetroArch.missingBios(c, rom: r.path), b.required || !biosAsked(c) { askBios(c) { [weak self] in self?.playRom(g, r, net: net) }; return }
         let look = Shaders.look(r)
-        if look != .off && !Shaders.installed { getLooks { [weak self] in self?.playRom(g, r) }; return }
+        if look != .off && !Shaders.installed { getLooks { [weak self] in self?.playRom(g, r, net: net) }; return }
         let shader = Shaders.preset(look)
         if !Pads.installed { DispatchQueue.global(qos: .utility).async { try? Pads.install() } }
         do { try RetroArch.prepare(shader: shader != nil) } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
         let ra = NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == RetroArch.app.path }
         if let ra { if isRunning(g) { ra.activate() } else { message = "RetroArch is already open. Quit it first, then play \(g.name)." }; return }
         do {
-            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path, shader: shader) { [weak self] in self?.backFromGame() }
+            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path, shader: shader, net: net) { [weak self] in self?.backFromGame() }
             adoptRetro(pid, as: g.titleID.uppercased(), tries: 20); stepAside()
         } catch { message = "RetroArch couldn't start. \(error.localizedDescription)" }
+    }
+    // ---- retro games online with a friend (Netplay.swift) ----
+    func hostOnline(_ g: Game) {
+        guard let r = g.rom else { return }
+        let i = Invite.make(game: g.name)
+        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(i.link, forType: .string)
+        tell("Invite link copied. Send it to a friend in Messages. They open it with \(g.name) in their Docked, and join you.")
+        playRom(g, r, net: .host(i))
+    }
+    func joinOnline(_ i: Invite) {
+        guard let g = gameFor(id: nil, name: i.game, in: games.filter { $0.rom != nil && !$0.missing }), let r = g.rom else { message = "To join, add \(i.game) to your library first, the same version as your friend's."; return }
+        guard joining == nil else { return }
+        joining = i.room; tell("Looking for your friend's game of \(g.name)…")
+        Netplay.find(i) { [weak self] room in
+            guard let self else { return }; self.joining = nil
+            guard let room else { self.message = "Your friend's game couldn't be found. Ask them to start it again from Play Online with a Friend, then open the new link."; return }
+            self.playRom(g, r, net: .join(i, room))
+        }
     }
     // RetroArch is known to the system a moment after it starts; play time counts from then.
     private func adoptRetro(_ pid: pid_t, as id: String, tries: Int) {
