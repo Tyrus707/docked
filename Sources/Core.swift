@@ -246,8 +246,7 @@ func convertWait(_ w: ConvertWhen, onPower: Bool, lowPower: Bool, hour: Int, idl
 func spaceNeeded(_ bytes: Int64) -> Int64 { bytes * 2 + 10_000_000_000 }
 
 func freeSpace() -> Int64 {
-    let v = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-    return v?.volumeAvailableCapacityForImportantUsage ?? 0
+    freeSpace(at: URL(fileURLWithPath: NSHomeDirectory()))
 }
 
 // The player's own prod.keys, found on its own when it is in the Docked folder or beside the app. Never inside the app.
@@ -273,7 +272,7 @@ struct Game: Identifiable, Equatable {
 
 // A converted game, read from its app
 func gameAt(_ u: URL) -> Game? {
-    guard u.pathExtension == "app", let p = NSDictionary(contentsOf: u.appendingPathComponent("Contents/Info.plist")), let tid = p["DMTitleID"] as? String else { return nil }
+    guard u.pathExtension == "app", let p = appInfo(u), let tid = p["DMTitleID"] as? String else { return nil }
     return Game(url: u, name: p["CFBundleName"] as? String ?? u.deletingPathExtension().lastPathComponent, titleID: tid, version: p["CFBundleShortVersionString"] as? String ?? "", needs: p["LSMinimumSystemVersion"] as? String ?? gameMinimum)
 }
 

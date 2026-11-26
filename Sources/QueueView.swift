@@ -37,13 +37,13 @@ struct CleanUpView: View {
                                     }
                                 }.disabled(i.blocked != nil)
                                 Spacer()
-                                if i.bytes > 0 { Text(ByteCountFormatter.string(fromByteCount: i.bytes, countStyle: .file)).font(.callout).foregroundStyle(.secondary) }
+                                if i.bytes > 0 { Text(byteText(i.bytes)).font(.callout).foregroundStyle(.secondary) }
                             }.padding(10)
                             Divider()
                         }
                     }
                 }.frame(height: min(330, CGFloat(items.count) * 60 + 4)).background(style.tile).clipShape(RoundedRectangle(cornerRadius: 8))
-                Text(chosen.isEmpty ? "Nothing chosen." : "Up to \(ByteCountFormatter.string(fromByteCount: chosen.reduce(0) { $0 + $1.bytes }, countStyle: .file)). Less is freed where files share space with the game.").font(.callout).foregroundStyle(.secondary)
+                Text(chosen.isEmpty ? "Nothing chosen." : "Up to \(byteText(chosen.reduce(0) { $0 + $1.bytes })). Less is freed where files share space with the game.").font(.callout).foregroundStyle(.secondary)
             }
             HStack { Spacer(); Button("Cancel") { model.cleaning = nil }.keyboardShortcut(.cancelAction); Button("Remove") { if let c = model.cleaning { model.doCleanUp(c) } }.disabled(chosen.isEmpty) }
         }.padding(24).frame(width: 560).background(AllowQuit()).background(Backdrop())
@@ -70,8 +70,7 @@ struct QueueBar: View {
                     Spacer()
                     if model.queue.paused { Button(builder.running ? "Continue After This" : "Continue") { model.resumeQueue() } } else if builder.running { Button("Pause After This") { model.queue.paused = true } }
                 }
-                let s = spaceText(need: spaceForQueue(model.queue.waiting), free: freeSpace())
-                Text(s.text).font(.caption).foregroundStyle(s.short ? style.warn : Color.secondary)
+                SpaceCheck(estimate: SpaceEstimate(need: spaceForQueue(model.queue.waiting), free: freeSpace(), destinationFree: nil, destinationNeed: nil), compact: true)
                 if open {
                     ScrollView {
                         VStack(spacing: 4) {

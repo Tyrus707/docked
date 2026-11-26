@@ -163,11 +163,11 @@ enum Lookup {
         lock.lock(); if let l = loaded[c.folder] { lock.unlock(); return l }; lock.unlock()
         guard let sha = lists[c.folder] else { throw RetroError("Docked has no game list for \(c.name).") }
         let file = home.appendingPathComponent("Lists/\(c.folder).rdb")
-        if RetroArch.sha256(file) != sha {
+        if sha256(file) != sha {
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             let tmp = file.appendingPathExtension("part"); try? FileManager.default.removeItem(at: tmp)
             try RetroArch.download(url("libretro/libretro-database/\(database)/rdb/\(c.folder).rdb"), to: tmp, limit: 40 << 20) { _ in }
-            guard RetroArch.sha256(tmp) == sha else { try? FileManager.default.removeItem(at: tmp); throw RetroError("The \(c.name) game list didn't match the reviewed one, so it wasn't used.") }
+            guard sha256(tmp) == sha else { try? FileManager.default.removeItem(at: tmp); throw RetroError("The \(c.name) game list didn't match the reviewed one, so it wasn't used.") }
             try? FileManager.default.removeItem(at: file); try FileManager.default.moveItem(at: tmp, to: file)
         }
         guard let d = try? Data(contentsOf: file), let e = RDB.parse(d) else { throw RetroError("The \(c.name) game list couldn't be read.") }

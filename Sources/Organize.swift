@@ -100,8 +100,7 @@ enum Organize {
     }
 
     static func ensureSpace(_ bytes: Int64, at dir: URL) throws {
-        let free = (try? dir.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity ?? Int.max
-        if Int64(free) < bytes + 200_000_000 { throw PlaceError.noSpace }
+        if freeSpace(at: dir) < bytes + 200_000_000 { throw PlaceError.noSpace }
     }
 
     // One file or app: moved when asked and on the same disk; otherwise copied whole under a hidden name, then named.
@@ -298,7 +297,7 @@ enum Discover {
         for u in pickRoms(urls) where !known.contains(u.standardizedFileURL.path) && !kept.contains(u.standardizedFileURL.path) {
             let e = u.pathExtension.lowercased()
             if e == "app" {
-                guard apps, let p = NSDictionary(contentsOf: u.appendingPathComponent("Contents/Info.plist")), let t = p["DMTitleID"] as? String else { continue }
+                guard apps, let p = appInfo(u), let t = p["DMTitleID"] as? String else { continue }
                 out.append(Found(url: u, name: p["CFBundleName"] as? String ?? u.deletingPathExtension().lastPathComponent, kind: .app(t), source: source))
             } else if packageTypes.contains(e) {
                 if switchFiles { out.append(Found(url: u, name: cleanName(u), kind: .switchFile, source: source)) }
