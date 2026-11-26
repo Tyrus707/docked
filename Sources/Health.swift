@@ -28,7 +28,7 @@ func healthOf(app: URL, titleID: String, name: String, engine: String?, active: 
 func healthSummary(_ list: [Health]) -> String {
     let bad = list.filter { !$0.problems.isEmpty }.count, better = list.filter { $0.problems.isEmpty && !$0.better.isEmpty }.count, fine = list.count - bad - better
     var s: [String] = []
-    if fine > 0 { s.append(fine == list.count ? (fine == 1 ? "Your converted game looks good." : "All \(fine) converted games look good.") : "\(fine) look good.") }
+    if fine > 0 { s.append(fine == list.count ? (fine == 1 ? "Your converted game looks good." : "All \(fine) converted games look good.") : fine == 1 ? "1 looks good." : "\(fine) look good.") }
     if bad > 0 { s.append(bad == 1 ? "1 needs attention." : "\(bad) need attention.") }
     if better > 0 { s.append(better == 1 ? "1 would be better after a rebuild." : "\(better) would be better after a rebuild.") }
     return list.isEmpty ? "There are no converted games to check yet." : s.joined(separator: " ")
