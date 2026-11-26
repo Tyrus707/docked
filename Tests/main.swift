@@ -430,25 +430,12 @@ let gr: [(id: String, games: [String])] = [("grid", (0..<11).map(String.init))];
 for (from, mv, to) in [(0, Move.right, 1), (0, .left, 0), (10, .right, 10), (1, .down, 5), (5, .up, 1), (2, .up, 2), (7, .down, 10), (9, .down, 9), (4, .left, 3)] { check(step(c(from), mv, rows: gr, columns: 4) == c(to), "grid \(from) \(mv)") }
 let gg: [(id: String, games: [String])] = [("A", ["a0", "a1", "a2", "a3", "a4"]), ("B", ["b0", "b1"])]; check(step(Cursor(row: "A", game: "a4"), .down, rows: gg, columns: 4) == Cursor(row: "B", game: "b0") && step(Cursor(row: "A", game: "a1"), .down, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b1"), .up, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b0"), .up, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b1"), .down, rows: gg, columns: 4) == Cursor(row: "B", game: "b1"), "a grid in groups, across headings")
 let hr: [(id: String, games: [String])] = [("recent", ["a", "b", "c"]), ("Favorites", []), ("Switch", ["a", "b"])]; check(step(nil, .down, rows: hr, columns: nil) == Cursor(row: "recent", game: "a") && step(Cursor(row: "recent", game: "c"), .down, rows: hr, columns: nil) == Cursor(row: "Switch", game: "b") && step(Cursor(row: "Switch", game: "a"), .up, rows: hr, columns: nil) == Cursor(row: "recent", game: "a"), "rows, past an empty one"); check(step(Cursor(row: "gone", game: "z"), .left, rows: hr, columns: nil) == Cursor(row: "recent", game: "a") && step(nil, .left, rows: [], columns: 4) == nil, "lost, or nothing there")
-let couchFixture: [(id: String, games: [String])] = [("continue", ["c0", "c1", "c2"]), ("favorites", []), ("all", ["a0", "a1"]), ("nes", ["n0", "n1", "n2", "n3"]), ("snes", ["s0"])]
-var spot = CouchSpot()
-spot = couchStep(spot, .right, rows: couchFixture); spot = couchStep(spot, .right, rows: couchFixture); spot = couchStep(spot, .right, rows: couchFixture); check(spot.index("continue", couchFixture[0].games) == 2 && spot.game == "c2", "couch: right stops at the end of a row")
-spot = couchStep(spot, .down, rows: couchFixture); check(spot.shelfID == "all" && spot.index("all", couchFixture[2].games) == 0, "couch: down skips an empty shelf")
-spot = couchStep(spot, .up, rows: couchFixture); check(spot.shelfID == "continue" && spot.index("continue", couchFixture[0].games) == 2, "couch: up keeps its place")
-for _ in 0..<4 { spot = couchStep(spot, .down, rows: couchFixture) }; check(spot.shelfID == "snes", "couch: down stops at the last shelf")
-spot = couchStep(spot, .down, rows: couchFixture); check(spot.shelfID == "snes", "couch: down stays there")
-spot = couchStep(spot, .nextSection, rows: couchFixture); check(spot.shelfID == "continue" && spot.index("continue", couchFixture[0].games) == 2, "couch: RB wraps and remembers the game")
-spot = couchStep(spot, .previousSection, rows: couchFixture); check(spot.shelfID == "snes" && spot.index("snes", couchFixture[4].games) == 0, "couch: LB wraps back")
-let few = CouchSpot(shelf: 9, at: ["continue": 9]), remembered = CouchSpot(shelf: 0, shelfID: "all", at: ["all": 1], gameID: ["all": "a1"], game: "a1")
-check(couchStep(CouchSpot(), .left, rows: []) == CouchSpot() && few.index("continue", couchFixture[0].games) == 2, "couch: nothing there, or fewer games than before")
-check(remembered.index("all", couchFixture[2].games) == 1, "couch: a shelf keeps its game by name")
-let beforeFav: [(id: String, games: [String])] = [("all", ["a", "b", "c"]), ("gems", ["x", "y"]), ("favorites", [])]
-let gemSpot = CouchSpot(shelf: 1, shelfID: "gems", at: ["gems": 0], gameID: ["gems": "x"], game: "x")
-let afterFav: [(id: String, games: [String])] = [("all", ["a", "b", "c"]), ("favorites", ["x"]), ("gems", ["y"])]
-let followed = gemSpot.resolved(afterFav)
-check(followed.shelfID == "favorites" && followed.index("favorites", afterFav[1].games) == 0 && followed.game == "x", "couch: a game follows its shelf into Favorites")
-check(couchStep(gemSpot, .right, rows: afterFav).game == "x", "couch: a move after a shelf appears keeps that game")
-check(followed.resolved(beforeFav).shelfID == "gems" && followed.resolved(beforeFav).game == "x", "couch: a game survives its shelf going away")
+let cc = [3, 0, 2]; var spot = CouchSpot()
+spot = couchStep(spot, .right, counts: cc); spot = couchStep(spot, .right, counts: cc); spot = couchStep(spot, .right, counts: cc); check(spot.shelf == 0 && spot.index(3) == 2, "couch: right stops at the end")
+spot = couchStep(spot, .down, counts: cc); check(spot.shelf == 2 && spot.index(2) == 0, "couch: down skips an empty shelf")
+spot = couchStep(spot, .down, counts: cc); check(spot.shelf == 2, "couch: down stops at the last shelf")
+spot = couchStep(spot, .nextSection, counts: cc); check(spot.shelf == 0 && spot.index(3) == 2, "couch: shoulder goes round and the shelf keeps its place")
+check(couchStep(CouchSpot(), .left, counts: []) == CouchSpot() && CouchSpot(shelf: 0, at: [0: 9]).index(4) == 3, "couch: nothing there, or fewer games than before")
 // ---- updates ----
 let uk = Curve25519.Signing.PrivateKey(), upub = uk.publicKey.rawRepresentation.base64EncodedString(), ud = tmp.appendingPathComponent("upd"), ub = ud.appendingPathComponent("Backups")
 func sh(_ a: [String]) { let p = Process(); p.executableURL = URL(fileURLWithPath: a[0]); p.arguments = Array(a.dropFirst()); p.standardError = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; try! p.run(); p.waitUntilExit() }
