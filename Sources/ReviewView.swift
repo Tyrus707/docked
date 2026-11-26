@@ -9,7 +9,7 @@ struct ReviewView: View {
     @Environment(\.accessibilityReduceMotion) private var still
     var space: (text: String, short: Bool) { spaceText(need: spaceNeeded(model.review.parts.reduce(0) { $0 + $1.bytes }), free: freeSpace()) }
     var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? "Saves to " + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil].compactMap { $0 }).joined(separator: ", ") }
-    func note(_ t: String, _ s: String, _ warn: Bool) -> some View { Label(t, systemImage: s).foregroundStyle(warn ? Color(light: 0x8A4B00, dark: 0xF2B45C) : Color.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
+    func note(_ t: String, _ s: String, _ warn: Bool) -> some View { Label(t, systemImage: s).foregroundStyle(warn ? style.warn : Color.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
 
     // Only a copy in Docked's own folder, or in the chosen folder, is replaced.
     func existingNote(_ g: Game) -> String {
@@ -43,17 +43,17 @@ struct ReviewView: View {
             if model.target == .phone {
                 HStack { Text("Install with"); Picker("Install with", selection: $model.way) { Text("Xcode").tag(InstallWay.xcode); Text(".ipa file").tag(InstallWay.ipa) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
                 Text(model.way == .xcode ? "Xcode signs the game with your Apple account and installs it over a cable. Docked keeps the game's leftovers, because Xcode needs them." : "Makes an .ipa file that you install with a sideloading tool. Many of those tools can't install a file this big.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Label("Needs an \(phoneNeeds)", systemImage: "iphone").font(.callout).foregroundStyle(Color(light: 0x8A4B00, dark: 0xF2B45C)).fixedSize(horizontal: false, vertical: true)
+                Label("Needs an \(phoneNeeds)", systemImage: "iphone").font(.callout).foregroundStyle(style.warn).fixedSize(horizontal: false, vertical: true)
                 ForEach(model.phoneChecks.filter { !$0.ok }) { c in HStack { Image(systemName: "circle").foregroundStyle(.secondary).accessibilityLabel("Not done"); VStack(alignment: .leading) { Text(c.title); Text(c.detail).font(.caption).foregroundStyle(.secondary) }; Spacer(); if !c.fix.isEmpty { Button("Copy Command") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.fix, forType: .string) } } } }
                 if !model.phoneChecks.isEmpty, !model.phoneSet { HStack { Text("Paste each command in Terminal, then check again.").font(.callout).foregroundStyle(.secondary); Button("Check Again") { model.recheckPhone() } } }
             }
-            if let b = model.review.blocker { Label(b, systemImage: "exclamationmark.circle").foregroundStyle(Color(light: 0xB3261E, dark: 0xFF8A80)).font(.callout) }
+            if let b = model.review.blocker { Label(b, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout) }
             // Only what needs attention is in sight; what is fine is under More Options.
             ForEach(model.review.notes.filter(\.1), id: \.0) { n in note(n.0, "exclamationmark.triangle", true) }
             if model.target == .mac, let g = model.existing { note(existingNote(g), "arrow.triangle.2.circlepath", false) }
             if !model.review.parts.isEmpty, space.short { note(space.text, "exclamationmark.triangle", true) }
             if model.after == .everything, !model.forXcode { note("The original files go to the Trash before you've tried the game. Don't empty it until you have.", "exclamationmark.triangle", true) }
-            if let n = model.reviewNote { Label(n, systemImage: "exclamationmark.circle").foregroundStyle(Color(light: 0xB3261E, dark: 0xFF8A80)).font(.callout).fixedSize(horizontal: false, vertical: true) }
+            if let n = model.reviewNote { Label(n, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout).fixedSize(horizontal: false, vertical: true) }
             Button { withAnimation(still ? nil : .easeOut(duration: 0.15)) { more.toggle() } } label: { HStack(spacing: 6) { Image(systemName: "chevron.right").font(.caption.weight(.bold)).rotationEffect(.degrees(more ? 90 : 0)); Text("More options"); Spacer(); if !more { Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1) } }.contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityValue(more ? "Open" : "Closed")
             if more {
                 VStack(alignment: .leading, spacing: 10) {

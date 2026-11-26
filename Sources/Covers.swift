@@ -114,7 +114,7 @@ struct CoverTile: View {
                     if style.shelf { Capsule().fill(style.line).frame(height: 3).padding(.horizontal, -3).padding(.top, 4) }
                     VStack(spacing: 2) {
                         Text(game.name).font(.callout.weight(.medium)).foregroundStyle(style.text).lineLimit(2).multilineTextAlignment(.center)
-                        HStack(spacing: 4) { if running { Circle().fill(Color(light: 0x1E7A3C, dark: 0x6FCF8A)).frame(width: 7, height: 7).accessibilityHidden(true) }; Text(note).font(.caption).foregroundStyle(style.soft).lineLimit(1) }
+                        HStack(spacing: 4) { if running { Circle().fill(style.ok).frame(width: 7, height: 7).accessibilityHidden(true) }; Text(note).font(.caption).foregroundStyle(style.soft).lineLimit(1) }
                     }.padding(.top, 8)
                 }.padding(.horizontal, 8).padding(.top, 8).frame(maxWidth: .infinity, alignment: .top).contentShape(Rectangle())
             }.buttonStyle(Press(still: still)).focused($focused).noFocusRing().simultaneousGesture(TapGesture(count: 2).onEnded(play)).accessibilityLabel(game.name).accessibilityAddTraits(chosen ? .isSelected : []).accessibilityAction(named: "Play", play)

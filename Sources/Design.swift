@@ -11,25 +11,37 @@ extension Color {
     }
 }
 
-struct Style {
+// A theme is Docked's own look, whatever the Mac's light or dark setting. Dark ones first: Docked is a place to sit back and play.
+struct Style: Identifiable, Equatable {
+    var id: String, name: String
     var top, bottom, text, soft, accent, tile, line, button: Color
-    var alwaysDark = false, shelf = false
+    var ok = Color(hex: 0x6FCF8A), warn = Color(hex: 0xF2B45C), danger = Color(hex: 0xFF8A80)
+    var dark = true, shelf = false
+    static func == (a: Style, b: Style) -> Bool { a.id == b.id }
 
-    // Quiet neutrals with the logo's oxblood and brass; follows the Mac's light or dark setting.
-    static let quay = Style(top: Color(light: 0xF6F5F7, dark: 0x211D20), bottom: Color(light: 0xECEAEE, dark: 0x171416), text: Color(light: 0x241A1D, dark: 0xF1E8D6),
-                            soft: Color(light: 0x655A5E, dark: 0xB5A9A4), accent: Color(light: 0x7A2136, dark: 0xD8B26A), tile: Color(light: 0xFFFFFF, dark: 0x2C272A), line: Color(light: 0xD9D4D8, dark: 0x3A3437), button: Color(hex: 0x8A2840))
+    // Warm charcoal with the logo's brass and oxblood, like a lamp-lit shelf.
+    static let hearth = Style(id: "hearth", name: "Hearth", top: Color(hex: 0x211D20), bottom: Color(hex: 0x171416), text: Color(hex: 0xF1E8D6), soft: Color(hex: 0xB5A9A4),
+                              accent: Color(hex: 0xD8B26A), tile: Color(hex: 0x2C272A), line: Color(hex: 0x3A3437), button: Color(hex: 0x8A2840), shelf: true)
     // The logo's own colours across the whole window.
-    static let oxblood = Style(top: Color(hex: 0x4A1522), bottom: Color(hex: 0x2A0A14), text: Color(hex: 0xF1E8D6), soft: Color(hex: 0xD6C2B4), accent: Color(hex: 0xD8B26A),
-                               tile: Color(hex: 0x5A2030), line: Color(hex: 0x6B3040), button: Color(hex: 0xA8324D), alwaysDark: true)
-    // Cool harbour blue-grey, with games standing on a shelf.
-    static let slate = Style(top: Color(light: 0xEEF2F4, dark: 0x1B242A), bottom: Color(light: 0xE0E7EB, dark: 0x12191D), text: Color(light: 0x14242B, dark: 0xE6EEF1), soft: Color(light: 0x4B5F68, dark: 0xA3B5BD),
-                             accent: Color(light: 0x1F5E6B, dark: 0x7CC4CF), tile: Color(light: 0xFFFFFF, dark: 0x26323A), line: Color(light: 0xB9C7CE, dark: 0x3B4B54), button: Color(hex: 0x1F6675), shelf: true)
+    static let oxblood = Style(id: "oxblood", name: "Oxblood", top: Color(hex: 0x4A1522), bottom: Color(hex: 0x2A0A14), text: Color(hex: 0xF1E8D6), soft: Color(hex: 0xD6C2B4),
+                               accent: Color(hex: 0xD8B26A), tile: Color(hex: 0x5A2030), line: Color(hex: 0x6B3040), button: Color(hex: 0xA8324D))
+    // Cool harbour blue-grey at night.
+    static let harbor = Style(id: "harbor", name: "Harbor", top: Color(hex: 0x1B242A), bottom: Color(hex: 0x12191D), text: Color(hex: 0xE6EEF1), soft: Color(hex: 0xA3B5BD),
+                              accent: Color(hex: 0x7CC4CF), tile: Color(hex: 0x26323A), line: Color(hex: 0x3B4B54), button: Color(hex: 0x1F6675), shelf: true)
+    // The same harbour by day, for anyone who wants a light window.
+    static let daylight = Style(id: "daylight", name: "Daylight", top: Color(hex: 0xEEF2F4), bottom: Color(hex: 0xE0E7EB), text: Color(hex: 0x14242B), soft: Color(hex: 0x4B5F68),
+                                accent: Color(hex: 0x1F5E6B), tile: Color(hex: 0xFFFFFF), line: Color(hex: 0xB9C7CE), button: Color(hex: 0x1F6675),
+                                ok: Color(hex: 0x1E7A3C), warn: Color(hex: 0x8A4B00), danger: Color(hex: 0xB3261E), dark: false, shelf: true)
 
-    static var current = slate
+    static let all = [hearth, oxblood, harbor, daylight]
+    static func named(_ id: String?) -> Style { all.first { $0.id == id } ?? hearth }
+    static var current = named(UserDefaults.standard.string(forKey: "theme"))
+    // Menus, alerts, sheets and controls follow the theme, not the Mac's setting.
+    static func apply() { NSApp?.appearance = NSAppearance(named: current.dark ? .darkAqua : .aqua) }
 }
 var style: Style { Style.current }
 
-struct Backdrop: View { var body: some View { LinearGradient(colors: [style.top, style.bottom], startPoint: .top, endPoint: .bottom).ignoresSafeArea() } }
+struct Backdrop: View { var s = style; var body: some View { LinearGradient(colors: [s.top, s.bottom], startPoint: .top, endPoint: .bottom).ignoresSafeArea() } }   // holds the theme, so a new one redraws it
 
 // The direction pad from the logo.
 struct DPad: Shape {
@@ -49,6 +61,7 @@ struct DPad: Shape {
 }
 
 struct GameTile: View {
+    private let look = style   // a new theme redraws the tile
     let game: Game, icon: NSImage
     var favorite = false, running = false, note = ""
     var chosen = false
@@ -69,7 +82,7 @@ struct GameTile: View {
                     VStack(spacing: 2) {
                         Text(game.name).font(.body.weight(.medium)).foregroundStyle(style.text).lineLimit(2).multilineTextAlignment(.center)
                         HStack(spacing: 4) {
-                            if running { Circle().fill(Color(light: 0x1E7A3C, dark: 0x6FCF8A)).frame(width: 7, height: 7).accessibilityHidden(true) }
+                            if running { Circle().fill(style.ok).frame(width: 7, height: 7).accessibilityHidden(true) }
                             if favorite { Image(systemName: "heart.fill").font(.system(size: 9)).foregroundStyle(style.accent).accessibilityLabel("Favorite") }
                             Text(note).font(.caption).foregroundStyle(style.soft).lineLimit(1)
                         }

@@ -137,7 +137,7 @@ extension Model {
     }
     func tidy(_ list: [Tidy]) {
         tidying = nil
-        guard !builder.running, moving == nil, filing == nil else { message = "Wait until Docked has finished its current job, then organize."; return }
+        guard !builder.running, moving == nil, filing == nil else { tell("Wait until Docked has finished its current job, then organize.", good: false); return }
         let busy = list.filter { isOpen($0.game) || isRunning($0.game) }, go = list.filter { t in !busy.contains(t) }
         let lib = libraryFolder, naming = naming, saves = ["saves", "states"].map { RetroArch.support.appendingPathComponent($0) }
         filing = "Organizing…"
