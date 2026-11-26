@@ -140,6 +140,7 @@ extension SettingsSheet {
             line("Games from other folders", model.addMode?.detail ?? "Docked asks each time.") { Picker("Games from other folders", selection: $model.addMode) { Text("Ask Each Time").tag(AddMode?.none); Divider(); ForEach(AddMode.allCases, id: \.self) { Text($0.label).tag(AddMode?.some($0)) } }.labelsHidden().fixedSize() }
             line("Organize", "Puts games in Docked's folders where they belong, after showing you the list.") { Button("Organize…") { model.planTidy() }.disabled(!model.organized) }
             line("Find games", "Converted games, OpenEmu, RetroArch, Ryujinx, and any folder or drive.") { Button("Find…") { model.findGames() } }
+            line("Offloaded games", (model.offloadFolder.map { short($0) + (drive(of: $0.path).map { $0.connected ? ", on \($0.name)" : ". \($0.name) isn't connected." } ?? "") } ?? "Choose Offload on a game to free space. It goes to iCloud Drive, a cloud folder or a drive, and its tile and saves stay.") + (model.offloadedCount > 0 ? " \(model.offloadedCount) offloaded now." : "")) { if let f = model.offloadFolder { Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([f]) } }; Button(model.offloadFolder == nil ? "Choose…" : "Change…") { model.pickOffloadFolder() } }
             ArtworkRow()
             VStack(alignment: .leading, spacing: 6) {
                 line("Watched folders", "New games in these are added on their own and stay where they are. A drive's games come back when it's connected.") { Button("Add Folder…") { model.addWatched() } }

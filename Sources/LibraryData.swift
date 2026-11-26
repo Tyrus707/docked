@@ -10,6 +10,7 @@ struct Entry: Codable, Equatable {
     var seconds: Double = 0
     var rating = 0     // the player's own stars, 1 to 5; 0 is not rated
     var plays = 0      // how many times it has been played
+    var kept = false   // Keep This Build: converting the game again won't replace the app that plays well
     var meta: Meta?    // critic score, popularity and details from Wikidata, once looked up
     enum Status: String, Codable, CaseIterable { case none = "Not started", playing = "Playing", finished = "Finished", aside = "Set aside" }
     init(favorite: Bool = false, status: Status = .none, collections: [String] = [], added: Date = Date(), lastPlayed: Date? = nil, seconds: Double = 0, rating: Int = 0, plays: Int = 0, meta: Meta? = nil) {
@@ -27,6 +28,7 @@ struct Entry: Codable, Equatable {
         rating = min(max(try c.decodeIfPresent(Int.self, forKey: .rating) ?? 0, 0), 5)
         plays = try c.decodeIfPresent(Int.self, forKey: .plays) ?? 0
         meta = try? c.decodeIfPresent(Meta.self, forKey: .meta)
+        kept = try c.decodeIfPresent(Bool.self, forKey: .kept) ?? false
     }
 }
 
@@ -81,6 +83,7 @@ struct LibraryData: Codable, Equatable {
     var smart: [SmartCollection] = []
     var apps: [String: String] = [:]   // every converted game's place, to its title ID, so one that goes missing stays in the library
     var removed: [String] = []         // games taken out of the library by hand, which a watched folder must not bring back
+    var offloaded: [String: String] = [:]   // a game's place on this Mac, to where it was offloaded (a cloud folder or a drive), while it is away
 
     init() {}
     // A library saved by an earlier version has no emulated games yet.
@@ -92,6 +95,7 @@ struct LibraryData: Codable, Equatable {
         smart = (try? c.decodeIfPresent([SmartCollection].self, forKey: .smart)) ?? []
         apps = (try? c.decodeIfPresent([String: String].self, forKey: .apps)) ?? [:]
         removed = (try? c.decodeIfPresent([String].self, forKey: .removed)) ?? []
+        offloaded = (try? c.decodeIfPresent([String: String].self, forKey: .offloaded)) ?? [:]
     }
 
     // The same game again, or moved, updates where it is.
@@ -102,7 +106,7 @@ struct LibraryData: Codable, Equatable {
     mutating func removeRom(_ id: String) { for r in roms where r.id == id { forget(r.path) }; roms.removeAll { $0.id == id } }
     mutating func addApp(_ path: String, _ titleID: String) { removed.removeAll { $0 == path }; apps[path] = titleID.uppercased() }
     mutating func removeApp(_ path: String) { if apps.removeValue(forKey: path) != nil { forget(path) } }
-    private mutating func forget(_ path: String) { if !removed.contains(path) { removed.append(path); if removed.count > 5000 { removed.removeFirst(removed.count - 5000) } } }
+    private mutating func forget(_ path: String) { offloaded[path] = nil; if !removed.contains(path) { removed.append(path); if removed.count > 5000 { removed.removeFirst(removed.count - 5000) } } }
 
     // The converted games found now, and the ones known before that can't be found. One found somewhere else has moved, and its old place is dropped.
     mutating func settle(found: [Game], exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [Game] {

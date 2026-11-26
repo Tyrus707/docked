@@ -18,6 +18,10 @@ struct ReviewView: View {
         return "\(g.name) is already in \(FileManager.default.displayName(atPath: dir)). That copy stays, and the new one uses the same save."
     }
 
+    func compatNote(_ c: Compat) -> String {
+        switch c.kind { case .poor: return "Players report this game doesn't run yet."; case .okay: return "Players report this game only partly works."; default: return "Nobody has reported how this game runs yet." }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Check the Files").font(.title2.weight(.semibold))
@@ -51,6 +55,7 @@ struct ReviewView: View {
             // Only what needs attention is in sight; what is fine is under More Options.
             ForEach(model.review.notes.filter(\.1), id: \.0) { n in note(n.0, "exclamationmark.triangle", true) }
             if model.target == .mac, let g = model.existing { note(existingNote(g), "arrow.triangle.2.circlepath", false) }
+            if let f = model.review.family, let c = model.compat[f.uppercased()], c.kind != .good { note(compatNote(c), "exclamationmark.triangle", true) }
             if !model.review.parts.isEmpty, space.short { note(space.text, "exclamationmark.triangle", true) }
             if model.after == .everything, !model.forXcode { note("The original files go to the Trash before you've tried the game. Don't empty it until you have.", "exclamationmark.triangle", true) }
             if let n = model.reviewNote { Label(n, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout).fixedSize(horizontal: false, vertical: true) }

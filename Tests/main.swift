@@ -56,6 +56,8 @@ var b = drive(#"echo '{"ev":"stage","k":1,"n":2,"name":"A"}'; echo '{"ev":"game"
 check(b.stage == "Done" && b.title == "Real Name" && b.log.contains("hi") && b.error == nil && !b.running, "success")
 check(b.tested == false, "untested flagged")
 b = drive(#"echo '{"ev":"say","msg":"[RED] prod.keys is wrong"}'; exit 1"#); check(b.error == "prod.keys is wrong" && b.stage == "Failed", "engine error shown")
+b = drive(#"echo '{"ev":"say","msg":"[RED] the shader split found no shaders in main or the RomFS: the game keeps them in a form shader_split.py does not read; locate them (docs/agents) and add a reader"}'; exit 1"#)
+check(b.error?.hasPrefix("This game isn't supported yet") == true && b.report.contains("shader_split.py"), "unsupported game told plainly, engine line kept in report")
 b = drive("echo boom >&2; exit 1"); check(b.error?.contains("boom") == true, "crash text shown")
 b = drive("trap 'exit 143' TERM; while :; do sleep 0.1; done", cancelAfter: 0.5); check(b.stage == "Stopped" && b.error == nil, "cancel")
 b = drive("", exe: "/nonexistent"); check(b.error != nil && !b.running, "missing engine")
@@ -261,6 +263,13 @@ RetroArch.home = tmp.appendingPathComponent("RA"); RetroArch.support = RetroArch
 let sn = console("snes")!; check(RetroArch.core(sn) == nil && !RetroArch.ready(sn) && RetroArch.problem(sn, rom: sf.path) == nil, "a missing core is Docked's to fetch, not the player's"); _ = mk("RA/cores/snes9x_libretro.dylib"); check(RetroArch.core(sn)?.lastPathComponent == "snes9x_libretro.dylib", "next best core"); _ = mk("RA/cores/bsnes_libretro.dylib"); check(RetroArch.core(sn)?.lastPathComponent == "bsnes_libretro.dylib", "the most accurate core first"); check(RetroArch.problem(sn, rom: "/gone.sfc")?.contains("found") == true, "missing file explained")
 let raArgs = RetroArch.arguments(core: URL(fileURLWithPath: "/c a.dylib"), rom: "/x/-f --config $(rm) \"q\".sfc"); check(raArgs.suffix(3) == ["-L", "/c a.dylib", "/x/-f --config $(rm) \"q\".sfc"] && raArgs.prefix(4) == ["--config", RetroArch.settings.path, "--appendconfig", RetroArch.docked.path], "its own settings; odd file names stay one argument")
 try! RetroArch.prepare(full: false); let dcfg = try! String(contentsOf: RetroArch.docked, encoding: .utf8); check(dcfg.contains("system_directory = \"\(RetroArch.system.path)\"") && dcfg.contains("libretro_directory = \"\(RetroArch.cores.path)\"") && fm.fileExists(atPath: RetroArch.settings.path) && fm.fileExists(atPath: tmp.path + "/RA/saves"), "Docked's folders, written for RetroArch"); try! "video_fullscreen = \"false\"\n".write(to: RetroArch.settings, atomically: true, encoding: .utf8); try! RetroArch.prepare(); check((try! String(contentsOf: RetroArch.settings, encoding: .utf8)) == "video_fullscreen = \"false\"\n", "the player's own RetroArch settings stay")
+// Retro extras: looks, achievements, controllers
+let shArgs = RetroArch.arguments(core: URL(fileURLWithPath: "/c.dylib"), rom: "/r.sfc", shader: URL(fileURLWithPath: "/s/crt.slangp")); check(shArgs.suffix(5) == ["--set-shader", "/s/crt.slangp", "-L", "/c.dylib", "/r.sfc"], "a retro look is passed for that game only")
+try! RetroArch.prepare(full: true, shader: true); let dcfg2 = try! String(contentsOf: RetroArch.docked, encoding: .utf8); check(dcfg2.contains("video_shader_enable = \"true\"") && dcfg2.contains("joypad_autoconfig_dir = \"\(Pads.dir.path)\"") && (Cheevos.signedIn || dcfg2.contains("cheevos_enable = \"false\"")), "looks, controller profiles and achievements written for RetroArch")
+let tokCfg = tmp.appendingPathComponent("tok.cfg"); try! "a = \"1\"\ncheevos_token = \"SECRET\"\ncheevos_username = \"me\"\n".write(to: tokCfg, atomically: true, encoding: .utf8); Cheevos.scrub(tokCfg); let tokOut = try! String(contentsOf: tokCfg, encoding: .utf8); check(!tokOut.contains("SECRET") && tokOut.contains("cheevos_username = \"me\"") && tokOut.contains("a = \"1\""), "the sign-in token doesn't stay in RetroArch's file")
+check(Cheevos.key("Legend of Zelda, The - A Link to the Past (USA)") == Cheevos.key("The Legend of Zelda: A Link to the Past") && Cheevos.key("Pokémon Red") == Cheevos.key("Pokemon Red") && Cheevos.key("Sonic & Knuckles") == Cheevos.key("Sonic and Knuckles"), "RetroAchievements titles match Docked's names")
+Cheevos.progress = ["\(Cheevos.consoleIDs["snes"]!):\(Cheevos.key("Super Metroid"))": .init(title: "Super Metroid", console: 3, earned: 5, hardcore: 0, total: 50)]; check(Cheevos.of(Rom(id: "x", name: "Super Metroid (Japan, USA)", console: "snes", path: "/x.sfc")).map(Cheevos.text) == "5 of 50" && Cheevos.of(Rom(id: "y", name: "Super Metroid", console: "nes", path: "/y.nes")) == nil, "progress found by console and name")
+let lookRom = Rom(id: "test-look-\(UUID().uuidString)", name: "L", console: "gba", path: "/l.gba"); Shaders.setLook(.lcd, console: "gba"); check(Shaders.look(lookRom) == .lcd, "a game follows its console's look"); Shaders.setOwn(.crt, for: lookRom); check(Shaders.look(lookRom) == .crt, "a game's own look wins"); Shaders.setOwn(nil, for: lookRom); Shaders.setLook(.off, console: "gba"); check(Shaders.preset(.crt) == nil || Shaders.installed, "no preset before the looks are downloaded")
 check(dcfg.contains("video_fullscreen = \"false\""), "full screen off: RetroArch games take no Space of their own"); try! RetroArch.prepare(full: true); check((try! String(contentsOf: RetroArch.docked, encoding: .utf8)).contains("video_fullscreen = \"true\""), "full screen by default"); let opts = try! String(contentsOf: RetroArch.options, encoding: .utf8); check(opts.contains("mupen64plus-rdp-plugin = \"parallel\"") && (try! String(contentsOf: RetroArch.docked, encoding: .utf8)).contains("core_options_path = \"\(RetroArch.options.path)\""), "N64 drawn with ParaLLEl"); try! "mupen64plus-rdp-plugin = \"angrylion\"\n".write(to: RetroArch.options, atomically: true, encoding: .utf8); try! RetroArch.prepare(); let opts2 = try! String(contentsOf: RetroArch.options, encoding: .utf8); check(opts2.contains("angrylion") && !opts2.contains("rdp-plugin = \"parallel\"") && opts2.contains("mupen64plus-rsp-plugin = \"parallel\""), "the player's own core settings stay")
 let fillA = RetroArch.filling(CGRect(x: 0, y: 80, width: 1512, height: 860)); check(fillA.contains("video_fullscreen = \"false\"") && fillA.contains("video_window_save_positions = \"true\"") && fillA.contains("video_windowed_position_y = \"80\"") && fillA.contains("video_windowed_position_width = \"1512\"") && fillA.contains("video_windowed_position_height = \"860\""), "a RetroArch window as big as the screen")
 check(RetroArch.filling(CGRect(x: -1920, y: 0, width: 1920, height: 1050)) == "video_fullscreen = \"false\"\n" && RetroArch.filling(nil) == "video_fullscreen = \"false\"\n", "a screen RetroArch can't place a window on: a plain window")
@@ -701,6 +710,7 @@ do {
     check(UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_OPMODE") == "0", "saved where the game's own window keeps it")
     check(GameSettings(app: app)!.value(s["DM_OPMODE"]!) == "0" && g.changed, "choice read back")
     g.set(s["DM_OPMODE"]!, "7"); check(g.value(s["DM_OPMODE"]!) == "0", "unknown option refused")
+    g.set(s["DM_OPMODE"]!, "1"); check(UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_OPMODE") == nil && g.value(s["DM_OPMODE"]!) == "1", "picking the default clears the choice"); g.set(s["DM_OPMODE"]!, "0")
     check(!g.applies(s["DM_RUMBLE_GAIN"]!) && g.applies(s["DM_RUMBLE_MIN"]!), "needs another setting")
     check(g.isFixed(s["DM_LANG"]!) && g.value(s["DM_LANG"]!) == "ja", "env.txt wins"); g.set(s["DM_LANG"]!, "en-US"); check(UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_LANG") == nil, "fixed not saved")
     check(s["DM_RUMBLE_GAIN"]!.text(1.25) == "1.2" || s["DM_RUMBLE_GAIN"]!.text(1.25) == "1.3", "range to one decimal"); check(s["DM_RUMBLE_MIN"]!.text(0.1) == "0.10", "range to two decimals")
@@ -709,6 +719,51 @@ do {
     UserDefaults.standard.removePersistentDomain(forName: dom)
     _ = mk("Bare.app/Contents/Info.plist", #"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>x.y</string></dict></plist>"#)
     check(GameSettings(app: tmp.appendingPathComponent("Bare.app")) == nil, "no settings list: none")
+}
+
+// saves, cheats and crash reports: the engine's own files for a game
+do {
+    setenv("DOCKED_NXDATA", tmp.appendingPathComponent("nx").path, 1)
+    let d = GameData("0100abc000010000")
+    check(d.root.lastPathComponent == "0100ABC000010000" && !d.hasSave && d.list().isEmpty, "no save yet")
+    check((try! d.backUp()) == nil, "nothing to back up")
+    _ = mk("nx/0100ABC000010000/save/0/file.bin", "one"); _ = mk("nx/0100ABC000010000/save_device/d.bin", "dev"); _ = mk("nx/0100ABC000010000/save.sync", "base x")
+    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
+    check(fm.fileExists(atPath: b.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b.appendingPathComponent("save.sync").path), "backup holds the save parts only")
+    let b2 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b2 != b, "same second, new folder")
+    check(d.list().count == 2 && d.list().allSatisfy { $0.bytes == 6 }, "backups listed")
+    try! Data("two".utf8).write(to: d.save.appendingPathComponent("0/file.bin"))
+    try! d.restore(b)
+    check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "one", "backup restored")
+    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" }, "the save it replaced is kept")
+    let loose = mk("elsewhere/mysave/0/file.bin", "three").deletingLastPathComponent().deletingLastPathComponent()
+    try! d.restore(loose); check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "three" && fm.fileExists(atPath: d.root.appendingPathComponent("save_device").path), "a bare save folder becomes the save")
+    try? fm.createDirectory(at: tmp.appendingPathComponent("emptyfolder"), withIntermediateDirectories: true)
+    var refused = false; do { try d.restore(tmp.appendingPathComponent("emptyfolder")) } catch { refused = true }
+    check(GameData.saveIn(tmp.appendingPathComponent("emptyfolder")) == nil && refused, "empty folder refused")
+    let c = mk("cheatsrc/0123456789ABCDEF.txt", "[Max HP]"); try! d.addCheat(c)
+    check(d.cheatFiles == ["0123456789ABCDEF.txt"] && GameData.isCheatFile(c) && !GameData.isCheatFile(mk("cheatsrc/notes.txt")), "cheat file added")
+    // cloud saves folder: Docked's folder for every game; off clears only Docked's own
+    let dom = "local.docked.cloud.\(UUID().uuidString)"
+    _ = mk("Cloud.app/Contents/Info.plist", #"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>\#(dom)</string></dict></plist>"#)
+    let app = tmp.appendingPathComponent("Cloud.app")
+    CloudSaves.apply("/c/Saves", was: "", to: app); check(CloudSaves.folder(of: app) == "/c/Saves", "cloud folder written")
+    CloudSaves.apply("", was: "/c/Saves", to: app); check(CloudSaves.folder(of: app) == nil, "cloud folder off")
+    UserDefaults(suiteName: dom)!.set("/mine", forKey: CloudSaves.key); CloudSaves.apply("", was: "/c/Saves", to: app); check(CloudSaves.folder(of: app) == "/mine", "player's own folder kept")
+    UserDefaults.standard.removePersistentDomain(forName: dom)
+    // crash reports
+    _ = mk("Crashy.app/Contents/MacOS/dmhost"); let rep = tmp.appendingPathComponent("reports")
+    _ = mk("reports/dmhost-2026-11-26-101010.ips"); _ = mk("reports/Other-2026-11-26-101010.ips")
+    check(crashReport(for: tmp.appendingPathComponent("Crashy.app"), since: Date().addingTimeInterval(-60), in: rep)?.lastPathComponent == "dmhost-2026-11-26-101010.ips", "crash report found")
+    check(crashReport(for: tmp.appendingPathComponent("Crashy.app"), since: Date().addingTimeInterval(60), in: rep) == nil, "older report ignored")
+}
+
+// community compatibility list
+do {
+    let j = #"{"games":[{"id":"0100000000010000","tier":"Plays on Mac","fps":"60 fps","platforms":["Mac"],"issues":[{"open":true},{"open":false}],"engine":"Plays."},{"id":"bad"},{"id":"0400486024dec000","tier":"Doesn't run yet"}]}"#
+    let l = Compat.parse(Data(j.utf8))
+    check(l.count == 2 && l["0100000000010000"]?.issues == 1 && l["0100000000010000"]?.kind == .good && l["0400486024DEC000"]?.kind == .poor, "compat list read")
+    check(Compat.parse(Data("nope".utf8)).isEmpty && Compat(tier: "Profile only", fps: "", platforms: [], issues: 0, engine: "").label == "Not tested yet", "compat edge cases")
 }
 
 // artwork: where it is, and what no game uses
@@ -729,6 +784,29 @@ do {
     check(p["made"]?.files == 2 && p["made"]?.spare.map(\.lastPathComponent) == [b.lastPathComponent], "an older made cover is left over, the newest stays")
     Artwork.removeSpare(Array(p.values).filter { $0.id != "yours" })
     check(!fm.fileExists(atPath: b.path) && fm.fileExists(atPath: a.path) && !fm.fileExists(atPath: Artwork.found.appendingPathComponent("old-2.png").path) && fm.fileExists(atPath: Artwork.found.appendingPathComponent("snes-abc.png").path), "only leftovers removed")
+}
+
+
+// Offloading: a game goes to another folder whole and comes back to the same place
+do {
+    let fm = FileManager.default, base = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("offload-\(UUID().uuidString)")
+    let home = base.appendingPathComponent("lib/PlayStation"), cloud = base.appendingPathComponent("cloud/Docked Games")
+    try? fm.createDirectory(at: home, withIntermediateDirectories: true); try? fm.createDirectory(at: cloud, withIntermediateDirectories: true)
+    let cue = home.appendingPathComponent("Game.cue"), bin = home.appendingPathComponent("Game.bin"), solo = home.appendingPathComponent("Solo.sfc")
+    try? "FILE \"Game.bin\" BINARY\n  TRACK 01 MODE2/2352\n".write(to: cue, atomically: true, encoding: .utf8); try? Data(count: 2048).write(to: bin); try? Data(count: 512).write(to: solo)
+    let a = try? Offload.send(cue, console: "psx", set: true, to: cloud), b = try? Offload.send(solo, console: "snes", set: true, to: cloud)
+    check(a.map { fm.fileExists(atPath: $0.appendingPathComponent("Game.bin").path) && fm.fileExists(atPath: $0.appendingPathComponent("Game.cue").path) } == true && !fm.fileExists(atPath: bin.path), "a game of several files is offloaded together, in a folder of its own")
+    check(b.map { fm.fileExists(atPath: $0.path) && $0.lastPathComponent == "Solo.sfc" } == true && !fm.fileExists(atPath: solo.path), "a one-file game is offloaded")
+    if let a { try? Offload.bring(a, home: cue) }; if let b { try? Offload.bring(b, home: solo) }
+    check(fm.fileExists(atPath: cue.path) && fm.fileExists(atPath: bin.path) && fm.fileExists(atPath: solo.path) && a.map { !fm.fileExists(atPath: $0.path) } == true, "offloaded games come back to where they were")
+    try? Data(count: 1).write(to: base.appendingPathComponent("x"))
+    check((try? Offload.bring(base.appendingPathComponent("x"), home: solo)) == nil, "one coming back never replaces a file there")
+    check(offloadName(NSHomeDirectory() + "/Library/Mobile Documents/com~apple~CloudDocs/Docked Games") == "iCloud Drive" && offloadName(NSHomeDirectory() + "/Library/CloudStorage/GoogleDrive-me@x.com/My Drive") == "Google Drive" && offloadName("/Volumes/T7/Docked Games") == "T7", "offload places are named")
+    var l = LibraryData(); l.addApp("/g/A.app", "0100"); l.offloaded["/g/A.app"] = "/c/A.app"
+    let j = JSONEncoder(); j.dateEncodingStrategy = .iso8601; let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+    check((try? d.decode(LibraryData.self, from: j.encode(l)))?.offloaded["/g/A.app"] == "/c/A.app", "where an offloaded game is, is saved")
+    l.removeApp("/g/A.app"); check(l.offloaded.isEmpty, "a game taken out of the library forgets where it was offloaded")
+    try? fm.removeItem(at: base)
 }
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)

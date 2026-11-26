@@ -341,6 +341,7 @@ struct CouchInfo: View {
                 if let d = e.lastPlayed { stat("calendar", "Last played " + RelativeDateTimeFormatter().localizedString(for: d, relativeTo: Date())) }
                 if e.status != .none { stat("bookmark", e.status.rawValue) }
                 if e.favorite { stat("heart.fill", "Favorite", style.accent) }
+                if let r = game.rom, let p = Cheevos.of(r) { stat("trophy", "\(Cheevos.text(p)) achievements", p.earned == p.total ? style.accent : nil) }
                 if model.isRunning(game) { stat("play.fill", "Playing now", style.ok) }
             }
             if let why = game.cannot { stat("exclamationmark.triangle.fill", why, style.warn) }
@@ -363,7 +364,7 @@ struct CouchCover: View {
             .overlay {   // a streak of light across the cover as it is chosen
                 LinearGradient(colors: [.clear, .white.opacity(0.28), .clear], startPoint: .leading, endPoint: .trailing).frame(width: w * 0.45).rotationEffect(.degrees(18)).offset(x: shine * w).blendMode(.plusLighter).clipShape(r).allowsHitTesting(false)
             }
-            .overlay { if game.missing { ZStack { Color.black.opacity(0.58); Label("Not connected", systemImage: "externaldrive.badge.xmark").font(.system(size: 15 * k, weight: .semibold)).foregroundStyle(.white).multilineTextAlignment(.center).padding(8 * k) }.clipShape(r) } }
+            .overlay { if game.missing { ZStack { Color.black.opacity(0.58); Label(game.away != nil ? "Offloaded" : "Not connected", systemImage: game.away != nil ? "icloud" : "externaldrive.badge.xmark").font(.system(size: 15 * k, weight: .semibold)).foregroundStyle(.white).multilineTextAlignment(.center).padding(8 * k) }.clipShape(r) } }
             .overlay(alignment: .topTrailing) { if model.library.entry(game.titleID).favorite { Image(systemName: "heart.fill").font(.system(size: 15 * k)).foregroundStyle(style.accent).padding(7 * k).background(.black.opacity(0.45), in: Circle()).padding(8 * k) } }
             .overlay(alignment: .topLeading) { if model.isRunning(game) { Circle().fill(style.ok).frame(width: 12 * k, height: 12 * k).padding(10 * k) } }
             .overlay { r.strokeBorder(on ? style.accent : .white.opacity(0.08), lineWidth: on ? 4 * k : 1) }

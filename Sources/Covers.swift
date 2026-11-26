@@ -103,7 +103,7 @@ struct Carousel: View {
                     .overlay(alignment: .trailing) { if over, index < games.count - 1 { arrow("chevron.right", "Next game") { go(index + 1, p) }.padding(.trailing, 10) } }
                     .overlay(alignment: .bottom) { if games.count > 1 { HStack(spacing: 7) { ForEach(Array(games.enumerated()), id: \.element.id) { n, g in Button { go(n, p) } label: { Capsule().fill(.white.opacity(n == index ? 0.95 : 0.42)).frame(width: n == index ? 18 : 7, height: 7).padding(.vertical, 6).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel("Show \(g.name)") } }.animation(still ? nil : .easeOut(duration: 0.2), value: index).padding(.bottom, 4) } }
             }
-        }.frame(height: 196).onHover { over = $0 }
+        }.frame(height: 300).onHover { over = $0 }
     }
     func arrow(_ s: String, _ l: String, _ f: @escaping () -> Void) -> some View { Button(action: f) { Image(systemName: s).font(.system(size: 14, weight: .bold)).foregroundStyle(.white).frame(width: 36, height: 36).background(.black.opacity(0.55), in: Circle()) }.buttonStyle(.plain).accessibilityLabel(l) }
 }

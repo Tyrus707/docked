@@ -94,8 +94,11 @@ final class Model: ObservableObject {
     @Published var retitling: Game?
     @Published var showConsoles = false
     // ---- covers and details, found online once the player has said yes (Lookup.swift) ----
-    @Published var lookUp = UserDefaults.standard.object(forKey: "lookUp") as? Bool { didSet { UserDefaults.standard.set(lookUp, forKey: "lookUp") } }
+    @Published var lookUp = UserDefaults.standard.object(forKey: "lookUp") as? Bool { didSet { UserDefaults.standard.set(lookUp, forKey: "lookUp"); refreshCompat() } }
     @Published var askLookUp = false
+    @Published var compat: [String: Compat] = Compat.load()   // how well each game runs, from the community list (Compat.swift)
+    // One cloud saves folder for every converted game, written into each game's own settings before it starts ("" is off)
+    @Published var cloudSaves = UserDefaults.standard.string(forKey: "cloudSaves") ?? "" { didSet { UserDefaults.standard.set(cloudSaves, forKey: "cloudSaves"); applyCloudSaves(was: oldValue) } }
     @Published var picking: Picking?
     @Published var finding = Set<String>()
     @Published var scoring = Set<String>()   // games whose scores and details are being looked up, by title ID
@@ -239,7 +242,8 @@ final class Model: ObservableObject {
     func clearTheme(_ g: Game) { theme.stop(0.2); Theme.remove(g); objectWillChange.send() }
     var chosen: Game? { selected.flatMap { id in games.first { $0.id == id } } }
     func select(_ g: Game) { if cursor != nil, cursor?.game != g.id { cursor = nil }; if selected != g.id { selected = g.id } }   // a second click of a double-click must not close it again
-    private var sizes: [String: Int64] = [:], noted: [String: [String]] = [:]
+    var sizes: [String: Int64] = [:]
+    private var noted: [String: [String]] = [:]
     func notes(_ g: Game) -> [String] { if let n = noted[g.titleID] { return n }; let n = GameNotes.of(g.titleID); noted[g.titleID] = n; return n }
     func size(_ g: Game) -> Int64? {
         if let s = sizes[g.id] { return s }
@@ -256,11 +260,15 @@ final class Model: ObservableObject {
         if let p = RetroArch.problem(c, rom: r.path) { message = p; return }
         if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r) }; if retro == nil { tell("Docked is getting \(c.name) games ready. The game starts when it's done.") }; return }
         if let b = RetroArch.missingBios(c, rom: r.path), b.required || !biosAsked(c) { askBios(c) { [weak self] in self?.playRom(g, r) }; return }
-        do { try RetroArch.prepare() } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
+        let look = Shaders.look(r)
+        if look != .off && !Shaders.installed { getLooks { [weak self] in self?.playRom(g, r) }; return }
+        let shader = Shaders.preset(look)
+        if !Pads.installed { DispatchQueue.global(qos: .utility).async { try? Pads.install() } }
+        do { try RetroArch.prepare(shader: shader != nil) } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
         let ra = NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == RetroArch.app.path }
         if let ra { if isRunning(g) { ra.activate() } else { message = "RetroArch is already open. Quit it first, then play \(g.name)." }; return }
         do {
-            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path) { [weak self] in self?.backFromGame() }
+            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path, shader: shader) { [weak self] in self?.backFromGame() }
             adoptRetro(pid, as: g.titleID.uppercased(), tries: 20); stepAside()
         } catch { message = "RetroArch couldn't start. \(error.localizedDescription)" }
     }
@@ -272,10 +280,32 @@ final class Model: ObservableObject {
     }
     // A RetroArch game closed: back to the library.
     func backFromGame() {
-        NSApp.unhide(nil)
+        NSApp.unhide(nil); refreshCheevos()
         for w in NSApp.windows where w.isMiniaturized { w.deminiaturize(nil) }
         if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
         NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil); if couch { couchBack() }
+    }
+    // Retro looks: libretro's shaders, downloaded the first time a game uses one; the game starts when they're here
+    private var gettingLooks: [() -> Void] = []
+    func getLooks(then: @escaping () -> Void) {
+        gettingLooks.append(then); guard gettingLooks.count == 1 else { return }
+        retro = RetroWork(what: "Downloading retro looks…", fraction: nil); var last = Date.distantPast
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = Result { try Shaders.install { w, f in
+                guard Date().timeIntervalSince(last) > 0.25 else { return }; last = Date()
+                DispatchQueue.main.async { self.retro = RetroWork(what: w, fraction: f) }
+            } }
+            DispatchQueue.main.async {
+                self.retro = nil; let waiting = self.gettingLooks; self.gettingLooks = []
+                switch r { case .success: waiting.forEach { $0() }; case .failure(let e): self.message = "The retro looks couldn't be downloaded. \(e.localizedDescription)" }
+            }
+        }
+    }
+    // RetroAchievements progress, fetched again after a retro game and when asked, at most once a minute
+    func refreshCheevos(force: Bool = false) {
+        guard Cheevos.signedIn, Cheevos.hasWebKey, force || Date().timeIntervalSince(Cheevos.checked) > 60 else { return }
+        Cheevos.checked = Date()
+        DispatchQueue.global(qos: .utility).async { let e = Result { try Cheevos.refresh() }; DispatchQueue.main.async { self.objectWillChange.send(); if force, case .failure(let x) = e { self.message = x.localizedDescription } } }
     }
 
     func shown(_ s: Section, by: SortBy = .name) -> [Game] {
@@ -299,7 +329,7 @@ final class Model: ObservableObject {
         tracker.identify = { [weak self] u in self?.games.first { u.path == $0.url.path || u.path.hasPrefix($0.url.path + "/") }?.titleID.uppercased() }
         tracker.countedUntil = { [weak self] id in self?.library.entry(id).lastPlayed }
         AppDelegate.leaving = { [weak self] in self?.tracker.flush(); self?.saveNow() }
-        tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack() }
+        tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack(); self?.checkCrash(id, since: a) }
         tracker.changed = { [weak self] in guard let s = self else { return }; s.runningIDs = s.tracker.running; s.themeUpdate() }
         tracker.start()
     }
@@ -487,8 +517,12 @@ final class Model: ObservableObject {
         found += l.settle(found: found)
         var all = found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         all += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !FileManager.default.fileExists(atPath: $0.path)) }
+        // An offloaded game is away, not deleted. One whose file is back here by other means is just here.
+        let fm = FileManager.default
+        for (home, _) in l.offloaded where fm.fileExists(atPath: home) { l.offloaded[home] = nil }
+        for i in all.indices where all[i].missing { all[i].away = l.offloaded[all[i].url.path] }
         let busy = moving != nil || filing != nil || removing
-        let deleted = busy ? [] : all.filter { $0.missing && deletedFile($0.url.path) }
+        let deleted = busy ? [] : all.filter { $0.missing && $0.away == nil && deletedFile($0.url.path) }
         if !deleted.isEmpty {
             for g in deleted { if g.rom != nil { l.removeRom(g.titleID) } else { l.removeApp(g.url.path) } }
             let gone = Set(deleted.map(\.id)); all.removeAll { gone.contains($0.id) }
@@ -715,6 +749,7 @@ final class Model: ObservableObject {
     // Adds the game on the review screen to the queue. It starts at once when nothing else is converting.
     func convert() -> Bool {
         guard review.blocker == nil else { return false }
+        if let g = existing, library.entry(g.titleID).kept { reviewNote = "You chose to keep this build of \(g.name). Turn off Keep This Build in its ••• menu to convert it again."; return false }
         if let e = placeProblem(reviewPlace), reviewPlace.path != Paths.games.path { reviewNote = e.localizedDescription; return false }
         do {
             let parts = review.parts.map(\.url), dir = (try? parts.first?.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
@@ -767,6 +802,7 @@ final class Model: ObservableObject {
     var waits: Bool { builder.running || moving != nil || removing || !queue.waiting.isEmpty }
     func queueTime(_ now: Double) -> Double { now + queue.waiting.reduce(0) { $0 + builder.whole(quick: $1.quick, phone: $1.phone, xcode: $1.xcode) } }
     func copyReport(_ t: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string); tell("Report copied, with your name, folders and keys taken out. Read it before you post it.") }
+    func reportProblem(_ t: String) { copyReport(t); NSWorkspace.shared.open(issuePage); tell("Report copied. Paste it into the page that opened, read it, then post it.") }
     // ---- moving with a controller or the arrow keys ----
     @Published var cursor: Cursor?
     @Published var padUsed = false
@@ -920,9 +956,9 @@ final class Model: ObservableObject {
     private var launched = false
     // Once, when the window first appears. A failed look says nothing: being offline is not a problem worth a message.
     func windowAppeared() {
-        guard !launched else { return }; launched = true
+        guard !launched else { return }; launched = true; refreshCompat()
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
-        for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched() } } }
+        for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched(); self?.evictOffloaded() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers.removeAllObjects(); self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
         lookInWatched(force: true)
@@ -948,10 +984,12 @@ final class Model: ObservableObject {
 
     func play(_ g: Game, settings: Bool = false) {
         theme.stop(0.3)
+        if g.away != nil { askDownload(g, settings: settings); return }
         if g.missing { missingGame = g; return }
         if let r = g.rom { playRom(g, r); return }
         if isRunning(g), let a = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.path == g.url.path }) { a.activate(); return }
         if let why = g.cannot { message = "\(g.name) cannot run here. \(why)."; return }
+        if !cloudSaves.isEmpty { CloudSaves.apply(cloudSaves, was: "", to: g.url) }
         let c = NSWorkspace.OpenConfiguration()
         if !settings { c.environment = ["DM_LAUNCHER": "0"] }   // straight into the game
         NSWorkspace.shared.openApplication(at: g.url, configuration: c) { _, e in
@@ -982,7 +1020,7 @@ struct ContentView: View {
             }
             Tray()
         }
-        .background(Backdrop())
+        .background(Backdrop(sky: true))
         .overlay { if model.couch { CouchView().transition(.opacity) } }
         .animation(still ? nil : .easeInOut(duration: 0.35), value: model.couch)
         .preferredColorScheme(model.palette.dark ? .dark : .light)
@@ -1089,7 +1127,7 @@ struct BuildBar: View {
                 }
                 Spacer()
                 Button(showLog ? "Hide Details" : "Details") { showLog.toggle() }
-                if builder.running { Button("Stop") { builder.cancel() } } else { Button("Copy Report") { model.copyReport(builder.report) }; Button("Dismiss") { builder.error = nil } }
+                if builder.running { Button("Stop") { builder.cancel() } } else { Button("Report Problem") { model.reportProblem(builder.report) }; Button("Dismiss") { builder.error = nil } }
             }
             if builder.running {
                 TimelineView(.periodic(from: .now, by: 5)) { t in VStack(spacing: 8) {

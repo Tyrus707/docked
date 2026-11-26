@@ -43,6 +43,7 @@ struct Tray: View {
                 .animation(still ? nil : .easeOut(duration: 0.2), value: noticeKey)
             }
             .background(style.tile.opacity(0.45))
+            .overlay(alignment: .topLeading) { if builder.running, let f = builder.frac { GeometryReader { g in Rectangle().fill(style.accent).frame(width: g.size.width * min(max(f, 0), 1), height: 2) }.frame(height: 2).accessibilityHidden(true) } }   // a hairline of how far the conversion is
             .whenChanged(hasDetails) { if !hasDetails { open = false } }
         }
     }
@@ -121,7 +122,7 @@ struct Tray: View {
         if let e = builder.error, !builder.running {
             card("exclamationmark.triangle", "\(builder.title) stopped converting", e, warn: true) {
                 Button("Details") { open = true }
-                Button("Copy Report") { model.copyReport(builder.report) }
+                Button("Report Problem") { model.reportProblem(builder.report) }
             } close: { builder.error = nil }
         } else if let p = model.queue.problems.first {
             card("exclamationmark.triangle", p.title, p.reason, warn: true) {

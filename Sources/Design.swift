@@ -16,7 +16,7 @@ struct Style: Identifiable, Equatable {
     var id: String, name: String
     var top, bottom, text, soft, accent, tile, line, button: Color
     var ok = Color(hex: 0x6FCF8A), warn = Color(hex: 0xF2B45C), danger = Color(hex: 0xFF8A80)
-    var dark = true, shelf = false
+    var dark = true, shelf = false, stars = false
     static func == (a: Style, b: Style) -> Bool { a.id == b.id }
 
     // Warm charcoal with the logo's brass and oxblood, like a lamp-lit shelf.
@@ -33,7 +33,26 @@ struct Style: Identifiable, Equatable {
                                 accent: Color(hex: 0x1F5E6B), tile: Color(hex: 0xFFFFFF), line: Color(hex: 0xB9C7CE), button: Color(hex: 0x1F6675),
                                 ok: Color(hex: 0x1E7A3C), warn: Color(hex: 0x8A4B00), danger: Color(hex: 0xB3261E), dark: false, shelf: true)
 
-    static let all = [hearth, oxblood, harbor, daylight]
+    // From Budget Quest's palettes. Night sky blue; the main window twinkles a little.
+    static let starryNight = Style(id: "starrynight", name: "Starry Night", top: Color(hex: 0x141C42), bottom: Color(hex: 0x0A1030), text: Color(hex: 0xF2EFDD), soft: Color(hex: 0xA6B3D6),
+                                   accent: Color(hex: 0x5DC9E8), tile: Color(hex: 0x1A234F), line: Color(hex: 0x3A4A8C), button: Color(hex: 0x2B6F8A), stars: true)
+    // Forest floor at dusk.
+    static let grove = Style(id: "grove", name: "Grove", top: Color(hex: 0x14211B), bottom: Color(hex: 0x0F1A15), text: Color(hex: 0xF0EEDC), soft: Color(hex: 0xAFBEAA),
+                             accent: Color(hex: 0x5ED65E), tile: Color(hex: 0x1B2B24), line: Color(hex: 0x3E6A52), button: Color(hex: 0x2F7A3C))
+    // Deep teal water.
+    static let deepSea = Style(id: "deepsea", name: "Deep Sea", top: Color(hex: 0x16222C), bottom: Color(hex: 0x131E28), text: Color(hex: 0xE4F2F0), soft: Color(hex: 0xABC6CB),
+                               accent: Color(hex: 0x3DD6C4), tile: Color(hex: 0x1E2E3A), line: Color(hex: 0x375365), button: Color(hex: 0x1F7A72))
+    // Near black with neon teal and magenta.
+    static let midnightNeon = Style(id: "midnightneon", name: "Midnight Neon", top: Color(hex: 0x0F1820), bottom: Color(hex: 0x0A0D10), text: Color(hex: 0xD6F2EF), soft: Color(hex: 0x8FB5B6),
+                                    accent: Color(hex: 0x18E0C8), tile: Color(hex: 0x111820), line: Color(hex: 0xB3279A), button: Color(hex: 0x8E1F7B))
+    // Black space and violet.
+    static let cosmos = Style(id: "cosmos", name: "Cosmos", top: Color(hex: 0x100C20), bottom: Color(hex: 0x07050F), text: Color(hex: 0xEEEAFF), soft: Color(hex: 0xB6AEE0),
+                              accent: Color(hex: 0x9A86FF), tile: Color(hex: 0x141026), line: Color(hex: 0x4A3D8F), button: Color(hex: 0x5A47B8))
+    // A dim reading room in plum and periwinkle.
+    static let library = Style(id: "library", name: "Library", top: Color(hex: 0x1B1620), bottom: Color(hex: 0x16121A), text: Color(hex: 0xF1E9F5), soft: Color(hex: 0xBBAEC6),
+                               accent: Color(hex: 0x8FA6FF), tile: Color(hex: 0x211A27), line: Color(hex: 0x4A3B55), button: Color(hex: 0x4C5AA8))
+
+    static let all = [hearth, oxblood, harbor, starryNight, grove, deepSea, midnightNeon, cosmos, library, daylight]
     static func named(_ id: String?) -> Style { all.first { $0.id == id } ?? hearth }
     static var current = named(UserDefaults.standard.string(forKey: "theme"))
     // Menus, alerts, sheets and controls follow the theme, not the Mac's setting.
@@ -41,7 +60,40 @@ struct Style: Identifiable, Equatable {
 }
 var style: Style { Style.current }
 
-struct Backdrop: View { var s = style; var body: some View { LinearGradient(colors: [s.top, s.bottom], startPoint: .top, endPoint: .bottom).ignoresSafeArea() } }   // holds the theme, so a new one redraws it
+struct Backdrop: View {   // holds the theme, so a new one redraws it
+    var s = style, sky = false   // sky: the main window, where a starry theme twinkles
+    var body: some View {
+        LinearGradient(colors: [s.top, s.bottom], startPoint: .top, endPoint: .bottom)
+            .overlay { if sky && s.stars { Twinkle(color: s.text) } }
+            .ignoresSafeArea()
+    }
+}
+
+// About 60 small stars, drawn 12 times a second, and only while Docked is the front app and motion is allowed. Otherwise they hold still.
+struct Twinkle: View {
+    let color: Color
+    @State private var front = NSApp?.isActive ?? true
+    @Environment(\.accessibilityReduceMotion) private var still
+    private static let stars: [(x: Double, y: Double, r: Double, speed: Double, phase: Double)] = {
+        var g = UInt64(0x5DC9E8)   // fixed seed, so the sky looks the same every time
+        func next() -> Double { g = g &* 6364136223846793005 &+ 1442695040888963407; return Double(g >> 11) / Double(1 << 53) }
+        return (0..<60).map { _ in (x: next(), y: next() * 0.75, r: 0.4 + next() * 1.1, speed: 0.6 + next() * 1.2, phase: next() * 6.28) }
+    }()
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 12, paused: still || !front)) { t in
+            Canvas { c, size in
+                let now = t.date.timeIntervalSinceReferenceDate
+                for s in Self.stars {
+                    let a = still ? 0.5 : 0.25 + 0.55 * (0.5 + 0.5 * sin(now * s.speed + s.phase))
+                    c.fill(Path(ellipseIn: CGRect(x: s.x * size.width - s.r, y: s.y * size.height - s.r, width: s.r * 2, height: s.r * 2)), with: .color(color.opacity(a)))
+                }
+            }
+        }
+        .allowsHitTesting(false).accessibilityHidden(true)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in front = true }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in front = false }
+    }
+}
 
 // The direction pad from the logo.
 struct DPad: Shape {

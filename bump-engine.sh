@@ -20,6 +20,15 @@ added=$($G diff --name-only --diff-filter=A "$OLD" "$NEW" -- dm/games | awk -F/ 
 changed=$($G diff --name-only "$OLD" "$NEW" -- dm/games | awk -F/ '{print $3}' | sort -u | grep -vxF -f <(print -r -- "$added") || true)
 echo "\nNew game profiles: $(print -r -- "$added" | grep -c . || true)"; for t in ${(f)added}; do echo "  $t  $(name $t)"; done
 echo "Changed game profiles: $(print -r -- "$changed" | grep -c . || true)"; for t in ${(f)changed}; do echo "  $t  $(name $t)"; done
+# What changed for apps like Docked (nxnative docs/frontends.md, "Following main"): the authors' Front-ends: lines, and the files that make the interface
+$G fetch -q --shallow-since="$(awk '$1=="date"{print $2}' ENGINE_PIN)" https://github.com/seedds/nxnative.git "$NEW" 2>/dev/null || true
+fe=$($G log --format=%B "$OLD..$NEW" 2>/dev/null | grep '^Front-ends:' || true)
+echo "\nNotes for front ends: $(print -r -- "$fe" | grep -c . || true)"; [ -n "$fe" ] && print -r -- "$fe" | sed 's/^Front-ends: */  /'
+for f in docs/frontends.md docs/launcher.schema.json dm/games/settings.tsv docs/env_switches.tsv; do $G diff --quiet "$OLD" "$NEW" -- "$f" 2>/dev/null || echo "  changed: $f (git -C $E diff ${OLD:0:8} ${NEW:0:8} -- $f)"; done
+opts=$($G diff "$OLD" "$NEW" -- scripts/build_ipa_from_nsp.py | grep -E '^[-+].*add_argument' || true); [ -n "$opts" ] && { echo "  build script options:"; print -r -- "$opts" | sed 's/^/    /'; }
+if print -r -- "$fe" | grep -qi '^Front-ends: *break'; then
+  [ "${ACCEPT_BREAK:-}" = 1 ] || { echo "Upstream says something apps rely on stopped working (break: above). Check Docked against it, then run again with ACCEPT_BREAK=1."; exit 1; }
+fi
 # Prebuilt tools: their fingerprints were recorded at review, and a new one is code nobody here has built
 tools=$(awk '$1=="tool"{print $2}' ENGINE_PIN); lines=""; moved=""
 for f in ${(f)tools}; do h=$($G show "$NEW:$f" | shasum -a 256 | cut -c1-64); lines+="tool $f $h\n"; [ "$h" = "$(awk -v f="$f" '$1=="tool" && $2==f {print $3}' ENGINE_PIN)" ] || moved+="  $f\n"; done

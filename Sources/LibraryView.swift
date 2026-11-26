@@ -51,6 +51,18 @@ struct Sidebar: View {
                 }
                 ForEach(model.library.smart) { c in row(.smart(c)).contextMenu { Button("Edit…") { model.editing = c }; Button("Remove Collection") { if model.section == .smart(c) { model.section = .home }; model.library.smart.removeAll { $0.id == c.id } } } }
                 if model.library.collections.isEmpty && model.library.smart.isEmpty { Text("Group games your way").font(.caption).foregroundStyle(style.soft).padding(.leading, 10) }
+                let drives = model.drivesInUse
+                if !drives.isEmpty {
+                    head("Drives")
+                    ForEach(drives, id: \.name) { d in
+                        HStack(spacing: 9) {
+                            Circle().fill(d.connected ? style.ok : .clear).overlay(Circle().strokeBorder(d.connected ? .clear : style.soft, lineWidth: 1.5)).frame(width: 7, height: 7).frame(width: 18)
+                            Text(d.name).foregroundStyle(d.connected ? style.text : style.soft).lineLimit(1)
+                            Spacer()
+                            if !d.connected { Text("Unplugged").font(.caption).foregroundStyle(style.soft) }
+                        }.padding(.horizontal, 10).frame(height: 30).accessibilityElement(children: .combine)
+                    }
+                }
             }.padding(.horizontal, 10).padding(.vertical, 12)
         }
         .frame(width: 216)
@@ -61,7 +73,7 @@ struct Sidebar: View {
         let on = model.section == s, n = s == .home ? nil : model.count(s)
         return Button { withAnimation(still ? nil : .easeOut(duration: 0.18)) { model.section = s } } label: {
             HStack(spacing: 9) {
-                Image(systemName: on && s == .favorites ? "heart.fill" : s.symbol).frame(width: 18).foregroundStyle(s.machine?.color ?? (on ? style.accent : style.soft))
+                Group { if case let .console(id) = s { ConsoleIcon(id: id) } else { Image(systemName: on && s == .favorites ? "heart.fill" : s.symbol) } }.frame(width: 18).foregroundStyle(s.machine?.color ?? (on ? style.accent : style.soft))
                 Text(s.title).foregroundStyle(style.text).lineLimit(1)
                 Spacer()
                 if let n { Text("\(n)").font(.caption).monospacedDigit().foregroundStyle(style.soft) }
@@ -121,24 +133,29 @@ struct Shelf<C: View>: View {
 }
 
 // The last game played, on a wash of its own art: the icon drawn tiny and stretched, which costs nothing to keep on screen.
+// The game you were playing, by the fire: its wide art when Docked has it, one brass action, the rest quiet.
 struct Hero: View {
     @EnvironmentObject var model: Model
     let game: Game
+    @State private var art: NSImage?
     var body: some View {
-        let e = model.library.entry(game.titleID)
-        HStack(spacing: 20) {
-            Image(nsImage: model.icon(game)).resizable().frame(width: 128, height: 128).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(model.isRunning(game) ? "Playing now" : e.lastPlayed == nil ? "Ready to play" : "Continue playing").font(.callout.weight(.medium)).foregroundStyle(.white.opacity(0.86))
-                Text(game.name).font(.title.weight(.bold)).foregroundStyle(.white).lineLimit(2)
-                Text(e.lastPlayed == nil ? consoleName(consoleOf(game.titleID)) : "\(lastPlayedText(e.lastPlayed)), \(playTimeText(e.seconds).lowercased())").font(.callout).foregroundStyle(.white.opacity(0.86))
-                Button { model.play(game) } label: { Label(model.isRunning(game) ? "Show" : "Play", systemImage: "play.fill").font(.body.weight(.semibold)).padding(.horizontal, 18).frame(height: 34).foregroundStyle(Color(hex: 0x14242B)).background(.white, in: Capsule()) }.buttonStyle(.plain).padding(.top, 4).accessibilityLabel("Play \(game.name)")
-            }
+        let e = model.library.entry(game.titleID), c = game.rom == nil ? model.compat[game.titleID.uppercased()] : nil
+        let label = model.isRunning(game) ? "PLAYING NOW" : game.missing ? "NOT CONNECTED" : e.lastPlayed == nil ? "READY TO PLAY" : "CONTINUE PLAYING"
+        let facts = [consoleName(consoleOf(game.titleID)), e.seconds >= 60 ? playTimeText(e.seconds).replacingOccurrences(of: " played", with: "") : nil, e.lastPlayed.map { lastPlayedText($0) }, c.map { $0.label + ($0.fps.isEmpty ? "" : ", \($0.fps)") }].compactMap { $0 }
+        VStack(alignment: .leading, spacing: 10) {
             Spacer(minLength: 0)
+            HStack(spacing: 7) { Circle().fill(game.missing ? style.soft : style.accent).frame(width: 7, height: 7); Text(label).font(.caption.weight(.semibold)).tracking(1.4) }.foregroundStyle(game.missing ? style.soft : style.accent).accessibilityElement(children: .combine)
+            Text(game.name).font(.system(size: 40, weight: .heavy)).tracking(-0.6).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6)
+            Text(facts.joined(separator: " · ")).font(.callout).foregroundStyle(.white.opacity(0.82)).lineLimit(1)
+            HStack(spacing: 10) {
+                Button { model.play(game) } label: { Label(model.isRunning(game) ? "Show" : "Play", systemImage: "play.fill").font(.body.weight(.bold)).padding(.horizontal, 24).frame(height: 40).foregroundStyle(Color(hex: 0x1B1612)).background(style.accent, in: Capsule()) }.buttonStyle(.plain).disabled(game.missing)
+                if game.rom == nil, !game.missing { Button { model.openSettings(game) } label: { Text("Game Settings").font(.body.weight(.medium)).padding(.horizontal, 18).frame(height: 40).foregroundStyle(.white).background(Capsule().fill(.black.opacity(0.3))).overlay(Capsule().strokeBorder(.white.opacity(0.28))) }.buttonStyle(.plain) }
+            }.padding(.top, 4)
         }
-        .padding(20).frame(maxWidth: .infinity, minHeight: 196, alignment: .leading)
-        .background { ZStack { Color(hex: 0x14242B); Image(nsImage: model.wash(game)).resizable().interpolation(.high).scaledToFill(); LinearGradient(colors: [.black.opacity(0.76), .black.opacity(0.44)], startPoint: .leading, endPoint: .trailing) } }
+        .padding(.horizontal, 34).padding(.vertical, 28).frame(maxWidth: .infinity, minHeight: 300, alignment: .leading)
+        .background { ZStack { style.bottom; if let art { Image(nsImage: art).resizable().interpolation(.high).scaledToFill() } else { Image(nsImage: model.wash(game)).resizable().interpolation(.high).scaledToFill().opacity(0.9) }; LinearGradient(colors: [style.bottom.opacity(0.94), style.bottom.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing) }.accessibilityHidden(true) }
         .clipShape(RoundedRectangle(cornerRadius: 18)).overlay { if model.cursor == Cursor(row: "recent", game: game.id) { RoundedRectangle(cornerRadius: 18).strokeBorder(style.accent, lineWidth: 4) } }.contentShape(RoundedRectangle(cornerRadius: 18)).onTapGesture { model.select(game) }
+        .task(id: game.id) { let u = CouchArt.banner(game.titleID); art = await Task.detached(priority: .utility) { CouchArt.load(u) }.value }
     }
 }
 
@@ -148,7 +165,7 @@ struct Grid: View {
     @State private var confirm: [Game]?
     var body: some View {
         let list = model.gridList, groups = model.gridGroups
-        let lost = list.filter { $0.missing && drive(of: $0.url.path)?.connected != false }   // can't be found, and not because a drive is away
+        let lost = list.filter { $0.missing && $0.away == nil && drive(of: $0.url.path)?.connected != false }   // can't be found, and not because a drive is away
         GeometryReader { geo in let back = model.marking ? [] : model.jumpBack(perRow(geo.size.width)); ScrollViewReader { p in ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline, spacing: 14) {
@@ -184,7 +201,10 @@ struct Grid: View {
             Text(n == 0 ? "Click games to choose them" : "\(n) chosen").foregroundStyle(style.text).monospacedDigit()
             Spacer()
             Button(n == list.count ? "Choose None" : "Choose All") { model.marked = n == list.count ? [] : Set(list.map(\.id)) }
-            Button("Remove from Library") { confirm = list.filter { model.marked.contains($0.id) } }.disabled(n == 0).tint(style.button)
+            let chosen = list.filter { model.marked.contains($0.id) }
+            Button("Offload") { model.offload(chosen); model.marking = false }.disabled(!chosen.contains { !$0.missing && $0.away == nil }).help("Free space: move them to iCloud Drive, another cloud folder or a drive")
+            Button("Download") { model.download(chosen); model.marking = false }.disabled(!chosen.contains { $0.away != nil })
+            Button("Remove from Library") { confirm = chosen }.disabled(n == 0).tint(style.button)
             Button("Done") { model.marking = false }
         }.padding(.horizontal, 18).padding(.vertical, 10).background(style.tile.opacity(0.97)).overlay(alignment: .top) { Rectangle().fill(style.line).frame(height: 1) }
     }
@@ -236,11 +256,14 @@ struct Tile: View {
     var small = false
     var body: some View {
         let e = model.library.entry(game.titleID)
-        let note = game.missing ? whereMissing(game.url.path) : model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
+        let c = game.rom == nil ? model.compat[game.titleID.uppercased()] : nil, worry = c.map { $0.kind == .okay || $0.kind == .poor } ?? false
+        let note = game.away.map { "Offloaded to " + offloadName($0) } ?? (game.missing ? whereMissing(game.url.path) : model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : worry ? c!.label : e.kept && e.lastPlayed == nil ? "Kept build" : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID)))
         Group {
             if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
             else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), small: small, select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
-        }.opacity(game.missing ? 0.5 : 1).onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
+        }.opacity(game.away != nil ? 0.78 : game.missing ? 0.5 : 1)
+        .overlay(alignment: .topTrailing) { if game.away != nil, !model.marking { Image(systemName: "icloud.and.arrow.down").font(.system(size: small || model.compact ? 12 : 15, weight: .semibold)).foregroundStyle(.white).padding(6).background(.black.opacity(0.55), in: Circle()).padding(8).help("Offloaded. Play or Download brings it back.").accessibilityLabel("Offloaded") } }
+        .onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
         .overlay { if model.marking { Mark(on: model.marked.contains(game.id)).contentShape(Rectangle()).onTapGesture { model.mark(game) }.accessibilityElement().accessibilityLabel(game.name).accessibilityAddTraits(model.marked.contains(game.id) ? [.isButton, .isSelected] : .isButton) } }
     }
 }
@@ -260,8 +283,9 @@ struct GameActions: View {
     @Binding var deleting: Game?
     var body: some View {
         let e = model.library.entry(game.titleID)
-        if game.missing { Button("Locate…") { model.locate(game) }; Button("Remove from Library") { model.forget(game) }; Divider() }
-        Button("Play") { model.play(game) }.disabled(game.missing)
+        if game.away != nil { Button("Download") { model.download([game]) }; Button("Remove from Library") { model.forget(game) }; Divider() }
+        else if game.missing { Button("Locate…") { model.locate(game) }; Button("Remove from Library") { model.forget(game) }; Divider() }
+        Button("Play") { model.play(game) }.disabled(game.missing && game.away == nil)
         if game.rom == nil { Button("Game Settings…") { model.openSettings(game) }.disabled(game.missing); Button("Play with Settings…") { model.play(game, settings: true) } }
         Divider()
         Button(e.favorite ? "Remove from Favorites" : "Favorite") { model.edit(game) { $0.favorite.toggle() } }
@@ -274,12 +298,17 @@ struct GameActions: View {
         }
         Divider()
         if game.rom == nil, model.lookUp == true { Button(e.meta == nil ? "Find Details" : "Find Details Again") { model.findMeta(game, force: true) }.disabled(model.scoring.contains(game.titleID.uppercased())) }
-        if game.rom == nil { Button("Add Update or DLC…") { model.addTo(game) }; Button("Move to Folder…") { model.moveGame(game) } }
+        if game.rom == nil {
+            Button("Add Update or DLC…") { model.addTo(game) }.disabled(e.kept); Button("Move to Folder…") { model.moveGame(game) }
+            Toggle("Keep This Build", isOn: .init(get: { e.kept }, set: { on in model.edit(game) { $0.kept = on } }))
+            SaveMenu(game: game)
+        }
         else { Button("Rename…") { model.retitling = game }; if let r = game.rom { Button(r.info == nil ? "Find Cover and Details…" : "Find Details Again…") { model.find(r.id, byHand: true) }.disabled(model.finding.contains(r.id)) } }
         Button("Choose Cover…") { model.pickArt(game) }; if model.hasArt(game) { Button("Use Original Cover") { model.clearArt(game) } }
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) }.disabled(game.missing)
+        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.away.map { URL(fileURLWithPath: $0) } ?? game.url]) }.disabled(game.missing && game.away == nil)
         if !game.missing {
             Divider()
+            Button("Offload") { model.offload([game]) }.help("Move it to iCloud Drive, another cloud folder or a drive, to free space. Its tile and saves stay.")
             if game.rom == nil { Button("Clean Up…") { model.cleanUp(game) }; if !model.inLibrary(game.url) { Button("Remove from Library") { model.forget(game) } }; Button("Move Game to Trash…") { deleting = game } }
             else { Button("Remove from Library") { model.removeRom(game) } }
         }
