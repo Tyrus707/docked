@@ -274,7 +274,11 @@ struct GameActions: View {
         }
         Divider()
         if game.rom == nil, model.lookUp == true { Button(e.meta == nil ? "Find Details" : "Find Details Again") { model.findMeta(game, force: true) }.disabled(model.scoring.contains(game.titleID.uppercased())) }
-        if game.rom == nil { Button("Add Update or DLC…") { model.addTo(game) }; Button("Move to Folder…") { model.moveGame(game) } }
+        if game.rom == nil {
+            Button("Add Update or DLC…") { model.addTo(game) }.disabled(e.kept); Button("Move to Folder…") { model.moveGame(game) }
+            Toggle("Keep This Build", isOn: .init(get: { e.kept }, set: { on in model.edit(game) { $0.kept = on } }))
+            SaveMenu(game: game)
+        }
         else { Button("Rename…") { model.retitling = game }; if let r = game.rom { Button(r.info == nil ? "Find Cover and Details…" : "Find Details Again…") { model.find(r.id, byHand: true) }.disabled(model.finding.contains(r.id)) } }
         Button("Choose Cover…") { model.pickArt(game) }; if model.hasArt(game) { Button("Use Original Cover") { model.clearArt(game) } }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) }.disabled(game.missing)

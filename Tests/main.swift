@@ -701,6 +701,7 @@ do {
     check(UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_OPMODE") == "0", "saved where the game's own window keeps it")
     check(GameSettings(app: app)!.value(s["DM_OPMODE"]!) == "0" && g.changed, "choice read back")
     g.set(s["DM_OPMODE"]!, "7"); check(g.value(s["DM_OPMODE"]!) == "0", "unknown option refused")
+    g.set(s["DM_OPMODE"]!, "1"); check(UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_OPMODE") == nil && g.value(s["DM_OPMODE"]!) == "1", "picking the default clears the choice"); g.set(s["DM_OPMODE"]!, "0")
     check(!g.applies(s["DM_RUMBLE_GAIN"]!) && g.applies(s["DM_RUMBLE_MIN"]!), "needs another setting")
     check(g.isFixed(s["DM_LANG"]!) && g.value(s["DM_LANG"]!) == "ja", "env.txt wins"); g.set(s["DM_LANG"]!, "en-US"); check(UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_LANG") == nil, "fixed not saved")
     check(s["DM_RUMBLE_GAIN"]!.text(1.25) == "1.2" || s["DM_RUMBLE_GAIN"]!.text(1.25) == "1.3", "range to one decimal"); check(s["DM_RUMBLE_MIN"]!.text(0.1) == "0.10", "range to two decimals")
@@ -709,6 +710,51 @@ do {
     UserDefaults.standard.removePersistentDomain(forName: dom)
     _ = mk("Bare.app/Contents/Info.plist", #"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>x.y</string></dict></plist>"#)
     check(GameSettings(app: tmp.appendingPathComponent("Bare.app")) == nil, "no settings list: none")
+}
+
+// saves, cheats and crash reports: the engine's own files for a game
+do {
+    setenv("DOCKED_NXDATA", tmp.appendingPathComponent("nx").path, 1)
+    let d = GameData("0100abc000010000")
+    check(d.root.lastPathComponent == "0100ABC000010000" && !d.hasSave && d.list().isEmpty, "no save yet")
+    check((try! d.backUp()) == nil, "nothing to back up")
+    _ = mk("nx/0100ABC000010000/save/0/file.bin", "one"); _ = mk("nx/0100ABC000010000/save_device/d.bin", "dev"); _ = mk("nx/0100ABC000010000/save.sync", "base x")
+    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
+    check(fm.fileExists(atPath: b.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b.appendingPathComponent("save.sync").path), "backup holds the save parts only")
+    let b2 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b2 != b, "same second, new folder")
+    check(d.list().count == 2 && d.list().allSatisfy { $0.bytes == 6 }, "backups listed")
+    try! Data("two".utf8).write(to: d.save.appendingPathComponent("0/file.bin"))
+    try! d.restore(b)
+    check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "one", "backup restored")
+    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" }, "the save it replaced is kept")
+    let loose = mk("elsewhere/mysave/0/file.bin", "three").deletingLastPathComponent().deletingLastPathComponent()
+    try! d.restore(loose); check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "three" && fm.fileExists(atPath: d.root.appendingPathComponent("save_device").path), "a bare save folder becomes the save")
+    try? fm.createDirectory(at: tmp.appendingPathComponent("emptyfolder"), withIntermediateDirectories: true)
+    var refused = false; do { try d.restore(tmp.appendingPathComponent("emptyfolder")) } catch { refused = true }
+    check(GameData.saveIn(tmp.appendingPathComponent("emptyfolder")) == nil && refused, "empty folder refused")
+    let c = mk("cheatsrc/0123456789ABCDEF.txt", "[Max HP]"); try! d.addCheat(c)
+    check(d.cheatFiles == ["0123456789ABCDEF.txt"] && GameData.isCheatFile(c) && !GameData.isCheatFile(mk("cheatsrc/notes.txt")), "cheat file added")
+    // cloud saves folder: Docked's folder for every game; off clears only Docked's own
+    let dom = "local.docked.cloud.\(UUID().uuidString)"
+    _ = mk("Cloud.app/Contents/Info.plist", #"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>\#(dom)</string></dict></plist>"#)
+    let app = tmp.appendingPathComponent("Cloud.app")
+    CloudSaves.apply("/c/Saves", was: "", to: app); check(CloudSaves.folder(of: app) == "/c/Saves", "cloud folder written")
+    CloudSaves.apply("", was: "/c/Saves", to: app); check(CloudSaves.folder(of: app) == nil, "cloud folder off")
+    UserDefaults(suiteName: dom)!.set("/mine", forKey: CloudSaves.key); CloudSaves.apply("", was: "/c/Saves", to: app); check(CloudSaves.folder(of: app) == "/mine", "player's own folder kept")
+    UserDefaults.standard.removePersistentDomain(forName: dom)
+    // crash reports
+    _ = mk("Crashy.app/Contents/MacOS/dmhost"); let rep = tmp.appendingPathComponent("reports")
+    _ = mk("reports/dmhost-2026-11-26-101010.ips"); _ = mk("reports/Other-2026-11-26-101010.ips")
+    check(crashReport(for: tmp.appendingPathComponent("Crashy.app"), since: Date().addingTimeInterval(-60), in: rep)?.lastPathComponent == "dmhost-2026-11-26-101010.ips", "crash report found")
+    check(crashReport(for: tmp.appendingPathComponent("Crashy.app"), since: Date().addingTimeInterval(60), in: rep) == nil, "older report ignored")
+}
+
+// community compatibility list
+do {
+    let j = #"{"games":[{"id":"0100000000010000","tier":"Plays on Mac","fps":"60 fps","platforms":["Mac"],"issues":[{"open":true},{"open":false}],"engine":"Plays."},{"id":"bad"},{"id":"0400486024dec000","tier":"Doesn't run yet"}]}"#
+    let l = Compat.parse(Data(j.utf8))
+    check(l.count == 2 && l["0100000000010000"]?.issues == 1 && l["0100000000010000"]?.kind == .good && l["0400486024DEC000"]?.kind == .poor, "compat list read")
+    check(Compat.parse(Data("nope".utf8)).isEmpty && Compat(tier: "Profile only", fps: "", platforms: [], issues: 0, engine: "").label == "Not tested yet", "compat edge cases")
 }
 
 // artwork: where it is, and what no game uses

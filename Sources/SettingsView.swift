@@ -47,6 +47,10 @@ struct SettingsSheet: View {
             flip("Skip the pipeline step", "Faster to convert, slower to start the first time.", $model.quick)
             line("Conversion speed", model.speed.note + " The finished game is the same. Applies to games added after this.") { Picker("Conversion speed", selection: $model.speed) { ForEach(Speed.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
             if !phoneGames.isEmpty { line("Games for iPhone and iPad", phoneGames.map(\.name).joined(separator: ", ")) { Button("Open Steps…") { model.leaveSettings { model.showXcode = true } } } }
+            line("Cloud saves", model.cloudSaves.isEmpty ? "Off. Choose a folder in iCloud Drive to carry your Switch saves between Macs and an iPhone or iPad." : "Every converted game syncs its save through \((model.cloudSaves as NSString).lastPathComponent). It starts with the newer save.") {
+                if !model.cloudSaves.isEmpty { Button("Turn Off") { model.cloudSaves = "" } }
+                Button(model.cloudSaves.isEmpty ? "Choose Folder…" : "Change…") { model.pickCloudSaves() }
+            }
             line("Space", "Leftovers, original files and keys you no longer need.") { Button("Clean Up…") { model.leaveSettings { model.cleanUp(nil) } } }
         }
     }
