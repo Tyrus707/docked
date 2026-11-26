@@ -105,7 +105,7 @@ extension Model {
 
     func leaveCouch() {
         guard couch else { return }
-        couch = false; couchTimer?.invalidate(); couchTimer = nil; couchIdle = false
+        couch = false; CouchPageState.shared.page = nil; couchTimer?.invalidate(); couchTimer = nil; couchIdle = false
         chime(.back); DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in if self?.couch == false { self?.couchSound.stop() } }
         if let s = couchSaved { search = s }; couchSaved = nil
         if let w = libraryWindow { w.toolbar?.isVisible = true; if couchMadeFull, w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) } }
@@ -146,12 +146,16 @@ extension Model {
         guard !couchCovered else { return }
         if message != nil { if m == .accept || m == .back || m == .play { message = nil; chime(.back) }; return }
         if wasIdle, m != .back { return }   // the first press only wakes it
+        if let p = CouchPageState.shared.page { couchPageMove(m, p); return }
         let shelves = couchShelves
         switch m {
         case .left, .right, .up, .down, .nextSection, .previousSection:
             let n = couchStep(couchSpot, m, rows: couchRows(shelves))
             if n != couchSpot { let other = n.shelfID != couchSpot.shelfID; couchSpot = n; chime(other ? .shelf : .move); themeUpdate() }
-        case .accept, .play:
+        case .accept:   // A opens the game's page; Play is the first button there, so A twice plays
+            guard let g = couchGame(shelves) else { return }
+            couchOpen(g)
+        case .play:     // the Menu button, or Space, plays straight from the shelf
             guard let g = couchGame(shelves) else { return }
             chime(.play); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.play(g) }
         case .favorite:
@@ -275,17 +279,20 @@ enum CouchLayout {
 
 struct CouchView: View {
     @EnvironmentObject var model: Model
+    @ObservedObject private var pages = CouchPageState.shared
     @Environment(\.accessibilityReduceMotion) private var still
 
     var body: some View {
         let shelves = model.couchShelves, spot = model.couchSpot.resolved(model.couchRows(shelves))
         let sel = model.couchSelection(shelves, spot: spot), idle = model.couchIdle
+        let page = pages.page, pageGame = page.flatMap { p in model.games.first { $0.id == p.game } }
+        let open = pageGame != nil
         GeometryReader { geo in
             let k = CouchLayout.scale(geo.size), m = CouchLayout.margin * k
             ZStack(alignment: .topLeading) {
                 style.bottom
-                if let g = sel?.game { CouchBackdrop(game: g, size: geo.size) }
-                if let sel {
+                if let g = pageGame ?? sel?.game { CouchBackdrop(game: g, size: geo.size) }
+                if let sel, !open {
                     // The new title arrives with a short rise; the old one leaves at once, so two names never overlap
                     CouchHero(game: sel.game, k: k, idle: idle)
                         .id(sel.game.id)
@@ -293,11 +300,18 @@ struct CouchView: View {
                         .frame(maxWidth: geo.size.width * 0.58, alignment: .leading)
                         .padding(.leading, m).padding(.top, 150 * k)
                 }
-                shelfStack(shelves, spot, geo.size, k).opacity(idle ? 0 : 1)
+                shelfStack(shelves, spot, geo.size, k).opacity(idle || open ? 0 : 1).offset(y: open ? 60 * k : 0).allowsHitTesting(!open)
+                if let page, let g = pageGame {
+                    // The page rises in from a little below as the shelves sink away; it stays while you move around it
+                    CouchPageView(page: page, game: g, size: geo.size, k: k)
+                        .id(g.id)
+                        .transition(still ? .opacity : .opacity.combined(with: .offset(y: 30 * k)))
+                        .opacity(idle ? 0 : 1)
+                }
                 LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: style.bottom.opacity(0.97), location: 0.7)], startPoint: .top, endPoint: .bottom)
                     .frame(height: 240 * k).frame(maxHeight: .infinity, alignment: .bottom).allowsHitTesting(false).opacity(idle ? 0 : 1)
                 topBar(sel?.shelf, shelves.count, spot.shelf, k).padding(.horizontal, m).padding(.top, 44 * k).opacity(idle ? 0 : 1)
-                hints(sel?.game, k).padding(.horizontal, m).padding(.bottom, 40 * k)
+                hints(pageGame ?? sel?.game, open, k).padding(.horizontal, m).padding(.bottom, 40 * k)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).opacity(idle ? 0 : 1)
                 if shelves.isEmpty {
                     Text("Add games to your library to see them here.").font(.system(size: 30 * k, weight: .medium)).foregroundStyle(style.soft)
@@ -308,6 +322,7 @@ struct CouchView: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .animation(.easeOut(duration: 0.2), value: sel?.game.id)
+        .animation(CouchLayout.slide(still), value: page?.game)
         .animation(.easeInOut(duration: 1.2), value: idle)
         .animation(.easeOut(duration: 0.2), value: model.message)
         .onContinuousHover { _ in if model.couchIdle { model.couchPoke() } }
@@ -349,13 +364,14 @@ struct CouchView: View {
         .accessibilityElement(children: .ignore).accessibilityLabel(shelf.map { "Couch Mode, \($0.name), shelf \(at + 1) of \(count)" } ?? "Couch Mode")
     }
 
-    func hints(_ g: Game?, _ k: CGFloat) -> some View {
+    func hints(_ g: Game?, _ open: Bool, _ k: CGFloat) -> some View {
         let fav = g.map { model.library.entry($0.titleID).favorite } ?? false
         return HStack(spacing: 34 * k) {
-            hint(["a.circle.fill"], "Return", "Play", k)
+            if open { hint(["a.circle.fill"], "Return", "Select", k) }
+            else { hint(["a.circle.fill"], "Return", "Details", k); hint(["line.3.horizontal.circle.fill"], "Space", "Play", k) }
             hint(["y.circle.fill"], "F", fav ? "Unfavorite" : "Favorite", k)
-            hint(["lb.rectangle.roundedtop.fill", "rb.rectangle.roundedtop.fill"], "Tab", "Shelves", k)
-            hint(["b.circle.fill"], "Esc", "Leave", k)
+            if !open { hint(["lb.rectangle.roundedtop.fill", "rb.rectangle.roundedtop.fill"], "Tab", "Shelves", k) }
+            hint(["b.circle.fill"], "Esc", open ? "Back" : "Leave", k)
         }
         .accessibilityHidden(true)
     }
@@ -481,7 +497,7 @@ struct CouchHero: View {
                     if let c = e.meta?.critic { score(c) }
                     if model.isRunning(game) { chip("play.fill", "Playing now", style.ok) }
                     if e.favorite { chip("heart.fill", "Favorite", style.accent) }
-                    if e.seconds > 0 { chip("clock", playTimeText(e.seconds) + " played") }
+                    if e.seconds > 0 { chip("clock", playTimeText(e.seconds)) }
                     else if !game.missing { chip("sparkles", "Not played yet") }
                     if let c = cheevos { chip("trophy", "\(Cheevos.text(c)) achievements", c.earned == c.total ? style.accent : nil) }
                     if let why = game.cannot { chip("exclamationmark.triangle.fill", why, style.warn) }
@@ -567,3 +583,149 @@ struct CouchSettle: ViewModifier {
             .onAppear { withAnimation(.easeOut(duration: 1.4)) { settled = true } }
     }
 }
+
+// ---- a game's own page ----
+// A on a cover opens it: the game large over its art, everything Docked knows about it, Play and Favorite,
+// and a shelf of games like it from the same library. B goes back to the shelves, exactly where you were.
+// Kept in its own small object, so moving between its buttons redraws the page and nothing else in the app.
+struct CouchPage: Equatable {
+    var game: String
+    var similar: [String] = []
+    var row = 0        // 0: the buttons, 1: More Like This
+    var button = 0     // 0: Play, 1: Favorite
+    var pick = 0       // the chosen game in More Like This
+}
+final class CouchPageState: ObservableObject {
+    static let shared = CouchPageState()
+    @Published var page: CouchPage?
+}
+
+extension Model {
+    func couchOpen(_ g: Game) {
+        CouchPageState.shared.page = CouchPage(game: g.id, similar: couchSimilar(g).map(\.id))
+        chime(.shelf); themeUpdate()
+    }
+
+    // Games that share the most with this one: its genre counts most, then its console, then its decade. Better reviewed first.
+    func couchSimilar(_ g: Game, limit: Int = 14) -> [Game] {
+        let e = library.entry(g.titleID), genre = (g.rom?.info?.genre ?? e.meta?.genre)?.lowercased(), con = consoleOf(g.titleID), decade = library.year(g).map { $0 / 10 }
+        var scored: [(Game, Int, Int)] = []
+        for o in games where o.id != g.id && !o.missing {
+            let x = library.entry(o.titleID)
+            var n = 0
+            if let genre, (o.rom?.info?.genre ?? x.meta?.genre)?.lowercased() == genre { n += 3 }
+            if consoleOf(o.titleID) == con { n += 2 }
+            if let decade, library.year(o).map({ $0 / 10 }) == decade { n += 1 }
+            if n >= 2 { scored.append((o, n, x.meta?.critic ?? 0)) }
+        }
+        return scored.sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.2 > $1.2 }.prefix(limit).map(\.0)
+    }
+
+    func couchPageMove(_ m: Move, _ was: CouchPage) {
+        let state = CouchPageState.shared
+        guard let g = games.first(where: { $0.id == was.game }) else { state.page = nil; return }
+        var p = was
+        switch m {
+        case .left: if p.row == 0 { p.button = 0 } else { p.pick = max(0, p.pick - 1) }
+        case .right: if p.row == 0 { p.button = 1 } else { p.pick = min(max(p.similar.count - 1, 0), p.pick + 1) }
+        case .down, .nextSection: if !p.similar.isEmpty { p.row = 1 }
+        case .up, .previousSection: p.row = 0
+        case .accept where p.row == 1:
+            guard p.similar.indices.contains(p.pick), let o = games.first(where: { $0.id == p.similar[p.pick] }) else { return }
+            couchOpen(o); return
+        case .accept where p.button == 1, .favorite:
+            let on = !library.entry(g.titleID).favorite; edit(g) { $0.favorite = on }
+            couchSpot = couchSpot.resolved(couchRows(couchShelves)); chime(.favorite); return
+        case .accept, .play:
+            chime(.play); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.play(g) }; return
+        case .back:
+            state.page = nil; chime(.back); themeUpdate(); return
+        case .home: return
+        }
+        if p != was { state.page = p; chime(p.row != was.row ? .shelf : .move) }
+    }
+}
+
+struct CouchPageView: View {
+    @EnvironmentObject var model: Model
+    let page: CouchPage, game: Game, size: CGSize, k: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var still
+
+    var body: some View {
+        let e = model.library.entry(game.titleID), info = game.rom?.info, m = CouchLayout.margin * k
+        let kind = [consoleName(consoleOf(game.titleID)), (info?.genre ?? e.meta?.genre)?.capitalized].compactMap { $0 }
+        let similar = page.similar.compactMap { id in model.games.first { $0.id == id } }
+        let cheevos = game.rom.flatMap { Cheevos.of($0) }
+        let facts: [(String, String)] = [
+            e.meta?.critic.map { ("Critics", "\($0)") },
+            model.couchYear(game).map { ("Released", String($0)) },
+            e.seconds >= 60 ? ("Played", playTimeText(e.seconds).replacingOccurrences(of: " played", with: "")) : nil,
+            e.lastPlayed.map { ("Last played", RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: Date()).capitalizedFirst) },
+            cheevos.map { ("Achievements", Cheevos.text($0)) },
+            e.rating > 0 ? ("Your stars", String(repeating: "★", count: e.rating)) : nil,
+            (e.meta?.developer ?? e.meta?.publisher).map { ("Made by", $0) },
+        ].compactMap { $0 }
+        ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 22 * k) {
+                Text(kind.joined(separator: "  ·  ")).font(.system(size: 20 * k, weight: .semibold)).foregroundStyle(style.accent).lineLimit(1)
+                Text(game.name).font(.system(size: 84 * k, weight: .heavy, design: .serif)).foregroundStyle(style.text)
+                    .lineLimit(2).minimumScaleFactor(0.5).shadow(color: .black.opacity(style.dark ? 0.45 : 0), radius: 18 * k)
+                if let a = info?.about, !a.isEmpty {
+                    Text(a).font(.system(size: 22 * k)).foregroundStyle(style.text.opacity(0.85)).lineLimit(3).lineSpacing(6 * k).frame(maxWidth: 860 * k, alignment: .leading)
+                }
+                // What Docked knows, as label over value, so the numbers read from across the room
+                HStack(alignment: .top, spacing: 44 * k) {
+                    ForEach(facts.prefix(5), id: \.0) { f in
+                        VStack(alignment: .leading, spacing: 6 * k) {
+                            Text(f.0).font(.system(size: 16 * k, weight: .semibold)).foregroundStyle(style.soft)
+                            Text(f.1).font(.system(size: 28 * k, weight: .bold)).monospacedDigit().foregroundStyle(f.0 == "Critics" ? style.accent : style.text).lineLimit(1)
+                        }
+                    }
+                }
+                .padding(.top, 6 * k)
+                if let why = game.cannot {
+                    Label(why, systemImage: "exclamationmark.triangle.fill").font(.system(size: 18 * k, weight: .semibold)).foregroundStyle(style.warn).lineLimit(2)
+                }
+                HStack(spacing: 20 * k) {
+                    button(game.missing ? (game.away != nil ? "Offloaded" : "Not connected") : model.isRunning(game) ? "Return to Game" : "Play",
+                           icon: "play.fill", primary: true, on: page.row == 0 && page.button == 0)
+                    button(e.favorite ? "Favorited" : "Favorite", icon: e.favorite ? "heart.fill" : "heart", primary: false, on: page.row == 0 && page.button == 1)
+                }
+                .padding(.top, 10 * k)
+            }
+            .frame(maxWidth: size.width * 0.6, alignment: .leading)
+            .padding(.leading, m).padding(.top, 100 * k)
+            if !similar.isEmpty {
+                CouchRow(shelf: CouchShelf(id: "similar:" + game.id, name: "More Like This", games: similar, note: "From your library"),
+                         index: min(page.pick, similar.count - 1), active: page.row == 1, k: k * 0.78, width: size.width, tick: model.coverTick, model: model,
+                         pick: { j in
+                             if page.row == 1, j == page.pick { model.couchMove(.accept, pad: false) }
+                             else { var p = page; p.row = 1; p.pick = j; CouchPageState.shared.page = p }
+                         })
+                    .equatable()
+                    .opacity(page.row == 1 ? 1 : 0.7)
+                    .offset(y: size.height - (CouchLayout.coverWidth * k * 0.78 / Cover.shape) - 150 * k)
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .animation(CouchLayout.slide(still), value: page.row)
+        .animation(CouchLayout.slide(still), value: page.button)
+        .accessibilityElement(children: .contain).accessibilityLabel(game.name)
+    }
+
+    func button(_ t: String, icon: String, primary: Bool, on: Bool) -> some View {
+        let r = RoundedRectangle(cornerRadius: 14 * k, style: .continuous)
+        return Label(t, systemImage: icon)
+            .font(.system(size: 24 * k, weight: .bold))
+            .foregroundStyle(primary ? (style.dark ? style.bottom : .white) : style.text)
+            .padding(.horizontal, 34 * k).frame(height: 64 * k)
+            .frame(minWidth: primary ? 240 * k : 0)
+            .background(primary ? AnyShapeStyle(style.accent) : AnyShapeStyle(style.text.opacity(0.12)), in: r)
+            .overlay { if on { RoundedRectangle(cornerRadius: 19 * k, style: .continuous).strokeBorder(style.text, lineWidth: 3 * k).padding(-6 * k) } }
+            .scaleEffect(on ? 1.06 : 1)
+            .shadow(color: .black.opacity(on ? 0.4 : 0), radius: 16 * k, y: 8 * k)
+            .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+private extension String { var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() } }

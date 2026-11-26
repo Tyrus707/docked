@@ -52,7 +52,7 @@ let helpTopics: [HelpTopic] = [
     ]),
     HelpTopic(title: "Couch Mode", symbol: "tv", lines: [
         "Couch Mode fills the screen for playing from the sofa. The chosen game is shown large at the top, over its own art, with your shelves below.",
-        "Left and right move along a shelf, and up and down move between shelves. LB and RB, or Shift-Tab and Tab, jump a shelf and wrap around. A or Return plays the chosen game, Y or F favorites it, and B or Escape leaves Couch Mode.",
+        "Left and right move along a shelf, and up and down move between shelves. LB and RB, or Shift-Tab and Tab, jump a shelf and wrap around. A or Return opens the chosen game's page, with everything Docked knows about it, Play and Favorite, and a More Like This shelf of similar games from your library. The Menu button or Space plays straight from the shelf. Y or F favorites a game, and B or Escape goes back, then leaves Couch Mode.",
         "Some shelves fill themselves from details already on this Mac, so nothing new is looked up: Critically Acclaimed, a Best of row for each decade, Hidden Gems, Not Played Yet, and Rediscover. A shelf with fewer than a few games stays hidden.",
         "After 45 seconds without input the shelves fade away and only the game and its art stay. Move the mouse or press any button to bring them back. That first press only wakes them.",
     ]),
