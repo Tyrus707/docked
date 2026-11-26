@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 16:33:22 +0000
+Subject: [PATCH 5/8] Friends link: less hold-back for lockstep games, one
+ spare copy, a link line in the log every 5 s
+
+---
+ dm/host/friends_link.c     | 20 ++++++++++++++++----
+ dm/host/friends_link.h     |  1 +
+ dm/host/hle_friends_link.c |  4 ++--
+ 3 files changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
+index d707b43b..3d1f322e 100644
+--- a/dm/host/friends_link.c
++++ b/dm/host/friends_link.c
+@@ -22,6 +22,12 @@
+ // a nonce once replaced is never taken again; a packet bearing this Mac's own nonce as sender is a reflection.
+ enum { T_HELLO = 1, T_WELCOME, T_PING, T_SCAN, T_ROOM, T_JOIN, T_REFUSED, T_SYNC, T_LEAVE, T_KICK, T_DATA, T_MAX };
+ enum { RINGS = 2, COPY_MAX = 700, COPIES = 128, HELD = 512, SAMPLES = 256, CUSHION_MAX = 25000, DESTS = 9 };
++// Lockstep games (Smash, Mario Kart) wait every frame for the other Mac's inputs, so every microsecond a packet is held back is a microsecond both games stand still:
++// it showed as slow motion, on a home network too. The cushion is now 4 ms at most and falls quickly, and only one spare copy is sent, unless the player's
++// Game Settings ask otherwise (DM_FRIENDS_CUSHION_MS 0 to 25, DM_FRIENDS_COPIES 0 to 2: tolerant games like Animal Crossing can take more of both).
++static uint32_t env_num(const char *name, uint32_t def, uint32_t max) { const char *e = getenv(name); if (!e || !*e) return def; char *x; unsigned long v = strtoul(e, &x, 10); return *x || v > max ? def : (uint32_t)v; }
++static uint32_t cushion_max(void) { static uint32_t v = UINT32_MAX; if (v == UINT32_MAX) v = env_num("DM_FRIENDS_CUSHION_MS", 4, 25) * 1000; return v; }
++static int copy_rings(void) { static int v = -1; if (v < 0) v = (int)env_num("DM_FRIENDS_COPIES", 1, RINGS); return v; }
+ enum { HDR = 32, TAG = 16, RETIRED = 32, LOST_MS = 6000, JOIN_MS = 4000, SCAN_MS = 450 };
+ static const uint32_t COPY_AFTER[RINGS] = {5000, 11000};   // µs: past a lost packet, and past a short dropout
+ static const uint8_t MAGIC[4] = {'D', 'S', 'F', '1'};
+@@ -101,7 +107,7 @@ static void wake(friends_link *f) { struct kevent e; EV_SET(&e, 1, EVFILT_USER,
+ static void put_game(friends_link *f, int i, const void *d, size_t n) {   // now, and a second copy a few ms later when it is small: one lost packet is then not felt
+     put(f, &f->p[i], T_DATA, d, n); if (n > sizeof ((copy *)0)->d) return;
+     uint64_t now = us();
+-    for (int k = 0; k < RINGS; k++) { if (f->copy_w[k] - f->copy_r[k] >= COPIES) continue; copy *c = &f->copies[k][f->copy_w[k]++ % COPIES]; c->due = now + COPY_AFTER[k]; c->peer = i; c->nonce = f->p[i].nonce; c->n = n; memcpy(c->d, d, n); }
++    for (int k = 0; k < copy_rings(); k++) { if (f->copy_w[k] - f->copy_r[k] >= COPIES) continue; copy *c = &f->copies[k][f->copy_w[k]++ % COPIES]; c->due = now + COPY_AFTER[k]; c->peer = i; c->nonce = f->p[i].nonce; c->n = n; memcpy(c->d, d, n); }
+ }
+ static void reset_flow(friends_link *f, int node) { memset(&f->flows[node], 0, sizeof(flow)); memset(f->seen[node], 0, sizeof f->seen[node]); }
+ static void reset_flows(friends_link *f) { for (int i = 0; i < 8; i++) reset_flow(f, i); memset(f->seq, 0, sizeof f->seq); for (int k = 0; k < RINGS; k++) f->copy_r[k] = f->copy_w[k];
+@@ -160,10 +166,10 @@ static uint64_t due_at(friends_link *f, flow *w, uint64_t sent, uint64_t now) {
+     w->ex[w->n++ % SAMPLES] = (uint32_t)ex;
+     if (w->n >= 30 && w->n % 16 == 0) {
+         uint32_t s[SAMPLES]; unsigned k = w->n < SAMPLES ? w->n : SAMPLES; memcpy(s, w->ex, k * sizeof *s); qsort(s, k, sizeof *s, cmp32); uint32_t want = s[k - 1 - k / 64];
+-        if (want > CUSHION_MAX) want = CUSHION_MAX;
+-        w->cushion = want > w->cushion ? want : w->cushion - (w->cushion - want > 250 ? 250 : w->cushion - want);   // up at once, down gently
++        if (want > cushion_max()) want = cushion_max();
++        w->cushion = want > w->cushion ? want : w->cushion - (w->cushion - want > 1000 ? 1000 : w->cushion - want);   // up at once, down within a few seconds
+     }
+-    uint64_t due = sent + (uint64_t)base + w->cushion; if (due < now) due = now; if (due > now + CUSHION_MAX) due = now + CUSHION_MAX;
++    uint64_t due = sent + (uint64_t)base + w->cushion; if (due < now) due = now; if (due > now + cushion_max()) due = now + cushion_max();
+     (void)f; return due;
+ }
+ static int member_of(friends_link *f, uint32_t ip) { for (int i = 0; i < 8; i++) if (f->net.nodes[i].connected && f->net.nodes[i].ip == ip) return i; return -1; }
+@@ -256,6 +262,12 @@ static void tick(friends_link *f) {
+         if (p->up && now - p->seen > LOST_MS) peer_down(f, i);
+         if (now - p->hello_at >= (p->up ? 250 : 1000)) { p->hello_at = now; if (p->up) ping(f, p); else put(f, p, T_HELLO, NULL, 0); } }
+     if (f->state == FL_CREATED && now - f->sync_at >= 500) sync_room(f);
++    static uint64_t said; if (f->h.log && (f->state == FL_CREATED || f->state == FL_CONNECTED) && now - said >= 5000) { said = now;   // every 5 s in a room: what a slowdown report needs
++        char b[400]; int o = snprintf(b, sizeof b, "link: sent %llu got %llu spare copies %llu dropped %llu queued %d", (unsigned long long)f->st.tx, (unsigned long long)f->st.game_rx, (unsigned long long)f->st.copies_spare, (unsigned long long)f->st.dropped, f->nq);
++        for (int i = 0; i < f->set.npeers && o > 0 && o < (int)sizeof b - 60; i++) { peer *p = &f->p[i]; if (!p->up || p->node <= 0) continue; int k = p->node;
++            o += snprintf(b + o, sizeof b - (size_t)o, "; friend %d ping %.1f ms worst %.1f ms cushion %.1f ms", i, p->rtt, p->rtt_max, f->flows[k].cushion / 1000.0); }
++        if (f->state == FL_CONNECTED && f->host >= 0) { peer *p = &f->p[f->host]; o += snprintf(b + o, sizeof b - (size_t)o, "; host ping %.1f ms worst %.1f ms cushion %.1f ms", p->rtt, p->rtt_max, f->flows[0].cushion / 1000.0); }
++        f->h.log(b); }
+ }
+ static void send_copies(friends_link *f, uint64_t now) {
+     for (int k = 0; k < RINGS; k++) for (; f->copy_r[k] != f->copy_w[k]; f->copy_r[k]++) { copy *c = &f->copies[k][f->copy_r[k] % COPIES]; if (c->due > now) break;
+diff --git a/dm/host/friends_link.h b/dm/host/friends_link.h
+index a058aff6..44ec53c6 100644
+--- a/dm/host/friends_link.h
++++ b/dm/host/friends_link.h
+@@ -36,6 +36,7 @@ typedef struct {
+     void (*event)(void *);                                                                                    // state or room changed
+     void (*sleep_ms)(int); void *opaque;
+     int (*send)(void *, int slot, const void *, size_t);                                                       // net only
++    void (*log)(const char *);                                                                                 // optional: a line for the game's log (no names, codes or addresses)
+ } fl_hooks;
+ typedef struct { uint64_t rx, bad_source, bad_packet, bad_tag, replay, refused, tx, game_rx, copies_spare, dropped; } fl_stats;
+ int fl_load(const char *path, int allow_loopback, fl_setup *out, char *why, size_t whylen);   // 0, or -1 with the reason
+diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
+index 66d2c3b6..b74a0bd1 100644
+--- a/dm/host/hle_friends_link.c
++++ b/dm/host/hle_friends_link.c
+@@ -40,12 +40,12 @@ static Result fl_init(void) {
+     if (!dm_friends_on()) return RES_FAIL;
+     dm_friends_boot(); Result r = 0; pthread_rwlock_wrlock(&g_fl_l);
+     if (!g_fl && g_net) {
+-        fl_setup s = {.net = 1}; fl_hooks k = {fl_data, fl_event, fl_sleep, NULL, fi_send}; g_fl = fi_running() ? fl_start(&s, &k) : NULL; if (g_fl) { fi_open(g_fl); LOG("friends: Local Wireless open to friends"); } else r = FL_E_DISABLED;
++        fl_setup s = {.net = 1}; fl_hooks k = {fl_data, fl_event, fl_sleep, NULL, fi_send, dm_friends_log}; g_fl = fi_running() ? fl_start(&s, &k) : NULL; if (g_fl) { fi_open(g_fl); LOG("friends: Local Wireless open to friends"); } else r = FL_E_DISABLED;
+     } else if (!g_fl) {
+         char path[1024], why[160]; const char *f = getenv("DM_FRIENDS_FILE"), *h = getenv("HOME"); fl_setup s;
+         if (f && *f) snprintf(path, sizeof path, "%s", f); else snprintf(path, sizeof path, "%s/Dockside/friends.txt", h ? h : "");
+         if (fl_load(path, FL_LOOPBACK, &s, why, sizeof why)) { LOG("friends link: off, %s", why); r = FL_E_DISABLED; }
+-        else { fl_hooks k = {fl_data, fl_event, fl_sleep, NULL, NULL}; g_fl = fl_start(&s, &k); memset(&s, 0, sizeof s);
++        else { fl_hooks k = {fl_data, fl_event, fl_sleep, NULL, NULL, dm_friends_log}; g_fl = fl_start(&s, &k); memset(&s, 0, sizeof s);
+             if (!g_fl) { LOG("friends link: off, this Mac's private address or port is not available"); r = FL_ERR(16); } else LOG("friends link: on, listed friends only"); }
+     }
+     pthread_rwlock_unlock(&g_fl_l); trace("initialize", r); return r;

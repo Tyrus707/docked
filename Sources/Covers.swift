@@ -54,9 +54,16 @@ enum Cover {
     static let cost = Int(size.width * size.height * 4)
     // One game's cover, from the made covers folder when it is there, otherwise made from the best art on this Mac and kept there. Off the main thread.
     static func tile(id: String, rom: Rom?, app: URL) -> NSImage {
-        let fm = FileManager.default, own = custom(id), icns = app.appendingPathComponent("Contents/Resources/AppIcon.icns")
-        let art: URL? = fm.fileExists(atPath: own.path) ? own : rom != nil ? RetroArch.art(rom!) : fm.fileExists(atPath: icns.path) ? icns : nil
-        let key = art.flatMap(Artwork.fingerprint) ?? rom.map { "letter|\($0.name)|\($0.console)" } ?? "plain"
+        let fm = FileManager.default
+        if rom == nil { Artwork.keepAppIcon(id, from: app) }   // a converted game keeps its own art on this Mac
+        let own = custom(id), saved = Artwork.appIcon(id), live = app.appendingPathComponent("Contents/Resources/AppIcon.icns")
+        let choices: [URL?] = [own, rom.flatMap(RetroArch.art), saved, live]
+        let art = choices.compactMap { $0 }.first { fm.fileExists(atPath: $0.path) }
+        let fallback = rom.map { "letter|\($0.name)|\($0.console)" } ?? "plain"
+        let key: String
+        if let art { key = Artwork.fingerprint(art) ?? art.path }
+        else if let old = Artwork.newestTile(id, excluding: fallback), let cached = load(old) { return cached }   // already offloaded: keep the cover it had
+        else { key = fallback }
         let file = Artwork.tile(id, from: key)
         if let i = load(file) { return i }
         let picture = art.flatMap { NSImage(contentsOf: $0) } ?? rom.map(Model.romIcon) ?? Model.plainIcon()

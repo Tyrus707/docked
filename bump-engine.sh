@@ -38,6 +38,8 @@ if [ -n "$moved$others" ]; then
   [ "${ACCEPT_TOOLS:-}" = 1 ] || { echo "Look at upstream's notes for them, then run again with ACCEPT_TOOLS=1."; exit 1; }
   for f in ${(f)others}; do lines+="tool $f $($G show "$NEW:$f" | shasum -a 256 | cut -c1-64)\n"; done   # recorded from now on, like the others
 fi
+# Play with friends must come along: stop before anything changes when its patches no longer fit
+./Friends/apply.sh --check "$E" "$NEW" || { echo "Nothing was changed. Refresh Friends/engine-patches for ${NEW:0:8} first (Friends/README.md)."; exit 1; }
 # The engine in ~/Docked/engine, and its Python packages if they changed
 $G checkout -q --detach "$NEW"
 if ! $G diff --quiet "$OLD" "$NEW" -- .github/requirements/tools.txt; then

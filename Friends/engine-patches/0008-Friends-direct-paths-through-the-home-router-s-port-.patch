@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 16:49:58 +0000
+Subject: [PATCH 8/8] Friends: direct paths through the home router's port
+ mapping (NAT-PMP/PCP), and the socket errors games can meet mapped
+
+---
+ dm/host/friends_path.c | 42 ++++++++++++++++++++++++++++++++++++++++++
+ dm/host/hle_net.c      |  2 +-
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/dm/host/friends_path.c b/dm/host/friends_path.c
+index 1b1acdd7..a225e33e 100644
+--- a/dm/host/friends_path.c
++++ b/dm/host/friends_path.c
+@@ -7,6 +7,8 @@
+ #include <mach/mach_time.h>
+ #include <mach/thread_policy.h>
+ #include <net/if.h>
++#include <net/route.h>
++#include <sys/sysctl.h>
+ #include <netdb.h>
+ #include <pthread.h>
+ #include <stdio.h>
+@@ -30,6 +32,7 @@ typedef struct { addr a; uint64_t asked, ok; uint16_t chan; int slot, asks, chan
+ struct friends_path {
+     pthread_mutex_t m; pthread_t th; int refs, fd[2], kq, stop, dirty; fp_hooks h; char stun_name[128], turn_name[128]; session s[FP_SLOTS]; fp_stats st;   // fd 0: IPv4, 1: IPv6
+     fp_cand mine[FP_CANDS]; int nmine; addr stun[2], turn[2]; txn bind[2]; addr mapped[2]; uint64_t ifs_at; struct in_addr ips[NETS], masks[NETS]; int nets;
++    struct in_addr pmp_gw, pmp_ip; uint16_t pmp_port; int pmp_tries; uint64_t pmp_at, pmp_until; addr pmp;   // the home router's own port mapping (NAT-PMP / PCP), when it offers one
+     int relay_on; char user[256], pass[256], realm[128], nonce[256]; uint8_t tkey[16]; int have_key, relay_up, relay_fam, relay_fail; addr relayed; txn alloc; uint64_t alloc_at, refresh_at; permit pm[PERMITS]; int npm; uint16_t chan_next;
+ };
+ static uint64_t us(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000; }
+@@ -130,6 +133,7 @@ static void collect(friends_path *f) {   // builds the list to give friends; tel
+     fp_cand c[FP_CANDS]; int n = 0; memset(c, 0, sizeof c); struct sockaddr_in me; socklen_t ml = sizeof me; memset(&me, 0, sizeof me); getsockname(f->fd[0], (struct sockaddr *)&me, &ml);
+     for (int i = 0; i < f->nets && n < 4; i++) { struct sockaddr_in s = {.sin_len = sizeof s, .sin_family = AF_INET, .sin_port = me.sin_port, .sin_addr = f->ips[i]}; addr a; memset(&a, 0, sizeof a); a.v4 = s; fp_cand x = to_cand(1, &a); if (fp_cand_ok(&x, f->ips, f->masks, f->nets, f->h.loopback)) c[n++] = x; }
+     for (int i = 1; i >= 0; i--) if (f->mapped[i].s.sa_family) { fp_cand x = to_cand(2, &f->mapped[i]); if (fp_cand_ok(&x, f->ips, f->masks, f->nets, f->h.loopback)) c[n++] = x; }
++    if (f->pmp.s.sa_family && !same_addr(&f->pmp, &f->mapped[0])) { fp_cand x = to_cand(2, &f->pmp); if (fp_cand_ok(&x, f->ips, f->masks, f->nets, f->h.loopback)) c[n++] = x; }
+     if (f->relay_up) c[n++] = to_cand(3, &f->relayed);
+     if (n != f->nmine || memcmp(c, f->mine, sizeof c)) { memcpy(f->mine, c, sizeof c); f->nmine = n; f->dirty = 1; }
+ }
+@@ -177,8 +181,45 @@ static void choose(session *s, uint64_t now) {
+     }
+     if (b != s->best) { if (s->best < 0 && b >= 0) s->up_at = now; s->best = b; s->better = -1; }
+ }
++// ---- the home router's port mapping ----
++// Two homes behind routers that each change the port per destination ("hard" NATs) cannot reach each other by STUN alone and fall back to the relay, a detour of
++// tens of ms. Many home routers (Apple's, most with UPnP turned on, Fritz!Box, many ISP boxes) answer NAT-PMP (RFC 6886; PCP routers answer its version 0 too): asked,
++// they forward one outside port to this Mac's socket, which friends can then reach directly. This is how Tailscale and most game consoles get direct paths.
++static struct in_addr gateway(void) {   // the IPv4 default route's router, from the routing table
++    struct in_addr g = {0}; int mib[6] = {CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, RTF_GATEWAY}; size_t n = 0;
++    if (sysctl(mib, 6, NULL, &n, NULL, 0) || !n || n > (1 << 20)) return g; char *b = malloc(n); if (!b) return g;
++    if (!sysctl(mib, 6, b, &n, NULL, 0)) for (char *p = b; p + sizeof(struct rt_msghdr) <= b + n; p += ((struct rt_msghdr *)p)->rtm_msglen) {
++        struct rt_msghdr *r = (struct rt_msghdr *)p; if (!r->rtm_msglen) break;
++        struct sockaddr_in *dst = (struct sockaddr_in *)(r + 1); if (!(r->rtm_addrs & RTA_DST) || !(r->rtm_addrs & RTA_GATEWAY) || dst->sin_family != AF_INET || dst->sin_addr.s_addr) continue;
++        struct sockaddr_in *gw = (struct sockaddr_in *)((char *)dst + (dst->sin_len ? ((dst->sin_len + 3) & ~3) : 4));
++        if (gw->sin_family == AF_INET) { uint32_t a = ntohl(gw->sin_addr.s_addr); if (a >> 24 == 10 || a >> 20 == 0xAC1 || a >> 16 == 0xC0A8) { g = gw->sin_addr; break; } }   // a home router only
++    }
++    free(b); return g;
++}
++static void pmp_ask(friends_path *f, int life) {
++    struct sockaddr_in me; socklen_t ml = sizeof me; memset(&me, 0, sizeof me); if (f->fd[0] < 0 || getsockname(f->fd[0], (struct sockaddr *)&me, &ml)) return;
++    struct sockaddr_in to = {.sin_len = sizeof to, .sin_family = AF_INET, .sin_port = htons(5351), .sin_addr = f->pmp_gw};
++    uint8_t q0[2] = {0, 0}, q1[12] = {0, 1}; memcpy(q1 + 4, &me.sin_port, 2); memcpy(q1 + 6, &me.sin_port, 2); uint32_t l = htonl((uint32_t)life); memcpy(q1 + 8, &l, 4);
++    sendto(f->fd[0], q0, sizeof q0, 0, (struct sockaddr *)&to, sizeof to); sendto(f->fd[0], q1, sizeof q1, 0, (struct sockaddr *)&to, sizeof to);
++}
++static void pmp_tick(friends_path *f, uint64_t now) {   // asks 4 times, 250 ms apart; renews at half the lease; a router that never answers is asked again in 5 minutes
++    if (!f->pmp_gw.s_addr) { if (now - f->pmp_at < 30000 && f->pmp_at) return; f->pmp_at = now; f->pmp_gw = gateway(); f->pmp_tries = 0; if (!f->pmp_gw.s_addr) return; }
++    if (f->pmp.s.sa_family) { if (now < f->pmp_until) return; f->pmp_tries = 0; f->pmp_until = now + 300000; }
++    if (f->pmp_tries >= 4) { if (now - f->pmp_at < 300000) return; f->pmp_tries = 0; f->pmp_gw = gateway(); if (!f->pmp_gw.s_addr) return; }
++    if (now - f->pmp_at < 250 && f->pmp_tries) return; f->pmp_at = now; f->pmp_tries++; pmp_ask(f, 3600);
++}
++static int pmp_answer(friends_path *f, const uint8_t *b, size_t n, const addr *from) {   // 1: it was the router's answer
++    if (!f->pmp_gw.s_addr || from->s.sa_family != AF_INET || from->v4.sin_addr.s_addr != f->pmp_gw.s_addr || ntohs(from->v4.sin_port) != 5351) return 0;
++    if (n < 12 || b[0] != 0 || b[2] || b[3]) return 1;   // another version, or a refusal (mapping turned off on the router): nothing to add
++    if (b[1] == 128) memcpy(&f->pmp_ip, b + 8, 4);
++    else if (b[1] == 129 && n >= 16) { uint16_t ext; uint32_t life; memcpy(&ext, b + 10, 2); memcpy(&life, b + 12, 4); life = ntohl(life); f->pmp_port = life ? ext : 0; if (life) f->pmp_until = ms() + (uint64_t)life * 500; }
++    if (f->pmp_ip.s_addr && f->pmp_port) { addr a; memset(&a, 0, sizeof a); a.v4.sin_len = sizeof a.v4; a.v4.sin_family = AF_INET; a.v4.sin_addr = f->pmp_ip; a.v4.sin_port = f->pmp_port; f->pmp = a; f->pmp_tries = 4; }
++    else if (b[1] == 129) memset(&f->pmp, 0, sizeof f->pmp);
++    return 1;
++}
+ static void tick(friends_path *f, uint64_t now) {
+     if (now - f->ifs_at > 2000) { f->ifs_at = now; look_home(f); }
++    if (!f->h.loopback) pmp_tick(f, now);
+     for (int i = 0; i < 2; i++) if (f->stun[i].s.sa_family) {
+         txn *t = &f->bind[i]; uint64_t every = t->tries && t->tries < 8 ? 400 : STUN_MS;
+         if (!t->sent || now - t->sent >= every) { if (t->tries >= 8 && t->tries < 100) { if (f->mapped[i].s.sa_family) memset(&f->mapped[i], 0, sizeof(addr)); } if (!t->tries || t->tries >= 8) arc4random_buf(t->tid, 12); t->sent = now; t->tries = t->tries >= 8 ? 1 : t->tries + 1; msg m; m_begin(&m, 0x0001, t->tid); m_len(&m, 0); out(f, &f->stun[i], m.b, m.n); }
+@@ -247,6 +288,7 @@ static void on_stun(friends_path *f, const uint8_t *b, size_t n, const addr *fro
+     else if (pc && type == 0x0109) { pc->chan_ok = now; pc->chan_asks = 0; }
+ }
+ static void receive(friends_path *f, const uint8_t *b, size_t n, const addr *from, uint8_t *plain, int *slot, size_t *pn) {
++    if (pmp_answer(f, b, n, from)) return;
+     if (n >= 20 && b[0] < 4) { on_stun(f, b, n, from, plain, slot, pn); return; }
+     if (f->relay_up && n >= 4 && b[0] >= 0x40 && b[0] <= 0x7F && same_addr(from, turn_srv(f))) { uint16_t ch = (uint16_t)(b[0] << 8 | b[1]); size_t l = (size_t)b[2] << 8 | b[3]; if (l + 4 > n) return; for (int i = 0; i < f->npm; i++) if (f->pm[i].chan == ch) { addr a = f->pm[i].a; on_friend(f, b + 4, l, &a, 1, plain, slot, pn); return; } return; }
+     on_friend(f, b, n, from, 0, plain, slot, pn);
+diff --git a/dm/host/hle_net.c b/dm/host/hle_net.c
+index 716aae70..00b66201 100644
+--- a/dm/host/hle_net.c
++++ b/dm/host/hle_net.c
+@@ -46,7 +46,7 @@ static int sk_fail(void) { return sk_error(SK_ENETDOWN); }
+ // Only with the friends link, so that the offline host answers as it always has.
+ int dm_sk_errno(void) {
+     if (!dm_friends_on()) return t_skerr;
+-    switch (t_skerr) { case 35: return 11; case 36: return 115; case 39: return 89; case 40: return 90; case 42: return 92; case 45: return 95; case 48: return 98; case 49: return 99; case 50: return 100; case 55: return 105; case 57: return 107; default: return t_skerr; }
++    switch (t_skerr) { case 35: return 11; case 36: return 115; case 39: return 89; case 40: return 90; case 42: return 92; case 45: return 95; case 48: return 98; case 49: return 99; case 50: return 100; case 55: return 105; case 57: return 107; case 37: return 114; case 51: return 101; case 54: return 104; case 56: return 106; case 60: return 110; case 61: return 111; case 65: return 113; default: return t_skerr; }
+ }
+ #define SKF(m, cname, ...) HLE_FORCE(m, "local BSD descriptor service; remote networking unavailable", int, cname, __VA_ARGS__)
+ void dm_guest_sleep_ns(int64_t ns);

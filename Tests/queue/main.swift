@@ -60,6 +60,24 @@ m.setArt(cg1, pic("tall.png", 900, 1200)); check(m.hasArt(cg1) && wait { m.cover
 m.message = nil; m.setArt(cg1, put("bad.png", "not a picture")); check(m.message != nil && m.hasArt(cg1), "a bad picture changes nothing"); m.message = nil; m.setArt(cg1, pic("strip.png", 3000, 20)); check(m.message != nil, "nor a sliver"); m.message = nil
 for (n, w, h) in [("wide", 800, 300), ("square", 500, 500), ("tiny", 3, 4)] { m.dropped([pic(n + ".png", w, h)], on: cg1); check(wait { m.cover(cg1) != nil } && px(m.cover(cg1)!).pixelsHigh == 372, "dropped: " + n) }
 m.clearArt(cg1); check(!m.hasArt(cg1) && wait { m.cover(cg1) != nil }, "back to its own"); check(Cover.custom(Game(url: root, name: "x", titleID: "../../evil")).path.hasPrefix(root.path + "/Artwork/"), "never outside the artwork folder")
+// offloading a converted game must not take its art away
+do {
+    let offID = id(50), bundle = root.appendingPathComponent("Games/Off.app")
+    _ = put("Games/Off.app/Contents/Info.plist", "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleName</key><string>Off</string><key>DMTitleID</key><string>\(offID)</string></dict></plist>")
+    try! fm.createDirectory(at: bundle.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
+    _ = pic("Games/Off.app/Contents/Resources/AppIcon.icns", 120, 120)
+    m.reload(); let off = game(m, offID)!; m.dropArt(off)
+    check(wait { m.cover(off) != nil }, "a converted game's cover is made from its own art")
+    check(px(m.cover(off)!).colorAt(x: 150, y: 180)!.redComponent > 0.7, "its own art is red")
+    try! fm.createDirectory(at: root.appendingPathComponent("away"), withIntermediateDirectories: true)
+    let awayURL = root.appendingPathComponent("away/Off.app")
+    try! fm.moveItem(at: off.url, to: awayURL)
+    var l = m.library; l.offloaded[off.url.path] = awayURL.path; m.library = l
+    m.reload(); let away = game(m, offID)!; m.dropArt(away)
+    check(wait { m.cover(away) != nil } && px(m.cover(away)!).colorAt(x: 150, y: 180)!.redComponent > 0.7, "its cover stays when the app is offloaded")
+    try? fm.removeItem(at: Artwork.appIcon(offID)); m.dropArt(away)
+    check(wait { m.cover(away) != nil } && px(m.cover(away)!).colorAt(x: 150, y: 180)!.redComponent > 0.7, "an already-offloaded game keeps its made cover")
+}
 // choosing a game
 m.select(cg1); check(m.chosen?.id == cg1.id, "a click chooses"); m.select(cg1); check(m.chosen?.id == cg1.id && m.runningIDs.isEmpty, "a second click neither closes nor plays"); check(wait { m.size(cg1) != nil } && m.size(cg1)! > 0, "measured in the background"); let cg3 = game(m, id(3))!; m.select(cg3); check(m.chosen?.id == cg3.id, "another"); let gone3 = m.games; m.games.removeAll { $0.id == cg3.id }; check(m.chosen == nil, "a game that is gone is not chosen"); m.games = gone3; m.selected = nil
 // the art fills the cover: only a thin edge is colour
@@ -100,5 +118,6 @@ if canPlay { musicTests() } else { print("SKIPPED: theme music, as this Mac can 
 // a big library
 for n in 0..<300 { m.library.addRom(Rom(id: "nes:\(n)", name: "Old Game \(n)", console: "nes", path: "/x/\(n).nes")) }; m.reload(); let t0 = Date(); var worst = 0.0; for g in m.games { let a = Date(); _ = m.cover(g); worst = max(worst, Date().timeIntervalSince(a)) }; let held = Date().timeIntervalSince(t0); check(wait(60) { m.games.allSatisfy { m.cover($0) != nil } }, "300 covers"); print(String(format: "300 covers: window held %.0f ms in all, %.1f ms at worst, ready in %.1f s", held * 1000, worst * 1000, Date().timeIntervalSince(t0))); check(worst < 0.1, "no long hold")
 check(Notify.text(done: "A", failed: nil, left: 2, problems: 0) == ("A is ready", "2 more to go.") && Notify.text(done: "A", failed: nil, left: 0, problems: 0).1 == "Open Docked to play." && Notify.text(done: nil, failed: "B", left: 1, problems: 0).0 == "B could not be converted" && Notify.text(done: "A", failed: nil, left: 0, problems: 2).1 == "2 games need your attention.", "notices")
+check(DockProgress.fraction(-1) == 0 && DockProgress.fraction(0.25) == 0.25 && DockProgress.fraction(4) == 1, "dock progress stays in the tile")
 UserDefaults.standard.removePersistentDomain(forName: ProcessInfo.processInfo.processName)
 print("queue and clean-up, whole: \(np) passed, \(nf) failed"); exit(nf == 0 ? 0 : 1)

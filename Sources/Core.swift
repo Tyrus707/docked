@@ -36,8 +36,8 @@ enum Paths {
 }
 
 // The exact engine version that was reviewed, as in ENGINE_PIN (build.sh checks they agree). The app runs no other, unless it comes as an engine update signed by Docked's maker.
-let pinnedEngine = "01439b0fe923929d275e2fd4337cbdf08b54fcfd"
-let pinnedEngineDate = "2026-11-24T06:12:52Z"
+let pinnedEngine = "35fea5c2ee781689ff224e614a8da71867a571bf"
+let pinnedEngineDate = "2026-11-26T16:33:44Z"
 // The engine in use: the one above, or a newer signed one.
 var activeEngine: String { Engine.active?.commit ?? pinnedEngine }
 let requiredXcode = "27.2"

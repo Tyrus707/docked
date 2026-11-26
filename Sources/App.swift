@@ -196,7 +196,7 @@ final class Model: ObservableObject {
         guard let n = (try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, n < 60_000_000, let i = NSImage(contentsOf: u), Cover.keep(i, at: Cover.custom(g)) else { message = "That picture couldn't be used."; return }
         forgetArt(g)
     }
-    func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); forgetArt(g) }
+    func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); Artwork.removeMade(g.titleID); forgetArt(g) }
     func hasArt(_ g: Game) -> Bool { FileManager.default.fileExists(atPath: Cover.custom(g).path) }
     func forgetArt(_ g: Game) { dropArt(g); reload() }
     func dropArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers.removeObject(forKey: g.id as NSString); coverReady() }
@@ -403,8 +403,14 @@ final class Model: ObservableObject {
     func icon(_ g: Game) -> NSImage {
         if let i = icons[g.id] { return i }
         if let r = g.rom { let i = Model.romIcon(r); icons[g.id] = i; return i }
-        let has = FileManager.default.fileExists(atPath: g.url.appendingPathComponent("Contents/Resources/AppIcon.icns").path)
-        let i = autoreleasepool { Cover.small(has ? NSWorkspace.shared.icon(forFile: g.url.path) : Model.plainIcon(), 256) }; icons[g.id] = i; return i   // the full-size art is let go at once
+        let fm = FileManager.default, saved = Artwork.appIcon(g.titleID)
+        let i: NSImage
+        if let art = fm.fileExists(atPath: saved.path) ? NSImage(contentsOf: saved) : nil { i = Cover.small(art, 256) }
+        else {
+            let has = fm.fileExists(atPath: g.url.appendingPathComponent("Contents/Resources/AppIcon.icns").path)
+            i = autoreleasepool { Cover.small(has ? NSWorkspace.shared.icon(forFile: g.url.path) : Model.plainIcon(), 256) }
+        }
+        icons[g.id] = i; return i   // the full-size art is let go at once
     }
 
     // A game's box art, cropped to a tile, or its console's colour and name
@@ -767,7 +773,7 @@ final class Model: ObservableObject {
             if idle, !builder.running { switch verdict(job) { case let .no(why): reviewNote = why; return false; case .wait where existing.map(isOpen) == true: reviewNote = "Save and quit \(existing!.name) first."; return false; default: break } }
             if target == .phone, !phoneSet { reviewNote = "Finish the iPhone steps first."; return false }
             guard queue.add(job) else { reviewNote = "\(job.title) is already in the queue."; return false }
-            if idle { queue.paused = false }; Notify.ask()
+            if idle { queue.paused = false }
             builder.error = builder.running ? builder.error : nil
             review.parts = []; startNext(); return true
         } catch { reviewNote = error.localizedDescription; return false }
@@ -794,7 +800,7 @@ final class Model: ObservableObject {
             do {
                 let input = try resolveInput(j.urls, family: j.family)
                 buildPlace = j.placeURL; buildSources = j.sources
-                builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, speed: j.speed, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone
+                builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, speed: j.speed, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone; Notify.ask()
                 if builder.running { return }
                 queue.failed(builder.error ?? "The conversion engine did not start.")
             } catch { queue.problems.append(Problem(title: j.title, reason: error.localizedDescription)); queue.done() }
@@ -993,9 +999,29 @@ final class Model: ObservableObject {
         if isRunning(g), let a = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.path == g.url.path }) { a.activate(); return }
         if let why = g.cannot { message = "\(g.name) cannot run here. \(why)."; return }
         if !cloudSaves.isEmpty { CloudSaves.apply(cloudSaves, was: "", to: g.url) }
+        // Play with friends on Wi-Fi only: ask whether to pause AirDrop's scanning for the game (the player's answer can be kept)
+        var pauseAirDrop = false
+        if !settings, Friends.on(g.url), Friends.wifiOnly() {
+            let d = UserDefaults.standard
+            switch d.string(forKey: "friends.airDrop") {
+            case "pause": pauseAirDrop = true
+            case "leave": break
+            default:
+                let a = NSAlert(); a.messageText = "Pause AirDrop while you play?"
+                a.informativeText = "AirDrop and Handoff make Wi-Fi step away many times a second, which shows up as lag. Docked can pause them until the game closes. You'll be asked for your password. Ethernet avoids this entirely."
+                a.addButton(withTitle: "Pause AirDrop and Play"); a.addButton(withTitle: "Just Play"); a.addButton(withTitle: "Cancel")
+                a.showsSuppressionButton = true; a.suppressionButton?.title = "Remember my choice"
+                let r = a.runModal()
+                if r == .alertThirdButtonReturn { return }
+                pauseAirDrop = r == .alertFirstButtonReturn
+                if a.suppressionButton?.state == .on { d.set(pauseAirDrop ? "pause" : "leave", forKey: "friends.airDrop") }
+            }
+        }
+        let pause = pauseAirDrop
         let c = NSWorkspace.OpenConfiguration()
         if !settings { c.environment = ["DM_LAUNCHER": "0"] }   // straight into the game
-        NSWorkspace.shared.openApplication(at: g.url, configuration: c) { _, e in
+        NSWorkspace.shared.openApplication(at: g.url, configuration: c) { app, e in
+            if e == nil, pause, let app { Friends.pauseAirDrop(whilePID: app.processIdentifier) }
             DispatchQueue.main.async { if let e { self.message = e.localizedDescription } else { self.stepAside() } }
         }
     }

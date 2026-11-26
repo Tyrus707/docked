@@ -794,6 +794,25 @@ do {
     check(!fm.fileExists(atPath: b.path) && fm.fileExists(atPath: a.path) && !fm.fileExists(atPath: Artwork.found.appendingPathComponent("old-2.png").path) && fm.fileExists(atPath: Artwork.found.appendingPathComponent("snes-abc.png").path), "only leftovers removed")
 }
 
+// A converted game's own art stays on this Mac, so offloading it doesn't take its cover with it
+do {
+    let bundle = mk("Games/Icon.app/Contents/Info.plist").deletingLastPathComponent().deletingLastPathComponent()
+    try! fm.createDirectory(at: bundle.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
+    try! png(64, 64).write(to: bundle.appendingPathComponent("Contents/Resources/AppIcon.icns"))
+    check(Artwork.keepAppIcon("icon:game", from: bundle) && fm.fileExists(atPath: Artwork.appIcon("icon:game").path), "a game's own art is kept on this Mac")
+    let places = Dictionary(uniqueKeysWithValues: Artwork.survey(ids: ["ICON:GAME"]).map { ($0.id, $0) })
+    check(places["icons"]?.files == 1 && places["icons"]?.spare.isEmpty == true, "a kept icon isn't counted as leftover art")
+    let t1 = Artwork.tile("icon:game", from: "old"), t2 = Artwork.tile("icon:game", from: "new")
+    try! fm.createDirectory(at: Artwork.made, withIntermediateDirectories: true)
+    try! Data("old".utf8).write(to: t1); Thread.sleep(forTimeInterval: 1.1); try! Data("new".utf8).write(to: t2)
+    check(Artwork.newestTile("icon:game")?.lastPathComponent == t2.lastPathComponent, "a made cover can be found when the game's files are away")
+    let plain = Artwork.tile("icon:game", from: "plain")
+    try! Data("plain".utf8).write(to: plain)
+    check(Artwork.newestTile("icon:game", excluding: "plain")?.lastPathComponent == t2.lastPathComponent, "a plain placeholder never replaces real art")
+    Artwork.removeMade("icon:game")
+    check(!fm.fileExists(atPath: t1.path) && !fm.fileExists(atPath: t2.path) && fm.fileExists(atPath: Artwork.appIcon("icon:game").path), "clearing art drops made covers, not the kept icon")
+}
+
 
 // Offloading: a game goes to another folder whole and comes back to the same place
 do {
@@ -814,6 +833,21 @@ do {
     let j = JSONEncoder(); j.dateEncodingStrategy = .iso8601; let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
     check((try? d.decode(LibraryData.self, from: j.encode(l)))?.offloaded["/g/A.app"] == "/c/A.app", "where an offloaded game is, is saved")
     l.removeApp("/g/A.app"); check(l.offloaded.isEmpty, "a game taken out of the library forgets where it was offloaded")
+    try? fm.removeItem(at: base)
+}
+
+// Play with friends: the pass Docked keeps, and which games have the friends link
+do {
+    let key = Data(repeating: 7, count: 32).base64EncodedString()
+    check(Friends.parse("meet=wss://docked-meeting.example.workers.dev/meet\ncircle=\(key)\n") == Friends.Pass(meet: "wss://docked-meeting.example.workers.dev/meet", circle: Data(repeating: 7, count: 32)), "a friends pass is read")
+    check(Friends.parse("meet=https://example.com/meet\ncircle=\(key)\n") == nil, "a pass must use a secure WebSocket")
+    check(Friends.parse("meet=wss://example.com/meet\ncircle=c2hvcnQ=\n") == nil, "a pass needs a 32-byte circle key")
+    check(Friends.parse("circle=\(key)\n") == nil, "a pass needs a meeting point")
+    let fm = FileManager.default, base = fm.temporaryDirectory.appendingPathComponent("friends-\(UUID().uuidString)"), dm = base.appendingPathComponent("New.app/Contents/Resources/dm")
+    try? fm.createDirectory(at: dm, withIntermediateDirectories: true)
+    try? Data(#"{"schema":1,"settings":[{"env":"DM_FRIENDS","kind":"toggle"}]}"#.utf8).write(to: dm.appendingPathComponent("launcher.json"))
+    check(Friends.supported(base.appendingPathComponent("New.app")), "a game converted with friends offers it")
+    check(!Friends.supported(base.appendingPathComponent("Old.app")), "an older game does not")
     try? fm.removeItem(at: base)
 }
 

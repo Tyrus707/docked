@@ -64,9 +64,9 @@ final class Builder: ObservableObject {
         p.terminationHandler = { _ in group.leave() }
         do { try p.run() } catch {
             out.fileHandleForReading.readabilityHandler = nil; err.fileHandleForReading.readabilityHandler = nil
-            self.error = "The conversion engine did not start: \(error.localizedDescription)"; return
+            self.error = "The conversion engine did not start: \(error.localizedDescription)"; DockProgress.clear(); return
         }
-        proc = p; running = true
+        proc = p; running = true; DockProgress.show(0)
         let options: ProcessInfo.ActivityOptions = gentle ? [.background, .idleSystemSleepDisabled] : [.userInitiated, .idleSystemSleepDisabled]
         activity = ProcessInfo.processInfo.beginActivity(options: options, reason: gentle ? "Converting a game, leaving room to play" : "Converting a game")
         group.notify(queue: .main) { [weak self] in self?.finished(p.terminationStatus) }
@@ -87,6 +87,7 @@ final class Builder: ObservableObject {
             if m.hasPrefix("[RED]") || m.contains("] [RED]") { lastRed = m.components(separatedBy: "[RED]").last!.trimmingCharacters(in: .whitespaces) }
             add(m)
         }
+        DockProgress.show(overall())
     }
 
     private var stepOpen: String?
@@ -107,7 +108,7 @@ final class Builder: ObservableObject {
             DispatchQueue.main.async {
                 guard let s = self, s.running, s.stage == "Pipeline archive" else { return }
                 if d != s.partsAt?.count { s.partsAt = (d, Date()) }
-                if s.parts?.done != d || s.parts?.total != n { s.parts = (d, n); s.frac = Double(d) / Double(n) }
+                if s.parts?.done != d || s.parts?.total != n { s.parts = (d, n); s.frac = Double(d) / Double(n); DockProgress.show(s.overall()) }
             }
         }
         watch = t; t.resume()
@@ -138,7 +139,7 @@ final class Builder: ObservableObject {
     private func add(_ s: String) { log.append(s); if log.count > 300 { log.removeFirst(log.count - 200) } }
 
     private func finished(_ code: Int32) {
-        running = false; proc = nil; watch?.cancel(); watch = nil; parts = nil
+        running = false; proc = nil; watch?.cancel(); watch = nil; parts = nil; DockProgress.clear()
         if let a = activity { ProcessInfo.processInfo.endActivity(a); activity = nil }
         if code == 0 { endStep(); estimator.learn(times); estimator.save(); stage = "Done" }
         else if cancelled { stage = "Stopped" }

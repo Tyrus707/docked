@@ -168,12 +168,12 @@ struct ArtworkRow: View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Artwork")
-                Text(places == nil ? "Measuring…" : files == 0 ? "No covers yet." : "\(size(bytes)) in \(files) files. Covers you chose are in Docked › Artwork; found and ready-to-show ones in Docked › Metadata." + (spare > 0 ? " \(size(spare)) is left over from games no longer here." : " Nothing is left over."))
+                Text(places == nil ? "Measuring…" : files == 0 ? "No covers yet." : "\(size(bytes)) in \(files) files. Covers you chose are in Docked › Artwork; found, ready-to-show and offloaded games' own art in Docked › Metadata." + (spare > 0 ? " \(size(spare)) is left over from games no longer here." : " Nothing is left over."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             if clearing { ProgressView().controlSize(.small) }
-            Button("Show") { let u = [Artwork.yours, Artwork.found, Artwork.made].filter { FileManager.default.fileExists(atPath: $0.path) }; NSWorkspace.shared.activateFileViewerSelecting(u.isEmpty ? [Paths.root] : u) }
+            Button("Show") { let u = [Artwork.yours, Artwork.found, Artwork.made, Artwork.icons].filter { FileManager.default.fileExists(atPath: $0.path) }; NSWorkspace.shared.activateFileViewerSelecting(u.isEmpty ? [Paths.root] : u) }
             Button("Clear Leftovers") { clear() }.disabled(spare == 0 || clearing).help("Covers you chose go to the Trash. Others can be found or made again.")
         }.onAppear(perform: measure)
     }

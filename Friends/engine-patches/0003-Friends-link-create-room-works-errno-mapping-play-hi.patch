@@ -1,0 +1,328 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 11:48:08 -0500
+Subject: [PATCH 3/8] Friends link: create room works, errno mapping, play
+ history, pctl, tracing, loopback test build
+
+Verified on one Mac: two copies create, join, and play a full match.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dm/host/friends_link.c               |  3 ++-
+ dm/host/hle_friends.c                |  8 +++++---
+ dm/host/hle_friends_link.c           | 14 ++++++++++----
+ dm/host/hle_misc.c                   |  7 ++++---
+ dm/host/hle_net.c                    | 25 ++++++++++++++++++++-----
+ dm/host/hle_offline.c                |  2 +-
+ dm/host/tests/t_friends.c            |  2 ++
+ dm/host/tests/t_friends_link.c       |  2 +-
+ dm/host/tests/t_friends_net.c        |  2 +-
+ dm/host/tests/t_pctl.c               |  2 ++
+ dm/host/tests/t_server_environment.c |  2 ++
+ 11 files changed, 50 insertions(+), 19 deletions(-)
+
+diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
+index 9c8fdfcd..b15337e7 100644
+--- a/dm/host/friends_link.c
++++ b/dm/host/friends_link.c
+@@ -316,7 +316,8 @@ static void pass_hash(const fl_security *s, const uint8_t session[16], uint8_t o
+ uint32_t fl_create(friends_link *f, const fl_config *c, const fl_security *s, const fl_user *u, const fl_secparam *sp) {
+     if (!f) return FL_E_DISABLED; if (!c || !s || !u || s->size > 64 || c->max_nodes < 1 || c->max_nodes > 8 || !memchr(u->name, 0, sizeof u->name)) return FL_E_INVALID;
+     LOCK; if (f->state != FL_AP) UNLOCK(FL_E_STATE);
+-    fl_network *n = &f->net; memset(n, 0, sizeof *n); n->id.intent = c->intent;
++    fl_network *n = &f->net; uint8_t adv[384]; uint16_t advn = n->advertise_size, pol = n->accept_policy; memcpy(adv, n->advertise, sizeof adv);   // set while the access point was open
++    memset(n, 0, sizeof *n); memcpy(n->advertise, adv, sizeof adv); n->advertise_size = advn; n->accept_policy = (uint8_t)pol; n->id.intent = c->intent;
+     if (sp) { memcpy(n->id.session, sp->session, 16); memcpy(n->security, sp->server_random, 16); } else { arc4random_buf(n->id.session, 16); arc4random_buf(n->security, 16); }
+     memcpy(n->common.mac, f->mac, 6); n->common.ssid.len = 32; for (int i = 0; i < 16; i++) snprintf(n->common.ssid.text + 2 * i, 3, "%02x", n->id.session[i]);
+     n->common.channel = c->channel ? c->channel : 6; n->common.link = 3; n->common.type = 2; n->security_mode = s->mode; n->max_nodes = c->max_nodes; n->node_count = 1; n->version = 3;
+diff --git a/dm/host/hle_friends.c b/dm/host/hle_friends.c
+index 4003a4b0..064e8a82 100644
+--- a/dm/host/hle_friends.c
++++ b/dm/host/hle_friends.c
+@@ -2,6 +2,7 @@
+ // Not cut: the getters of Friend / Profile / FriendPresence and the constructors of Friend / Profile / UserPresence (they only read and write the game's own objects and do not go through the service).
+ // Unless stated otherwise (presence and the notification queue are local and succeed), Result returns RES_FAIL; bool returns false; event pointers get a SystemEvent that is bound to a kernel event and never fires.
+ #include "hle.h"
++#include "hle_net.h"
+ 
+ // Notification event that never fires (GetSystemEvent-style calls return a pointer; bound on the guest thread on first use)
+ static _Alignas(16) uint8_t g_ev_notify[0x100], g_ev_invite[0x100];
+@@ -43,13 +44,14 @@ HLE_FORCE("_ZN2nn7friends16UpdateFriendInfoEPNS0_6FriendEPKNS_7account23NetworkS
+           Result, h_fr_UpdateFriendInfoNoUid, void *f, const void *ids, int n) { (void)f; (void)ids; (void)n; return RES_FAIL; }
+ HLE_FORCE("_ZN2nn7friends6Friend6UpdateEv", "friend info update fails (cut)", Result, h_fr_FriendUpdate, void *self) { (void)self; return RES_FAIL; }
+ HLE_FORCE("_ZN2nn7friends14AddPlayHistoryERKNS0_26PlayHistoryRegistrationKeyERKNS0_15InAppScreenNameES6_", "play history is not registered (cut)",
+-          Result, h_fr_AddPlayHistory, const void *k, const void *a, const void *b) { (void)k; (void)a; (void)b; return RES_FAIL; }
++          Result, h_fr_AddPlayHistory, const void *k, const void *a, const void *b) { (void)k; (void)a; (void)b; return dm_friends_on() ? RES_OK : RES_FAIL; }
+ HLE_FORCE("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegistrationKeyERKNS_7account3UidEb", "play history key unavailable (cut)",
+-          Result, h_fr_GetPHKey, void *k, const void *uid, int local) { (void)k; (void)uid; (void)local; return RES_FAIL; }
++          // With the friends link a room needs one (Smash Ultimate closes its room without it). Only Nintendo's servers check what it says; between friends any 0x40 bytes will do.
++          Result, h_fr_GetPHKey, void *k, const void *uid, int local) { (void)uid; (void)local; if (!dm_friends_on() || !k) return RES_FAIL; arc4random_buf(k, 0x40); return RES_OK; }
+ // The form without a Uid (SDK 20; Super Nintendo Entertainment System – Nintendo Classics 6.0.0 asks first thing in nnMain, main+0xc608): the SDK's own opens the friends service and
+ // aborts with 0xe15 when it cannot; cut the same way as the Uid form
+ HLE_FORCE("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryRegistrationKeyEb", "play history key unavailable (cut)",
+-          Result, h_fr_GetPHKeyNoUid, void *k, int local) { (void)k; (void)local; return RES_FAIL; }
++          Result, h_fr_GetPHKeyNoUid, void *k, int local) { (void)local; if (!dm_friends_on() || !k) return RES_FAIL; arc4random_buf(k, 0x40); return RES_OK; }
+ // Notification queue
+ HLE_FORCE("_ZN2nn7friends17NotificationQueueC1Ev", "notification queue creates no session (cut)", void, h_fr_NqCtor, void *self) { (void)self; }
+ HLE_FORCE("_ZN2nn7friends17NotificationQueueD1Ev", "notification queue has no session to close (cut)", void, h_fr_NqDtor, void *self) { (void)self; }
+diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
+index 2dd5a6bb..903b5cba 100644
+--- a/dm/host/hle_friends_link.c
++++ b/dm/host/hle_friends_link.c
+@@ -3,6 +3,9 @@
+ #include "hle_net.h"
+ #include "friends_link.h"
+ #include <pthread.h>
++#ifndef FL_LOOPBACK
++#define FL_LOOPBACK 0   // 1 only in a build for testing on one Mac; never shipped
++#endif
+ void dm_guest_sleep_ns(int64_t ns);
+ static friends_link *g_fl; static uint64_t g_fl_events[16];
+ static pthread_rwlock_t g_fl_l = PTHREAD_RWLOCK_INITIALIZER;   // written by Initialize / Finalize only
+@@ -13,7 +16,10 @@ static void fl_data(void *o, uint32_t s, uint16_t sp, uint32_t d, uint16_t dp, c
+ // For the socket service: is this virtual address one the game may use now, and sending to it
+ int dm_friends_virtual(uint32_t ip) { return dm_friends_on() && fl_is_virtual(ip); }
+ int dm_friends_broadcast(uint32_t ip) { return fl_is_broadcast(ip); }
+-#define USE(expr, off) do { if (!dm_friends_on()) return off; pthread_rwlock_rdlock(&g_fl_l); __typeof__(expr) r_ = expr; pthread_rwlock_unlock(&g_fl_l); return r_; } while (0)
++static int tracing(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_FRIENDS_TRACE"); on = e && *e == '1'; } return on; }
++static void trace(const char *what, long r) {   // what the game asked and was told, repeated answers once
++    static _Thread_local const char *last; static _Thread_local long lr; if (!tracing() || (last == what && lr == r)) return; last = what; lr = r; LOG("friends trace: %.40s -> %#lx", what, r); }
++#define USE(expr, off) do { if (!dm_friends_on()) return off; pthread_rwlock_rdlock(&g_fl_l); __typeof__(expr) r_ = expr; pthread_rwlock_unlock(&g_fl_l); trace(#expr, (long)r_); return r_; } while (0)
+ uint32_t dm_friends_address(void) { USE(fl_address(g_fl), 0); }
+ int dm_friends_send(uint16_t sp, uint32_t d, uint16_t dp, const void *p, size_t n) { USE(fl_send(g_fl, sp, d, dp, p, n), -1); }
+ static Result fl_init(void) {
+@@ -22,11 +28,11 @@ static Result fl_init(void) {
+     if (!g_fl) {
+         char path[1024], why[160]; const char *f = getenv("DM_FRIENDS_FILE"), *h = getenv("HOME"); fl_setup s;
+         if (f && *f) snprintf(path, sizeof path, "%s", f); else snprintf(path, sizeof path, "%s/Dockside/friends.txt", h ? h : "");
+-        if (fl_load(path, 0, &s, why, sizeof why)) { LOG("friends link: off, %s", why); r = FL_E_DISABLED; }
++        if (fl_load(path, FL_LOOPBACK, &s, why, sizeof why)) { LOG("friends link: off, %s", why); r = FL_E_DISABLED; }
+         else { fl_hooks k = {fl_data, fl_event, fl_sleep, NULL}; g_fl = fl_start(&s, &k); memset(&s, 0, sizeof s);
+             if (!g_fl) { LOG("friends link: off, this Mac's private address or port is not available"); r = FL_ERR(16); } else LOG("friends link: on, listed friends only"); }
+     }
+-    pthread_rwlock_unlock(&g_fl_l); return r;
++    pthread_rwlock_unlock(&g_fl_l); trace("initialize", r); return r;
+ }
+ static void fl_fini(void) { if (!dm_friends_on()) return; pthread_rwlock_wrlock(&g_fl_l); friends_link *f = g_fl; g_fl = NULL; pthread_rwlock_unlock(&g_fl_l); for (int i = 0; i < 16; i++) __atomic_store_n(&g_fl_events[i], 0, __ATOMIC_RELEASE);
+     if (f) { fl_stats t = fl_get_stats(f); LOG("friends link: off; in %llu out %llu, refused: strangers %llu wrong code %llu broken %llu repeats %llu other %llu", t.rx, t.tx, t.bad_source, t.bad_tag, t.bad_packet, t.replay, t.refused); fl_stop(f); } }
+@@ -47,7 +53,7 @@ LDN("_ZN2nn3ldn14DestroyNetworkEv", h_ldn_Destroy, void) { USE(fl_leave(g_fl, 1)
+ static Result scan(fl_network *o, int *n, int max, const fl_filter *q) { if (n) *n = 0; USE(fl_scan(g_fl, o, n, max, q), RES_FAIL); }
+ LDN("_ZN2nn3ldn4ScanEPNS0_11NetworkInfoEPiiRKNS0_10ScanFilterEi", h_ldn_Scan, fl_network *o, int *n, int max, const fl_filter *q, int ch) { (void)ch; return scan(o, n, max, q); }
+ LDN("_ZN2nn3ldn11ScanPrivateEPNS0_11NetworkInfoEPiiRKNS0_10ScanFilterEi", h_ldn_ScanP, fl_network *o, int *n, int max, const fl_filter *q, int ch) { (void)ch; return scan(o, n, max, q); }
+-static Result create(const fl_config *c, const fl_security *s, const fl_secparam *p, const fl_user *u) { USE(fl_create(g_fl, c, s, u, p), RES_FAIL); }
++static Result create(const fl_config *c, const fl_security *s, const fl_secparam *p, const fl_user *u) { if (dm_friends_on() && tracing() && c && s && u) LOG("friends trace: create max=%d channel=%d version=%d local=%016llx scene=%d secmode=%u size=%u name=%.32s", c->max_nodes, c->channel, c->version, (unsigned long long)c->intent.local_id, c->intent.scene, s->mode, s->size, u->name); USE(fl_create(g_fl, c, s, u, p), RES_FAIL); }
+ LDN("_ZN2nn3ldn13CreateNetworkERKNS0_13NetworkConfigERKNS0_14SecurityConfigERKNS0_10UserConfigE", h_ldn_Create, const fl_config *c, const fl_security *s, const fl_user *u) { return create(c, s, NULL, u); }
+ LDN("_ZN2nn3ldn20CreateNetworkPrivateERKNS0_13NetworkConfigERKNS0_14SecurityConfigERKNS0_17SecurityParameterERKNS0_10UserConfigEiPKNS0_12AddressEntryE", h_ldn_CreateP,
+     const fl_config *c, const fl_security *s, const fl_secparam *p, const fl_user *u, int n, const void *e) { (void)n; (void)e; return create(c, s, p, u); }
+diff --git a/dm/host/hle_misc.c b/dm/host/hle_misc.c
+index d264387f..703576b1 100644
+--- a/dm/host/hle_misc.c
++++ b/dm/host/hle_misc.c
+@@ -1,6 +1,7 @@
+ // Miscellaneous service layer: add-on content / shop / error applet / profanity filter / server name resolution / parental controls / software keyboard.
+ // On the real device each goes through IPC or a system applet; the host gives results as single-player offline. Pure-computation SDK parts (hash, util, software Opus) are not taken over, the original implementation is used directly.
+ #include "hle.h"
++#include "hle_net.h"
+ #include <dirent.h>
+ 
+ // ---------- aoc add-on content (the DLC NSPs in the player's folder) / ec shop (excluded) ----------
+@@ -176,8 +177,8 @@ HLE_FORCE("_ZN2nn3nsd7ResolveEPNS0_4FqdnERKS1_", "server name resolution, networ
+ HLE_FORCE("_ZN2nn3nsd9ResolveExEPNS0_4FqdnERKS1_", "server name resolution, networking out of scope; cut", Result, h_nsd_ResolveEx, void *out, const void *in) { (void)out; (void)in; return RES_FAIL; }
+ // bool arguments only look at the low 8 bits; returns bool
+ // The permission query answers as TryBegin / IsFreeCommunicationAvailable do: the SDK's version calls the pctl service (pctl::detail::ipc::GetService), which the host never opens (DRAGON QUEST XI S imports it; from PR #38)
+-HLE_FORCE("_ZN2nn4pctl32CheckFreeCommunicationPermissionEb", "parental controls · permission to communicate with others, networking out of scope; never, no system UI", unsigned, h_pctl_CheckFree, unsigned show_ui) { (void)show_ui; return 0; }
+-HLE_FORCE("_ZN2nn4pctl25TryBeginFreeCommunicationEb", "parental controls · communication with others, networking out of scope; never allowed", unsigned, h_pctl_TryBegin, unsigned show_ui) { (void)show_ui; return 0; }
++HLE_FORCE("_ZN2nn4pctl32CheckFreeCommunicationPermissionEb", "parental controls · permission to communicate with others, networking out of scope; never, no system UI", unsigned, h_pctl_CheckFree, unsigned show_ui) { (void)show_ui; return (unsigned)dm_friends_on(); }
++HLE_FORCE("_ZN2nn4pctl25TryBeginFreeCommunicationEb", "parental controls · communication with others, networking out of scope; never allowed", unsigned, h_pctl_TryBegin, unsigned show_ui) { (void)show_ui; return (unsigned)dm_friends_on(); }
+ // Parental control of the 3D (VR goggles) mode, Super Mario Odyssey: no restriction, nothing to configure
+ HLE_FORCE("_ZN2nn4pctl26GetStereoVisionRestrictionEv", "parental controls · 3D view restriction; never restricted", unsigned, h_pctl_GetStereo, void) { return 0; }
+ HLE_FORCE("_ZN2nn4pctl26SetStereoVisionRestrictionEb", "parental controls · 3D view restriction; the host does not store it", void, h_pctl_SetStereo, unsigned on) { (void)on; }
+@@ -185,7 +186,7 @@ HLE_FORCE("_ZN2nn4pctl42ConfirmStereoVisionRestrictionConfigurableEv", "parental
+ HLE_FORCE("_ZN2nn4pctl53RequestStereoVisionRestrictionConfigurationPermissionEv", "parental controls · permission to change the 3D restriction; granted at once", Result, h_pctl_ReqStereo, void) { return RES_OK; }
+ HLE_FORCE("_ZN2nn4pctl20EndFreeCommunicationEv", "parental controls · communication with others", void, h_pctl_End, void) {}
+ // Engage asks on entering a battle map (no UI); without this the SDK connects to the pctl service through sm, which the host does not have, and aborts
+-HLE_FORCE("_ZN2nn4pctl28IsFreeCommunicationAvailableEv", "parental controls · whether communication with others is available, networking out of scope; never", unsigned, h_pctl_IsFree, void) { return 0; }
++HLE_FORCE("_ZN2nn4pctl28IsFreeCommunicationAvailableEv", "parental controls · whether communication with others is available, networking out of scope; never", unsigned, h_pctl_IsFree, void) { return (unsigned)dm_friends_on(); }
+ // The Legend of Zelda: Breath of the Wild: checks the parental-control permission for stereoscopic 3D before turning on the options' Labo VR mode (returns bool; the argument = whether to
+ // show UI, the game passes 0). The host has no VR display (pl::BeginVrMode refuses, hle_sdk16.c): not permitted, so the game clears its VR flag and stays 2D (as MacNativeGames found on 1.6.0 and 1.9.0)
+ HLE_FORCE("_ZN2nn4pctl33CheckAgcPermissionUnderMinimumAgeERKNS_7account3UidE", "parental controls · a user's permission under the minimum age (SDK 22), networking out of scope; never", unsigned, h_pctl_CheckAgc, const void *uid) { (void)uid; return 0; }
+diff --git a/dm/host/hle_net.c b/dm/host/hle_net.c
+index 18019b91..716aae70 100644
+--- a/dm/host/hle_net.c
++++ b/dm/host/hle_net.c
+@@ -39,9 +39,15 @@ HLE_FORCE("nnsslFinalize", "pairs with nnsslInitialize (cut)", Result, h_ssl_Fin
+ // these structures/flags unchanged; FreeBSD11 sys/socket.h and netinet/in.h). IPv4 payloads retain packet boundaries; the per-endpoint queue holds at most256 packets/1MiB.
+ #define SK_ENETDOWN 50
+ static __thread int t_skerr = SK_ENETDOWN;
+-static int sk_error(int error) { t_skerr = error; return -1; }
++static int sk_trace(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_FRIENDS_TRACE"); on = e && *e == '1'; } return on; }
++static int sk_error(int error) { t_skerr = error; { static _Atomic int c; const char *e = getenv("DM_FRIENDS_TRACE"); if (e && *e == '1' && error != 35 && atomic_fetch_add(&c, 1) < 30) LOG("friends trace: socket error %d", error); } return -1; }
+ static int sk_fail(void) { return sk_error(SK_ENETDOWN); }
+-int dm_sk_errno(void) { return t_skerr; }
++// nn::socket::Errno is numbered as Linux's, not BSD's: a game that gets 35 for "nothing yet" takes it for a failure (Smash Ultimate's Pia closes its socket, error 2618-0006).
++// Only with the friends link, so that the offline host answers as it always has.
++int dm_sk_errno(void) {
++    if (!dm_friends_on()) return t_skerr;
++    switch (t_skerr) { case 35: return 11; case 36: return 115; case 39: return 89; case 40: return 90; case 42: return 92; case 45: return 95; case 48: return 98; case 49: return 99; case 50: return 100; case 55: return 105; case 57: return 107; default: return t_skerr; }
++}
+ #define SKF(m, cname, ...) HLE_FORCE(m, "local BSD descriptor service; remote networking unavailable", int, cname, __VA_ARGS__)
+ void dm_guest_sleep_ns(int64_t ns);
+ void dm_guest_cond_wait_ns(pthread_cond_t *c, pthread_mutex_t *m, int64_t ns);
+@@ -78,10 +84,12 @@ static int efd_create(uint64_t v, int flags) {
+     pthread_mutex_unlock(&g_efd_m); return fd;
+ }
+ int dm_sk_socket(int family, int type, int protocol) {
++    { const char *e = getenv("DM_FRIENDS_TRACE"); if (e && *e == '1') LOG("friends trace: socket family %d type %d protocol %d", family, type, protocol); }
+     if (family != 2 || type != 2 || (protocol && protocol != 17)) return sk_fail();
+     dm_host_mutex_lock(&g_efd_m); int fd = sk_new_locked(SK_UDP); pthread_mutex_unlock(&g_efd_m); return fd;
+ }
+ int dm_sk_close(int fd) {
++    if (sk_trace()) LOG("friends trace: close fd %d", fd);
+     dm_host_mutex_lock(&g_efd_m);
+     if (!sk_used(fd)) { pthread_mutex_unlock(&g_efd_m); return sk_fail(); }
+     sk_packet *p = g_efd[fd].head;
+@@ -141,7 +149,8 @@ static int sk_bind_locked(int fd, uint32_t addr, uint16_t port) {
+     g_efd[fd].addr = addr; g_efd[fd].port = port; return 0;
+ }
+ int dm_sk_bind(int fd, const void *a, unsigned n) {
+-    uint32_t addr; uint16_t port; if (sk_addr_read(a, n, &addr, &port)) return -1;
++    uint32_t addr; uint16_t port; if (sk_addr_read(a, n, &addr, &port)) { if (sk_trace() && a) LOG("friends trace: bind refused %08x", ((const uint32_t *)a)[1]); return -1; }
++    if (sk_trace()) LOG("friends trace: bind fd %d %08x:%u", fd, addr, port);
+     dm_host_mutex_lock(&g_efd_m); int r = sk_udp_locked(fd) ? sk_bind_locked(fd, addr, port) : sk_error(SK_EBADF); pthread_mutex_unlock(&g_efd_m); return r;
+ }
+ int dm_sk_connect(int fd, const void *a, unsigned n) {
+@@ -155,6 +164,7 @@ int dm_sk_connect(int fd, const void *a, unsigned n) {
+     pthread_mutex_unlock(&g_efd_m); return r;
+ }
+ int dm_sk_name(int fd, void *a, unsigned *n, int peer) {
++    if (sk_trace()) LOG("friends trace: name fd %d peer %d", fd, peer);
+     if (!a || !n) return sk_error(SK_EINVAL);
+     dm_host_mutex_lock(&g_efd_m); int r;
+     if (!sk_udp_locked(fd)) r = sk_error(SK_EBADF);
+@@ -171,6 +181,7 @@ int dm_sk_shutdown(int fd, int how) {
+     pthread_mutex_unlock(&g_efd_m); return r;
+ }
+ int dm_sk_fcntl(int fd, int cmd, int value) {
++    if (sk_trace()) LOG("friends trace: fcntl fd %d cmd %d value %#x", fd, cmd, value);
+     dm_host_mutex_lock(&g_efd_m); int r = 0;
+     if (!sk_used(fd)) r = sk_error(SK_EBADF);
+     else if (cmd == 1) r = g_efd[fd].fdflags;
+@@ -181,6 +192,7 @@ int dm_sk_fcntl(int fd, int cmd, int value) {
+     pthread_mutex_unlock(&g_efd_m); return r;
+ }
+ int dm_sk_setopt(int fd, int level, int option, const void *value, unsigned size) {
++    if (sk_trace()) LOG("friends trace: setopt fd %d level %#x option %#x size %u value %d", fd, level, option, size, value && size >= 4 ? *(const int *)value : -1);
+     if (!value) return sk_error(SK_EINVAL);
+     dm_host_mutex_lock(&g_efd_m); int r = 0;
+     if (!sk_udp_locked(fd)) r = sk_error(SK_EBADF);
+@@ -201,6 +213,7 @@ int dm_sk_setopt(int fd, int level, int option, const void *value, unsigned size
+     pthread_mutex_unlock(&g_efd_m); return r;
+ }
+ int dm_sk_getopt(int fd, int level, int option, void *value, unsigned *size) {
++    if (sk_trace()) LOG("friends trace: getopt fd %d level %#x option %#x", fd, level, option);
+     if (!value || !size) return sk_error(SK_EINVAL);
+     dm_host_mutex_lock(&g_efd_m); int r = 0, v = 0;
+     if (!sk_udp_locked(fd)) r = sk_error(SK_EBADF);
+@@ -245,6 +258,7 @@ void dm_sk_deliver(uint32_t src, uint16_t sport, uint32_t dst, uint16_t dport, c
+ }
+ long dm_sk_sendto(int fd, const void *data, unsigned long n, int flags, const void *a, unsigned al) {
+     if ((!data && n) || n > SK_UDP_MAX) return sk_error(n > SK_UDP_MAX ? SK_EMSGSIZE : SK_EINVAL);
++    { static _Atomic int c; if (sk_trace() && atomic_fetch_add(&c, 1) < 40) LOG("friends trace: sendto fd %d size %lu flags %#x to %02x%02x%02x%02x:%u", fd, n, flags, a ? ((const uint8_t *)a)[4] : 0, a ? ((const uint8_t *)a)[5] : 0, a ? ((const uint8_t *)a)[6] : 0, a ? ((const uint8_t *)a)[7] : 0, a ? ((const uint8_t *)a)[2] << 8 | ((const uint8_t *)a)[3] : 0); }
+     if (flags & ~(SK_MSG_DONTWAIT | 4 | 0x20000)) return sk_error(SK_EOPNOTSUPP);
+     uint32_t addr = 0; uint16_t port = 0; if (a && sk_addr_read(a, al, &addr, &port)) return -1;
+     dm_host_mutex_lock(&g_efd_m); long r = -1;
+@@ -287,6 +301,7 @@ long dm_sk_write(int fd, const void *data, unsigned long size) {
+ }
+ long dm_sk_recvfrom(int fd, void *data, unsigned long n, int flags, void *a, unsigned *al) {
+     if ((!data && n) || (a && !al)) return sk_error(SK_EINVAL);
++    { static _Atomic int c; if (sk_trace() && atomic_fetch_add(&c, 1) < 12) LOG("friends trace: recvfrom fd %d size %lu flags %#x", fd, n, flags); }
+     if (flags & ~(SK_MSG_DONTWAIT | SK_MSG_PEEK)) return sk_error(SK_EOPNOTSUPP);
+     dm_host_mutex_lock(&g_efd_m); long r = -1;
+     if (!sk_udp_locked(fd)) { t_skerr = SK_EBADF; goto done; }
+@@ -394,7 +409,7 @@ HLE_FORCE("_ZN2nn6socket11GetAddrInfoEPKcS2_PKNS0_8AddrInfoEPPS3_", "name resolu
+ }
+ HLE_FORCE("_ZN2nn6socket12FreeAddrInfoEPNS0_8AddrInfoE", "pairs with GetAddrInfo (cut)", void, h_sk_FreeAddrInfo, void *ai) { (void)ai; }
+ HLE_FORCE("_ZN2nn6socket16GetHostEntByNameEPKcPKNS0_14ResolverOptionEm", "name resolution (cut): NULL", void *, h_sk_GetHostEnt, const char *n, const void *o, unsigned long c) { (void)n; (void)o; (void)c; t_skerr = SK_ENETDOWN; return NULL; }
+-HLE_FORCE("_ZN2nn6socket12GetLastErrorEv", "socket error code kept by the host", int, h_sk_GetLastError, void) { return t_skerr; }
++HLE_FORCE("_ZN2nn6socket12GetLastErrorEv", "socket error code kept by the host", int, h_sk_GetLastError, void) { return dm_sk_errno(); }
+ // C interface
+ SKF("nnsocketSocket", h_nsk_Socket, int a, int b, int c) { return dm_sk_socket(a, b, c); }
+ SKF("nnsocketBind", h_nsk_Bind, int s, const void *a, unsigned n) { return dm_sk_bind(s, a, n); }
+@@ -415,7 +430,7 @@ HLE_FORCE("nnsocketRecvFrom", "local UDP (offline BSD service)", long, h_nsk_Rec
+ HLE_FORCE("nnsocketRead", "local UDP/EventFd (offline BSD service)", long, h_nsk_Read, int s, void *b, unsigned long n) { return dm_sk_read(s, b, n); }
+ HLE_FORCE("nnsocketWrite", "local UDP/EventFd (offline BSD service)", long, h_nsk_Write, int s, const void *b, unsigned long n) { return dm_sk_write(s, b, n); }
+ HLE_FORCE("nnsocketGetHostByNameWithOptions", "name resolution (cut): NULL", void *, h_nsk_GetHost, const char *n, const void *o, unsigned long c) { (void)n; (void)o; (void)c; t_skerr = SK_ENETDOWN; return NULL; }
+-HLE_FORCE("nnsocketGetLastErrno", "socket error code kept by the host", int, h_nsk_GetErrno, void) { return t_skerr; }
++HLE_FORCE("nnsocketGetLastErrno", "socket error code kept by the host", int, h_nsk_GetErrno, void) { return dm_sk_errno(); }
+ HLE_FORCE("nnsocketSetLastErrno", "socket error code kept by the host", void, h_nsk_SetErrno, int e) { t_skerr = e; }
+ 
+ // ---------- ssl: offline, Initialize and a context's Create / Destroy succeed, everything else that contacts the service fails ----------
+diff --git a/dm/host/hle_offline.c b/dm/host/hle_offline.c
+index b5bfa80b..cfa67707 100644
+--- a/dm/host/hle_offline.c
++++ b/dm/host/hle_offline.c
+@@ -139,7 +139,7 @@ HLE_FORCE("_ZN2nn7friends27CheckFriendListAvailabilityEPbRKNS_7account3UidE", "f
+ HLE_FORCE("_ZN2nn7friends25EnsureFriendListAvailableEPNS0_12AsyncContextERKNS_7account3UidE", "friend list (cut): the request fails at once", Result, h_fr_ListEnsure, void *ctx, const void *uid) { (void)ctx; (void)uid; return RES_FAIL; }
+ HLE_FORCE("_ZN2nn7friends12AsyncContext7HasDoneEPb", "async context: always done", Result, h_fr_AcHasDone, void *self, uint8_t *done) { (void)self; *done = 1; return RES_OK; }
+ HLE_FORCE("_ZN2nn7friends14AddPlayHistoryERKNS_7account3UidERKNS0_26PlayHistoryRegistrationKeyERKNS0_15InAppScreenNameESA_", "play history is not registered (cut)",
+-          Result, h_fr_PlayHist2, const void *uid, const void *key, const void *a, const void *b) { (void)uid; (void)key; (void)a; (void)b; return RES_FAIL; }
++          Result, h_fr_PlayHist2, const void *uid, const void *key, const void *a, const void *b) { (void)uid; (void)key; (void)a; (void)b; return dm_friends_on() ? RES_OK : RES_FAIL; }
+ 
+ // ---------- ngc: newer SDK overloads (with bool). Always judged as no profanity ----------
+ HLE_FORCE("_ZN2nn3ngc15ProfanityFilter10InitializeEPvmb", "profanity filter init; the host has no word list", Result, h_ngc_Init3, void *self, void *work, uint64_t sz, unsigned check) { (void)self; (void)work; (void)sz; (void)check; return RES_OK; }
+diff --git a/dm/host/tests/t_friends.c b/dm/host/tests/t_friends.c
+index 72128a1c..c9f0b8ef 100644
+--- a/dm/host/tests/t_friends.c
++++ b/dm/host/tests/t_friends.c
+@@ -105,3 +105,5 @@ int main(void) {
+     printf("t_friends: %d checks, %d failed\n", checks, fails);
+     return fails != 0;
+ }
++
++int dm_friends_on(void) { return 0; }   // the friends link is off
+diff --git a/dm/host/tests/t_friends_link.c b/dm/host/tests/t_friends_link.c
+index af3536a2..35273a40 100644
+--- a/dm/host/tests/t_friends_link.c
++++ b/dm/host/tests/t_friends_link.c
+@@ -50,7 +50,7 @@ int main(void) {
+     CK(a && b && c && w, "started"); CK(fl_state(a) == FL_INIT, "state"); UNTIL(fl_friends_seen(a) == 2 && fl_friends_seen(b) == 2 && fl_friends_seen(c) == 2, 4000); CK(fl_friends_seen(a) == 2 && fl_friends_seen(b) == 2, "friends find each other");
+     nap(1500); CK(fl_friends_seen(a) == 2 && fl_friends_seen(w) == 0, "wrong friend code never connects"); CK(fl_get_stats(a).bad_tag > 0, "wrong code counted");
+     fl_config cfg = {.max_nodes = 3, .version = 7}; cfg.intent.local_id = 0x01006A800016E000; cfg.intent.scene = 1; fl_security sec = {.mode = 1, .size = 4}; memcpy(sec.pass, "pass", 4); fl_security sec2 = sec; sec2.pass[0] = 'x'; fl_user ua = {"Alice"}, ub = {"Bob"}, uc = {"Cy"}; fl_network nets[8], ni; int n = 9; fl_update up[8];
+-    CK(fl_create(a, &cfg, &sec, &ua, NULL) == FL_E_STATE, "not before opening"); CK(!fl_open(a, 1) && fl_state(a) == FL_AP, "ap"); CK(!fl_advertise(a, "hello", 5), "advertise before"); CK(!fl_create(a, &cfg, &sec, &ua, NULL) && fl_state(a) == FL_CREATED && fl_address(a) == FL_NET + 1, "room"); CK(!fl_advertise(a, "hello", 5), "advertise"); CK(fl_advertise(a, nets, 385) == FL_E_INVALID, "too much advertise");
++    CK(fl_create(a, &cfg, &sec, &ua, NULL) == FL_E_STATE, "not before opening"); CK(!fl_open(a, 1) && fl_state(a) == FL_AP, "ap"); CK(!fl_advertise(a, "early", 5), "advertise before"); CK(!fl_create(a, &cfg, &sec, &ua, NULL) && fl_state(a) == FL_CREATED && fl_address(a) == FL_NET + 1, "room"); CK(!fl_info(a, &ni, NULL, 0) && ni.advertise_size == 5 && !memcmp(ni.advertise, "early", 5), "what was set before is in the room"); CK(!fl_advertise(a, "hello", 5), "advertise"); CK(fl_advertise(a, nets, 385) == FL_E_INVALID, "too much advertise");
+     CK(!fl_open(b, 0) && !fl_open(c, 0), "stations"); CK(!fl_scan(b, nets, &n, 8, NULL) && n == 1 && nets[0].advertise_size == 5 && !strcmp(nets[0].nodes[0].name, "Alice"), "scan finds it");
+     fl_filter q = {.flags = 1}; q.id.intent.local_id = 5; CK(!fl_scan(b, nets + 1, &n, 4, &q) && n == 0, "another game's room filtered"); q.id.intent.local_id = cfg.intent.local_id; q.flags = 33; q.id.intent.scene = 1; CK(!fl_scan(b, nets, &n, 4, &q) && n == 1, "own game's room");
+     CK(fl_connect(b, &nets[0], &sec2, &ub, 7) == FL_E_REJECTED, "wrong room password refused"); CK(fl_connect(b, &nets[0], &sec, &ub, 8) == FL_E_REJECTED, "other version refused"); CK(!fl_connect(b, &nets[0], &sec, &ub, 7) && fl_state(b) == FL_CONNECTED && fl_address(b) == FL_NET + 2, "joined");
+diff --git a/dm/host/tests/t_friends_net.c b/dm/host/tests/t_friends_net.c
+index 16c0dfd4..1a022842 100644
+--- a/dm/host/tests/t_friends_net.c
++++ b/dm/host/tests/t_friends_net.c
+@@ -32,7 +32,7 @@ int main(void) {
+     uint32_t mine = fl_address(L), his = child ? FL_NET + 1 : FL_NET + 2; CK(mine == (child ? FL_NET + 2 : FL_NET + 1), "addresses");
+     int f = dm_sk_socket(2, 2, 17); uint8_t a[16]; int one = 1; CK(f >= 0 && !dm_sk_setopt(f, 0xffff, 0x20, &one, 4) && !dm_sk_setopt(f, 0xffff, 0x9999, &one, 4) && !dm_sk_fcntl(f, 4, 0x800), "socket"); sa(a, 0, 12345); CK(!dm_sk_bind(f, a, 16), "bind any");
+     int g = dm_sk_socket(2, 2, 0); sa(a, mine, 12346); CK(!dm_sk_bind(g, a, 16), "bind own address"); int lo = dm_sk_socket(2, 2, 0); sa(a, 0x7f000001, 12347); CK(!dm_sk_bind(lo, a, 16), "bind loopback"); nap(300);
+-    char b[4096]; unsigned al; long r = -1; int got = 0, wrong = 0; sa(a, his, 12345);
++    char b[4096]; unsigned al; long r = -1; int got = 0, wrong = 0; sa(a, his, 12345); CK(dm_sk_recvfrom(lo, b, sizeof b, 0x80, NULL, NULL) == -1 && dm_sk_errno() == 11, "nothing yet is the Switch's 11, not the Mac's 35");
+     for (int i = 0; i < 600; i++) { memcpy(b, &i, 4); memset(b + 4, i, 600); CK(dm_sk_sendto(f, b, 604, 0, a, 16) == 604, "send"); uint8_t fr[16]; al = 16; while ((r = dm_sk_recvfrom(f, b, sizeof b, 0x80, fr, &al)) > 0) { int v; memcpy(&v, b, 4); got++; if (r != 604 || sip(fr) != his || fr[2] != 12345 >> 8 || (uint8_t)b[4] != (uint8_t)v) wrong++; } nap(2); }
+     nap(400); while ((r = dm_sk_recvfrom(f, b, sizeof b, 0x80, NULL, NULL)) > 0) got++; CK(got >= 590 && !wrong, "600 game packets arrive, unchanged and from the right address"); if (!child) printf("game packets: %d of 600 arrived\n", got);
+     sa(a, FL_NET + 255, 12346); CK(dm_sk_sendto(g, "bc", 2, 0, a, 16) == 2, "broadcast"); sa(a, his, 12347); dm_sk_sendto(f, "no", 2, 0, a, 16); struct { int32_t fd; int16_t e, r; } pf = {g, 1, 0}; CK(dm_sk_poll(&pf, 1, 2000) == 1 && pf.r & 1, "poll wakes"); CK(dm_sk_recvfrom(g, b, sizeof b, 0x80, NULL, NULL) == 2 && !memcmp(b, "bc", 2), "broadcast arrives"); nap(200); CK(dm_sk_recvfrom(lo, b, sizeof b, 0x80, NULL, NULL) < 0, "a loopback socket hears no friend");
+diff --git a/dm/host/tests/t_pctl.c b/dm/host/tests/t_pctl.c
+index fd0fec54..a04ef310 100644
+--- a/dm/host/tests/t_pctl.c
++++ b/dm/host/tests/t_pctl.c
+@@ -140,3 +140,5 @@ int main(void) {
+     printf("pctl: %d checks, %d failed\n", checks, fails);
+     return fails != 0;
+ }
++
++int dm_friends_on(void) { return 0; }   // the friends link is off
+diff --git a/dm/host/tests/t_server_environment.c b/dm/host/tests/t_server_environment.c
+index bfdf8770..ce606a81 100644
+--- a/dm/host/tests/t_server_environment.c
++++ b/dm/host/tests/t_server_environment.c
+@@ -146,3 +146,5 @@ int main(void) {
+     printf("offline services: %d checks, %d failed\n", checks, failed);
+     return failed != 0;
+ }
++
++int dm_friends_on(void) { return 0; }   // the friends link is off
