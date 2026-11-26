@@ -100,8 +100,11 @@ final class Model: ObservableObject {
     // One cloud saves folder for every converted game, written into each game's own settings before it starts ("" is off)
     @Published var cloudSaves = UserDefaults.standard.string(forKey: "cloudSaves") ?? "" { didSet { UserDefaults.standard.set(cloudSaves, forKey: "cloudSaves"); applyCloudSaves(was: oldValue) } }
     @Published var picking: Picking?
+    @Published var editingMeta: Game?   // a converted game whose Wikidata match is being chosen by hand
     @Published var finding = Set<String>()
     @Published var scoring = Set<String>()   // games whose scores and details are being looked up, by title ID
+    @Published var choosingMeta = Set<String>()   // player-initiated metadata work, by title ID
+    var metaTokens: [String: UUID] = [:]   // changes when the player switches back to Docked's own match
     // Converted Switch games get their details when they are done; nil follows "Find covers and details"
     @Published var metaConverted = UserDefaults.standard.object(forKey: "metaConverted") as? Bool { didSet { UserDefaults.standard.set(metaConverted, forKey: "metaConverted") } }
     var waitingLookUp: [String] = [], picks: [Picking] = []
@@ -599,7 +602,7 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || editingMeta != nil || importing != nil || tidying != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSetup(_ f: @escaping () -> Void) { showSetup = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
@@ -1050,6 +1053,7 @@ struct ContentView: View {
         .alert("Rename Game", isPresented: .init(get: { model.retitling != nil }, set: { if !$0 { model.retitling = nil } })) { TextField("Name", text: $newName); Button("Rename") { if let g = model.retitling { model.retitle(g, newName) }; newName = "" }; Button("Cancel", role: .cancel) { newName = "" } }
         .alert("Find covers and details for your games?", isPresented: .init(get: { model.askLookUp && model.wantsBios == nil }, set: { if !$0 { model.askLookUp = false } })) { Button("Find Them") { model.allowLookUp(true) }; Button("Not Now", role: .cancel) { model.allowLookUp(false) } } message: { Text(Lookup.consent) }
         .sheet(item: $model.picking, onDismiss: { model.nextPick() }) { GamePicker(pick: $0) }
+        .sheet(item: $model.editingMeta) { MetaPicker(game: $0) }
         .sheet(isPresented: $model.showHelp) { HelpView() }
         .sheet(isPresented: $model.showReleaseNotes) { ReleaseNotesView() }
         .sheet(isPresented: $model.showReview) { ReviewView() }

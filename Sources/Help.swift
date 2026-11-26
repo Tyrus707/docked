@@ -46,6 +46,7 @@ let helpTopics: [HelpTopic] = [
         "Choose a theme in Settings, under General. Docked keeps its own look, whatever your Mac's light or dark setting.",
         "To change a game's cover, drop a picture on it or choose Choose Cover from its ••• menu. Covers or Icons is in Settings.",
         "Games from other consoles can get their cover, year and description found for them, if you say yes the first time. A wrong one? Choose Find Details Again from its ••• menu. Find covers and details is in Settings.",
+        "Converted games get a critic score, popularity, year and genre when they finish, if Find covers and details is on. Find Details looks them up again; Edit Metadata lets you choose the right Wikidata page yourself. What you choose stays when the details refresh.",
         "Full screen: Control-Command-F. Quit: Command-Q, or hold the controller's Home button for 2 seconds. Save in the game first.",
         "Open a game's ••• menu and choose Play with Settings to change frame rate, resolution or language.",
     ]),

@@ -41,22 +41,65 @@ extension Model {
         }
     }
     // ---- critic scores, popularity and details from Wikidata (Meta.swift), for every kind of game ----
-    func findMeta(_ g: Game, force: Bool = false) {
+    func findMeta(_ g: Game, force: Bool = false, explicit: Bool = false) {
         let id = g.titleID.uppercased()
-        guard lookUp == true else { return }
-        if !force, let m = library.entry(id).meta, Date().timeIntervalSince(m.checked) < MetaLookup.fresh { return }
-        guard scoring.insert(id).inserted else { return }
-        let name = g.rom?.info?.name ?? g.name
-        MetaLookup.queue.async {
-            var m: Meta?
-            if MetaLookup.failed.map({ Date().timeIntervalSince($0) > 600 }) ?? true {   // after two failures in a row, the rest wait ten minutes
-                m = MetaLookup.find(name)
-                if m == nil { Thread.sleep(forTimeInterval: 35); m = MetaLookup.find(name) }   // turned away, or offline for a moment: once more
-                MetaLookup.failed = m == nil ? Date() : nil
-                Thread.sleep(forTimeInterval: MetaLookup.pause)
+        guard lookUp == true || explicit else { return }
+        switch MetaLookup.refresh(library.entry(id).meta, force: force) {
+        case .none: return
+        case .manual(let item):
+            let token = metaToken(id)
+            guard choosingMeta.insert(id).inserted else { return }
+            MetaLookup.interactive.async {
+                let m = MetaLookup.details(item)
+                DispatchQueue.main.async {
+                    self.choosingMeta.remove(id)
+                    guard var m, token == self.metaToken(id) else { return }
+                    m.manual = true
+                    self.library.edit(id) { $0.meta = m }
+                }
             }
-            DispatchQueue.main.async { self.scoring.remove(id); if let m { self.library.edit(id) { $0.meta = m } } }
+        case .automatic:
+            guard scoring.insert(id).inserted else { return }
+            let name = g.rom?.info?.name ?? g.name
+            MetaLookup.queue.async {
+                var m: Meta?
+                if MetaLookup.failed.map({ Date().timeIntervalSince($0) > 600 }) ?? true {   // after two failures in a row, the rest wait ten minutes
+                    m = MetaLookup.find(name)
+                    if m == nil { Thread.sleep(forTimeInterval: 35); m = MetaLookup.find(name) }   // turned away, or offline for a moment: once more
+                    MetaLookup.failed = m == nil ? Date() : nil
+                    Thread.sleep(forTimeInterval: MetaLookup.pause)
+                }
+                DispatchQueue.main.async {
+                    self.scoring.remove(id)
+                    // A player's choice made while this ran wins.
+                    if let m { self.library.edit(id) { e in if e.meta?.manual != true { e.meta = m } } }
+                }
+            }
         }
+    }
+    func metaToken(_ id: String) -> UUID { metaTokens[id] ?? { let t = UUID(); metaTokens[id] = t; return t }() }
+    // An explicit choice doesn't depend on the automatic-lookup setting: the player asked for this one.
+    func openMetaEditor(_ g: Game) { if !sheetUp { editingMeta = g } }
+    func chooseMeta(_ g: Game, _ c: MetaLookup.Choice) {
+        let id = g.titleID.uppercased(), token = metaToken(id)
+        guard choosingMeta.insert(id).inserted else { return }
+        MetaLookup.interactive.async {
+            let m = MetaLookup.details(c.item)
+            DispatchQueue.main.async {
+                self.choosingMeta.remove(id)
+                guard var m else { self.message = "Docked couldn't get details for \(c.name)."; return }
+                guard token == self.metaToken(id) else { return }
+                m.manual = true
+                self.library.edit(id) { $0.meta = m }
+            }
+        }
+    }
+    // The way back to Docked's own match, for a game where the player picked one by hand.
+    func useAutomaticMeta(_ g: Game) {
+        let id = g.titleID.uppercased()
+        metaTokens[id] = UUID()   // any choice still in flight is now out of date
+        library.edit(id) { if $0.meta != nil { $0.meta?.manual = false; $0.meta?.item = nil } }
+        findMeta(g, force: true, explicit: true)
     }
     // Settings' button: every game not looked up this month, one after another.
     func findMetaAll() { games.filter { !$0.missing }.forEach { findMeta($0) } }
@@ -144,6 +187,69 @@ struct GamePicker: View {
         let q = query.trimmingCharacters(in: .whitespaces); guard !q.isEmpty, let c = console(pick.rom.console) else { return }
         searching = true; found = []
         Lookup.queue.async { let r = (try? Lookup.search(q, c)) ?? []; DispatchQueue.main.async { found = r; searching = false } }
+    }
+}
+
+// Choosing the Wikidata page behind a converted game's critic score, popularity, year and genre
+struct MetaPicker: View {
+    @EnvironmentObject var model: Model
+    @Environment(\.dismiss) var dismiss
+    let game: Game
+    @State private var query: String
+    @State private var choices: [MetaLookup.Choice] = []
+    @State private var searching = false
+    @State private var problem: String?
+    init(game: Game) { self.game = game; _query = State(initialValue: game.name) }
+
+    var body: some View {
+        let chosen = model.library.entry(game.titleID).meta?.manual == true
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Edit Metadata").font(.title2.weight(.semibold))
+                Text("Choose the Wikidata page this game matches. Docked keeps your choice when it refreshes the details.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if chosen { Label("You are using a match you chose.", systemImage: "checkmark.circle").font(.caption).foregroundStyle(style.accent) }
+            }
+            HStack {
+                TextField("Game name", text: $query).textFieldStyle(.roundedBorder).onSubmit(search)
+                Button("Search", action: search).disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || searching)
+            }
+            if let problem { Text(problem).font(.callout).foregroundStyle(style.warn).fixedSize(horizontal: false, vertical: true) }
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(choices) { c in row(c) }
+                    if choices.isEmpty && !searching && problem == nil { Text("Nothing matched. Try fewer words, or the name it had in the shop.").font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 30) }
+                    if searching { ProgressView().controlSize(.small).padding(.top, 30) }
+                }
+            }.frame(height: 270)
+            Text("Wikidata and Wikipedia see only the name you search for. No game files are sent.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                if chosen { Button("Use Automatic Match") { model.useAutomaticMeta(game); dismiss() } }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }.padding(24).frame(width: 500).onAppear(perform: search)
+    }
+
+    func row(_ c: MetaLookup.Choice) -> some View {
+        Button { model.chooseMeta(game, c); dismiss() } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) { Text(c.name).foregroundStyle(style.text); if let d = c.detail { Text(d).font(.caption).foregroundStyle(style.soft).lineLimit(2) } }
+                Spacer(); Text("Use").font(.callout.weight(.medium)).foregroundStyle(style.accent)
+            }.padding(10).background(style.tile, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel("\(c.name)\(c.detail.map { ", \($0)" } ?? "")")
+    }
+
+    func search() {
+        let q = query.trimmingCharacters(in: .whitespaces); guard !q.isEmpty else { return }
+        searching = true; choices = []; problem = nil
+        MetaLookup.interactive.async {
+            let r = MetaLookup.search(q)
+            DispatchQueue.main.async {
+                searching = false
+                if r == nil { problem = "Docked couldn't reach Wikidata. Try again in a moment." }
+                else { choices = r ?? [] }
+            }
+        }
     }
 }
 
