@@ -852,6 +852,7 @@ final class Model: ObservableObject {
     // Once, when the window first appears. A failed look says nothing: being offline is not a problem worth a message.
     func windowAppeared() {
         guard !launched else { return }; launched = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
         for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers = [:]; self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
