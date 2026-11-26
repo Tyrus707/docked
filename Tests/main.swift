@@ -786,6 +786,25 @@ do {
     check(!fm.fileExists(atPath: b.path) && fm.fileExists(atPath: a.path) && !fm.fileExists(atPath: Artwork.found.appendingPathComponent("old-2.png").path) && fm.fileExists(atPath: Artwork.found.appendingPathComponent("snes-abc.png").path), "only leftovers removed")
 }
 
+// A converted game's own art stays on this Mac, so offloading it doesn't take its cover with it
+do {
+    let bundle = mk("Games/Icon.app/Contents/Info.plist").deletingLastPathComponent().deletingLastPathComponent()
+    try! fm.createDirectory(at: bundle.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
+    try! png(64, 64).write(to: bundle.appendingPathComponent("Contents/Resources/AppIcon.icns"))
+    check(Artwork.keepAppIcon("icon:game", from: bundle) && fm.fileExists(atPath: Artwork.appIcon("icon:game").path), "a game's own art is kept on this Mac")
+    let places = Dictionary(uniqueKeysWithValues: Artwork.survey(ids: ["ICON:GAME"]).map { ($0.id, $0) })
+    check(places["icons"]?.files == 1 && places["icons"]?.spare.isEmpty == true, "a kept icon isn't counted as leftover art")
+    let t1 = Artwork.tile("icon:game", from: "old"), t2 = Artwork.tile("icon:game", from: "new")
+    try! fm.createDirectory(at: Artwork.made, withIntermediateDirectories: true)
+    try! Data("old".utf8).write(to: t1); Thread.sleep(forTimeInterval: 1.1); try! Data("new".utf8).write(to: t2)
+    check(Artwork.newestTile("icon:game")?.lastPathComponent == t2.lastPathComponent, "a made cover can be found when the game's files are away")
+    let plain = Artwork.tile("icon:game", from: "plain")
+    try! Data("plain".utf8).write(to: plain)
+    check(Artwork.newestTile("icon:game", excluding: "plain")?.lastPathComponent == t2.lastPathComponent, "a plain placeholder never replaces real art")
+    Artwork.removeMade("icon:game")
+    check(!fm.fileExists(atPath: t1.path) && !fm.fileExists(atPath: t2.path) && fm.fileExists(atPath: Artwork.appIcon("icon:game").path), "clearing art drops made covers, not the kept icon")
+}
+
 
 // Offloading: a game goes to another folder whole and comes back to the same place
 do {

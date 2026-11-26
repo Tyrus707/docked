@@ -193,7 +193,7 @@ final class Model: ObservableObject {
         guard let n = (try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, n < 60_000_000, let i = NSImage(contentsOf: u), Cover.keep(i, at: Cover.custom(g)) else { message = "That picture couldn't be used."; return }
         forgetArt(g)
     }
-    func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); forgetArt(g) }
+    func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); Artwork.removeMade(g.titleID); forgetArt(g) }
     func hasArt(_ g: Game) -> Bool { FileManager.default.fileExists(atPath: Cover.custom(g).path) }
     func forgetArt(_ g: Game) { dropArt(g); reload() }
     func dropArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers.removeObject(forKey: g.id as NSString); coverReady() }
@@ -400,8 +400,14 @@ final class Model: ObservableObject {
     func icon(_ g: Game) -> NSImage {
         if let i = icons[g.id] { return i }
         if let r = g.rom { let i = Model.romIcon(r); icons[g.id] = i; return i }
-        let has = FileManager.default.fileExists(atPath: g.url.appendingPathComponent("Contents/Resources/AppIcon.icns").path)
-        let i = autoreleasepool { Cover.small(has ? NSWorkspace.shared.icon(forFile: g.url.path) : Model.plainIcon(), 256) }; icons[g.id] = i; return i   // the full-size art is let go at once
+        let fm = FileManager.default, saved = Artwork.appIcon(g.titleID)
+        let i: NSImage
+        if let art = fm.fileExists(atPath: saved.path) ? NSImage(contentsOf: saved) : nil { i = Cover.small(art, 256) }
+        else {
+            let has = fm.fileExists(atPath: g.url.appendingPathComponent("Contents/Resources/AppIcon.icns").path)
+            i = autoreleasepool { Cover.small(has ? NSWorkspace.shared.icon(forFile: g.url.path) : Model.plainIcon(), 256) }
+        }
+        icons[g.id] = i; return i   // the full-size art is let go at once
     }
 
     // A game's box art, cropped to a tile, or its console's colour and name
