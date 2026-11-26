@@ -24,9 +24,10 @@ struct Inspector: View {
                         Button { model.edit(game) { $0.favorite.toggle() } } label: { Image(systemName: e.favorite ? "heart.fill" : "heart").foregroundStyle(e.favorite ? style.accent : style.text).frame(width: 18, height: 24) }.controlSize(.large).help(e.favorite ? "Remove from Favorites" : "Favorite").accessibilityLabel(e.favorite ? "Remove from Favorites" : "Favorite")
                         Menu { GameActions(game: game, deleting: $deleting) } label: { Image(systemName: "ellipsis").frame(width: 18, height: 24) }.menuStyle(.button).buttonStyle(.bordered).menuIndicator(.hidden).fixedSize().controlSize(.large).help("More").accessibilityLabel("More")
                     }
+                    Stars(rating: e.rating) { n in model.edit(game) { $0.rating = $0.rating == n ? 0 : n } }
                     Picker("Progress", selection: .init(get: { e.status }, set: { v in model.edit(game) { $0.status = v } })) { ForEach(Entry.Status.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     VStack(alignment: .leading, spacing: 9) {
-                        fact("Played", playTimeText(e.seconds)); fact("Last played", e.lastPlayed == nil ? "Never" : lastPlayedText(e.lastPlayed).replacingOccurrences(of: "Played ", with: "").firstCapital); if e.added > .distantPast { fact("Added", e.added.formatted(date: .abbreviated, time: .omitted)) }
+                        fact("Played", playTimeText(e.seconds)); if e.plays > 0 { fact("Times played", "\(e.plays)") }; fact("Last played", e.lastPlayed == nil ? "Never" : lastPlayedText(e.lastPlayed).replacingOccurrences(of: "Played ", with: "").firstCapital); if e.added > .distantPast { fact("Added", e.added.formatted(date: .abbreviated, time: .omitted)) }
                         fact("Size", game.missing ? "Not available" : model.size(game).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Measuring…"); if let r = game.rom { fact("Plays in", RetroArch.core(console(r.console) ?? consoles[0]) == nil ? "RetroArch, set up when you first play" : "RetroArch") }
                         fact("In", (drive(of: game.url.path).map { "\($0.name), " } ?? "") + FileManager.default.displayName(atPath: game.url.deletingLastPathComponent().path)); if !e.collections.isEmpty { fact("Collections", e.collections.joined(separator: ", ")) }
                         if let i = game.rom?.info { if let d = i.developer { fact("Made by", d) }; if let p = i.publisher, p != i.developer { fact("Published by", p) }; if let g = i.genre { fact("Genre", g) } }
@@ -54,4 +55,22 @@ struct Inspector: View {
     }
     func fact(_ a: String, _ b: String) -> some View { HStack(alignment: .firstTextBaseline) { Text(a).foregroundStyle(style.soft); Spacer(minLength: 12); Text(b).foregroundStyle(style.text).multilineTextAlignment(.trailing) }.font(.callout).accessibilityElement(children: .combine) }
     func link(_ t: String, _ s: String, _ f: @escaping () -> Void) -> some View { Button(action: f) { Label(t, systemImage: s).font(.callout).foregroundStyle(style.accent).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }.buttonStyle(.plain) }
+}
+
+// The player's own rating: click a star to set it, the same star again to clear it.
+struct Stars: View {
+    let rating: Int
+    let set: (Int) -> Void
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("Rating").font(.callout).foregroundStyle(style.soft)
+            Spacer()
+            ForEach(1...5, id: \.self) { n in
+                Button { set(n) } label: { Image(systemName: n <= rating ? "star.fill" : "star").font(.system(size: 14)).foregroundStyle(n <= rating ? style.accent : style.soft).frame(width: 22, height: 22).contentShape(Rectangle()) }
+                    .buttonStyle(.plain).help(n == rating ? "Clear rating" : "\(n) star\(n == 1 ? "" : "s")")
+            }
+        }
+        .accessibilityElement(children: .ignore).accessibilityLabel("Rating").accessibilityValue(rating == 0 ? "Not rated" : "\(rating) of 5 stars")
+        .accessibilityAdjustableAction { d in switch d { case .increment: if rating < 5 { set(rating + 1) }; case .decrement: if rating > 0 { set(rating - 1) }; default: break } }
+    }
 }

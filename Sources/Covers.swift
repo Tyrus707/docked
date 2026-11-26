@@ -94,6 +94,7 @@ struct CoverTile: View {
     var favorite = false, running = false, note = ""
     var chosen = false
     let select: () -> Void, play: () -> Void
+    var fave: () -> Void = {}
     @ViewBuilder var actions: () -> AnyView
     @State private var over = false
     @State private var landed = true
@@ -118,8 +119,11 @@ struct CoverTile: View {
                     }.padding(.top, 8)
                 }.padding(.horizontal, 8).padding(.top, 8).frame(maxWidth: .infinity, alignment: .top).contentShape(Rectangle())
             }.buttonStyle(Press(still: still)).focused($focused).noFocusRing().simultaneousGesture(TapGesture(count: 2).onEnded(play)).accessibilityLabel(game.name).accessibilityAddTraits(chosen ? .isSelected : []).accessibilityAction(named: "Play", play)
-            Menu { actions() } label: { Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).frame(width: 28, height: 28).background(.black.opacity(0.5), in: Circle()).contentShape(Circle()) }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().padding(.trailing, 15).padding(.top, 15).opacity(lit ? 1 : 0).accessibilityLabel("More for \(game.name)").help("More")
+            HStack(spacing: 4) {
+                if lit { FaveButton(on: favorite, name: game.name, tint: .white, backed: true, action: fave) }
+                Menu { actions() } label: { Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).frame(width: 28, height: 28).background(.black.opacity(0.5), in: Circle()).contentShape(Circle()) }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().opacity(lit ? 1 : 0).accessibilityLabel("More for \(game.name)").help("More")
+            }.padding(.trailing, 15).padding(.top, 15)
         }
         .onHover { over = $0 }
         .animation(still ? nil : .easeOut(duration: 0.16), value: over)

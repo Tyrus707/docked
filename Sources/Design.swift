@@ -64,23 +64,25 @@ struct GameTile: View {
     private let look = style   // a new theme redraws the tile
     let game: Game, icon: NSImage
     var favorite = false, running = false, note = ""
-    var chosen = false
+    var chosen = false, small = false
     let select: () -> Void, play: () -> Void
+    var fave: () -> Void = {}
     @ViewBuilder var actions: () -> AnyView
     @State private var over = false
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var still
+    private var side: CGFloat { small ? 84 : 124 }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Button(action: select) {
                 VStack(spacing: 8) {
-                    Image(nsImage: icon).resizable().frame(width: 124, height: 124)
+                    Image(nsImage: icon).resizable().frame(width: side, height: side)
                         .overlay { if over { Button(action: play) { Image(systemName: "play.fill").font(.system(size: 20)).foregroundStyle(.white).padding(15).background(.black.opacity(0.62), in: Circle()).contentShape(Circle()) }.buttonStyle(.plain).help("Play \(game.name)").accessibilityLabel("Play \(game.name)") } }
                         .scaleEffect(over && !still ? 1.03 : 1)
-                    if style.shelf { Capsule().fill(style.line).frame(width: 128, height: 3) }
+                    if style.shelf { Capsule().fill(style.line).frame(width: side + 4, height: 3) }
                     VStack(spacing: 2) {
-                        Text(game.name).font(.body.weight(.medium)).foregroundStyle(style.text).lineLimit(2).multilineTextAlignment(.center)
+                        Text(game.name).font(small ? .callout.weight(.medium) : .body.weight(.medium)).foregroundStyle(style.text).lineLimit(2).multilineTextAlignment(.center)
                         HStack(spacing: 4) {
                             if running { Circle().fill(style.ok).frame(width: 7, height: 7).accessibilityHidden(true) }
                             if favorite { Image(systemName: "heart.fill").font(.system(size: 9)).foregroundStyle(style.accent).accessibilityLabel("Favorite") }
@@ -88,19 +90,35 @@ struct GameTile: View {
                         }
                     }
                 }
-                .padding(12).frame(maxWidth: .infinity, minHeight: 208, alignment: .top)
+                .padding(small ? 8 : 12).frame(maxWidth: .infinity, minHeight: small ? 150 : 208, alignment: .top)
                 .background(over || focused || chosen ? style.tile : .clear, in: RoundedRectangle(cornerRadius: 14))
                 .overlay { if focused || chosen { RoundedRectangle(cornerRadius: 14).strokeBorder(style.accent, lineWidth: 2) } }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain).focused($focused).noFocusRing().simultaneousGesture(TapGesture(count: 2).onEnded(play)).accessibilityLabel(game.name).accessibilityAddTraits(chosen ? .isSelected : []).accessibilityAction(named: "Play", play)
-            Menu { actions() } label: { Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(style.text).frame(width: 28, height: 28).contentShape(Circle()) }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().padding(6)
-                .opacity(over || focused ? 1 : 0.45).accessibilityLabel("More for \(game.name)").help("More")
+            HStack(spacing: 0) {
+                if over || focused { FaveButton(on: favorite, name: game.name, tint: style.text, action: fave) }
+                Menu { actions() } label: { Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(style.text).frame(width: 28, height: 28).contentShape(Circle()) }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    .opacity(over || focused ? 1 : 0.45).accessibilityLabel("More for \(game.name)").help("More")
+            }.padding(6)
         }
         .onHover { over = $0 }
         .animation(still ? nil : .easeOut(duration: 0.14), value: over)
         .contextMenu { actions() }
+    }
+}
+
+// The heart beside a tile's ••• button, shown while the pointer is over it: one click to favorite, or to take it back.
+struct FaveButton: View {
+    let on: Bool, name: String, tint: Color
+    var backed = false
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: on ? "heart.fill" : "heart").font(.system(size: 12, weight: .semibold)).foregroundStyle(on ? style.accent : tint)
+                .frame(width: 28, height: 28).background { if backed { Circle().fill(.black.opacity(0.5)) } }.contentShape(Circle())
+        }.buttonStyle(.plain).help(on ? "Remove from Favorites" : "Favorite").accessibilityLabel(on ? "Remove \(name) from Favorites" : "Favorite \(name)")
     }
 }
 

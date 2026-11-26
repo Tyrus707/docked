@@ -68,6 +68,8 @@ final class Model: ObservableObject {
     @Published var section = Section.home
     @Published var search = ""
     @Published var sort = SortBy(rawValue: UserDefaults.standard.string(forKey: "sort") ?? "") ?? .recent { didSet { UserDefaults.standard.set(sort.rawValue, forKey: "sort") } }
+    @Published var group = GroupBy(rawValue: UserDefaults.standard.string(forKey: "group") ?? "") ?? .auto { didSet { UserDefaults.standard.set(group.rawValue, forKey: "group") } }
+    @Published var compact = UserDefaults.standard.bool(forKey: "compact") { didSet { UserDefaults.standard.set(compact, forKey: "compact") } }
     @Published var collecting: Game?
     @Published var renaming: String?
     @Published var runningIDs = Set<String>()
@@ -719,10 +721,19 @@ final class Model: ObservableObject {
     @Published var editing: SmartCollection?
     @Published var tuning: Game?   // the game whose Game Settings sheet is open
     var rows: [(id: String, games: [String])] {
-        if section != .home || !search.isEmpty { return [("grid", shown(section == .home ? .all : section, by: sort).map(\.id))] }
+        if section != .home || !search.isEmpty { return ((jumpBack(columns).isEmpty ? [] : [(Self.jumpRow, jumpBack(columns))]) + gridGroups).map { (id: $0.0, games: $0.1.map(\.id)) } }
         var r: [(String, [String])] = [("recent", shown(.all, by: .recent).prefix(5).map(\.id)), ("Favorites", shown(.favorites).map(\.id))]
         for c in consolesShown { r.append((c.name, shown(.console(c.id)).map(\.id))) }; for c in library.collections { r.append((c, shown(.collection(c)).map(\.id))) }
         return r.map { (id: $0.0, games: $0.1) }
+    }
+    // The open section as it is drawn: its games in runs (one untitled run when not grouped), and a short row of the ones played lately above a long console's list.
+    static let jumpRow = "Jump Back In"
+    var gridList: [Game] { shown(section == .home ? .all : section, by: sort) }
+    var gridGroups: [(String, [Game])] { library.groups(gridList, by: group, sort: sort).map { ($0.title.isEmpty ? "grid" : $0.title, $0.games) } }
+    func jumpBack(_ n: Int) -> [Game] {
+        guard search.isEmpty, case .console = section, sort != .recent else { return [] }
+        let l = gridList; guard l.count >= GroupBy.enough else { return [] }
+        return Array(library.show(l, in: .all, by: .recent).prefix { library.entry($0.titleID).lastPlayed != nil }.prefix(max(n, 1)))   // one line of the grid, so it moves like one
     }
     var sections: [Section] { [.home, .all, .favorites] + consolesShown.map { .console($0.id) } + [.status(.playing), .status(.finished), .status(.aside), .status(.none)] + library.collections.map { .collection($0) } + library.smart.map { .smart($0) } }
     // ---- Couch Mode (Couch.swift) ----

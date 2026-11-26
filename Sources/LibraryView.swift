@@ -146,25 +146,43 @@ struct Grid: View {
     @EnvironmentObject var model: Model
     @Binding var deleting: Game?
     var body: some View {
-        let list = model.shown(model.section == .home ? .all : model.section, by: model.sort)
-        GeometryReader { geo in ScrollViewReader { p in ScrollView {
+        let list = model.gridList, groups = model.gridGroups
+        GeometryReader { geo in let back = model.jumpBack(perRow(geo.size.width)); ScrollViewReader { p in ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(model.search.isEmpty ? model.section.title : "Search").font(.title2.weight(.semibold)).foregroundStyle(style.text).accessibilityAddTraits(.isHeader)
                     Text("\(list.count)").foregroundStyle(style.soft).monospacedDigit()
                     Spacer()
-                    Menu { Picker("Sort by", selection: $model.sort) { ForEach(SortBy.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.inline) } label: { Text(model.sort.rawValue) }.menuStyle(.button).buttonStyle(.plain).fixedSize().foregroundStyle(style.accent).accessibilityLabel("Sort by \(model.sort.rawValue)")
+                    Menu {
+                        Picker("Sort by", selection: $model.sort) { ForEach(SortBy.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.inline)
+                        Picker("Group by", selection: $model.group) { ForEach(GroupBy.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.inline)
+                        Divider()
+                        Toggle("Compact Tiles", isOn: $model.compact)
+                    } label: { Text(model.sort.title) }.menuStyle(.button).buttonStyle(.plain).fixedSize().foregroundStyle(style.accent).accessibilityLabel("Sort by \(model.sort.title)").help("Sort, group and tile size")
                 }
                 if list.isEmpty && !(model.converting && model.section == .all) { blank }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 156, maximum: 200), spacing: 10, alignment: .top)], alignment: .leading, spacing: 10) {
-                    if model.converting && model.section == .all && model.search.isEmpty { ArrivingTile() }
-                    ForEach(list) { Tile(game: $0, deleting: $deleting, row: "grid").id($0.id) }
-                }
+                if !back.isEmpty { run(Model.jumpRow, back, arriving: false) }
+                ForEach(groups, id: \.0) { g in run(g.0, g.1, arriving: g.0 == groups.first?.0) }
             }.padding(22)
-        }.whenChanged(model.cursor) { if let c = model.cursor, c.row == "grid" { withAnimation(.easeOut(duration: 0.15)) { p.scrollTo(c.game) } } } }
-            .onAppear { model.columns = perRow(geo.size.width) }.whenChanged(geo.size.width) { model.columns = perRow(geo.size.width) } }
+        }.whenChanged(model.cursor) { if let c = model.cursor { withAnimation(.easeOut(duration: 0.15)) { p.scrollTo("\(c.row)|\(c.game)") } } } }
+            .onAppear { model.columns = perRow(geo.size.width) }.whenChanged(geo.size.width) { model.columns = perRow(geo.size.width) }.whenChanged(model.compact) { model.columns = perRow(geo.size.width) } }
     }
-    func perRow(_ w: CGFloat) -> Int { max(1, Int((w - 44 + 10) / (156 + 10))) }   // as the grid folds
+    var tile: CGFloat { model.compact ? 112 : 156 }
+    // One run of the grid, under its own heading when it has one ("grid" is the untitled whole list).
+    @ViewBuilder func run(_ row: String, _ l: [Game], arriving: Bool) -> some View {
+        if row != "grid" {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(row).font(.headline).foregroundStyle(row == Model.jumpRow ? style.accent : style.text).accessibilityAddTraits(.isHeader)
+                Text("\(l.count)").font(.callout).foregroundStyle(style.soft).monospacedDigit()
+                Rectangle().fill(style.line).frame(height: 1).padding(.leading, 4).alignmentGuide(.firstTextBaseline) { $0[.bottom] + 4 }
+            }.padding(.top, 8)
+        }
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: tile, maximum: tile + 44), spacing: 10, alignment: .top)], alignment: .leading, spacing: 10) {
+            if arriving && model.converting && model.section == .all && model.search.isEmpty { ArrivingTile() }
+            ForEach(l) { Tile(game: $0, deleting: $deleting, row: row, small: model.compact).id("\(row)|\($0.id)") }
+        }
+    }
+    func perRow(_ w: CGFloat) -> Int { max(1, Int((w - 44 + 10) / (tile + 10))) }   // as the grid folds
     var blank: some View {
         VStack(spacing: 8) {
             DPad().fill(style.line).frame(width: 34, height: 34).accessibilityHidden(true)
@@ -189,12 +207,13 @@ struct Tile: View {
     let game: Game
     @Binding var deleting: Game?
     var row = ""
+    var small = false
     var body: some View {
         let e = model.library.entry(game.titleID)
         let note = game.missing ? whereMissing(game.url.path) : model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
         Group {
-            if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
-            else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
+            if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
+            else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), small: small, select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
         }.opacity(game.missing ? 0.5 : 1).onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
     }
 }
@@ -210,6 +229,7 @@ struct GameActions: View {
         if game.rom == nil { Button("Game Settings…") { model.openSettings(game) }.disabled(game.missing); Button("Play with Settings…") { model.play(game, settings: true) } }
         Divider()
         Button(e.favorite ? "Remove from Favorites" : "Favorite") { model.edit(game) { $0.favorite.toggle() } }
+        Menu("Rating") { ForEach([5, 4, 3, 2, 1], id: \.self) { n in Toggle(String(repeating: "★", count: n), isOn: .init(get: { e.rating == n }, set: { on in model.edit(game) { $0.rating = on ? n : 0 } })) }; Divider(); Button("No Rating") { model.edit(game) { $0.rating = 0 } }.disabled(e.rating == 0) }
         Menu("Progress") { ForEach(Entry.Status.allCases, id: \.self) { s in Toggle(s.rawValue, isOn: .init(get: { e.status == s }, set: { if $0 { model.edit(game) { $0.status = s } } })) } }
         Menu("Collections") {
             ForEach(model.library.collections, id: \.self) { c in Toggle(c, isOn: .init(get: { e.collections.contains(c) }, set: { on in model.edit(game) { on ? $0.collections.append(c) : $0.collections.removeAll { $0 == c } } })) }

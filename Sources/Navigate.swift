@@ -12,7 +12,13 @@ func step(_ c: Cursor?, _ m: Move, rows: [(id: String, games: [String])], column
     let l = rows[r].games
     func at(_ r: Int, _ i: Int) -> Cursor { let g = rows[r].games; return Cursor(row: rows[r].id, game: g[min(max(i, 0), g.count - 1)]) }
     if let n = columns, n > 0 {
-        switch m { case .left: return at(r, i - 1); case .right: return at(r, i + 1); case .up: return i - n >= 0 ? at(r, i - n) : c; case .down: return i + n < l.count ? at(r, i + n) : i / n < (l.count - 1) / n ? at(r, l.count - 1) : c; default: return c }
+        // Several lists folded the same way, one under another (a grid in groups): up and down cross into the next one, in the same column.
+        switch m {
+        case .left: return at(r, i - 1); case .right: return at(r, i + 1)
+        case .up: return i - n >= 0 ? at(r, i - n) : r > 0 ? at(r - 1, (rows[r - 1].games.count - 1) / n * n + i % n) : c
+        case .down: return i + n < l.count ? at(r, i + n) : i / n < (l.count - 1) / n ? at(r, l.count - 1) : r < rows.count - 1 ? at(r + 1, i % n) : c
+        default: return c
+        }
     }
     switch m { case .left: return at(r, i - 1); case .right: return at(r, i + 1); case .up: return r > 0 ? at(r - 1, i) : c; case .down: return r < rows.count - 1 ? at(r + 1, i) : c; default: return c }
 }
