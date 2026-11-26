@@ -74,9 +74,9 @@ final class Model: ObservableObject {
     @Published var section = Section.home
     @Published var search = "" { didSet { if search != oldValue { memo = Memo() } } }
     // Each shelf's games, sorted, and each section's count, worked out once until the games or the library change: a big library is never sorted again just to redraw
-    private struct Memo { var shown: [ShownKey: [Game]] = [:]; var counts: [Section: Int] = [:] }
-    private struct ShownKey: Hashable { let section: Section, by: SortBy }
-    private var memo = Memo()
+    struct Memo { fileprivate var shown: [ShownKey: [Game]] = [:]; fileprivate var counts: [Section: Int] = [:]; var couch: [CouchShelf]? }
+    fileprivate struct ShownKey: Hashable { let section: Section, by: SortBy }
+    var memo = Memo()   // let go whenever the games, the library or the search change
     // Saved a moment after the last change, off the main thread, and at once when Docked quits: a thousand covers found in a row is one write, not a thousand
     private var saveLater: DispatchWorkItem?
     private static let saver = DispatchQueue(label: "library-save", qos: .utility)
@@ -218,7 +218,7 @@ final class Model: ObservableObject {
     func dropped(_ urls: [URL], on g: Game) { if urls.count == 1, pictureTypes.contains(urls[0].pathExtension.lowercased()) { setArt(g, urls[0]) } else if urls.count == 1, soundTypes.contains(urls[0].pathExtension.lowercased()) { setTheme(g, urls[0]) } else { add(urls) } }
     let covers: NSCache<NSString, NSImage> = { let c = NSCache<NSString, NSImage>(); c.totalCostLimit = 220 << 20; return c }()   // about 500 covers; the rest load again from disk
     private var making = Set<String>()
-    @Published private var coverTick = 0
+    @Published private(set) var coverTick = 0
     private var tickSoon = false
     // Made or loaded in the background the first time it is wanted; the tile waits with a plain one.
     func cover(_ g: Game) -> NSImage? {
