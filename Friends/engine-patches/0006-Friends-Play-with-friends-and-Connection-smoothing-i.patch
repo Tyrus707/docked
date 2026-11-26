@@ -1,7 +1,7 @@
-From a63827e412c97943eb2eda88306f51c1ce08eda4 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 16:35:31 +0000
-Subject: [PATCH 6/6] Friends: Play with friends and Connection smoothing in
+Subject: [PATCH 6/8] Friends: Play with friends and Connection smoothing in
  each game's settings; the circle Docked keeps works for every game
 
 ---
@@ -12,7 +12,7 @@ Subject: [PATCH 6/6] Friends: Play with friends and Connection smoothing in
  4 files changed, 12 insertions(+), 1 deletion(-)
 
 diff --git a/dm/games/settings.tsv b/dm/games/settings.tsv
-index cc4f3ff..85b6224 100644
+index cc4f3ff0..85b62246 100644
 --- a/dm/games/settings.tsv
 +++ b/dm/games/settings.tsv
 @@ -42,3 +42,5 @@ DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	Pipeline prebuild	The first st
@@ -22,7 +22,7 @@ index cc4f3ff..85b6224 100644
 +DM_FRIENDS	toggle	-	0	platform:mac	Game	Play with friends	Local wireless play reaches your Docked friends over the internet. Friends you play with see this Mac's internet address.	level=basic
 +DM_FRIENDS_CUSHION_MS	choice	0=Off,4=Light,12=Medium,25=Strong	4	platform:mac	Game	Connection smoothing	Holds packets back to even out a bumpy connection, which adds delay. Keep it light for fighting and racing games.	needs=DM_FRIENDS=1
 diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
-index b74a0bd..cc363a8 100644
+index b74a0bd1..cc363a85 100644
 --- a/dm/host/hle_friends_link.c
 +++ b/dm/host/hle_friends_link.c
 @@ -21,6 +21,7 @@ void boot(void) {
@@ -34,7 +34,7 @@ index b74a0bd..cc363a8 100644
      if (!r && !getenv("DM_NICK")) { static fi_view v; fi_snapshot(&v); if (v.name[0]) { size_t n = strlen(v.name); if (n > 31) { n = 31; while (n && ((unsigned char)v.name[n] & 0xC0) == 0x80) n--; v.name[n] = 0; } setenv("DM_NICK", v.name, 1); } }
  }
 diff --git a/dm/tools/tests/test_launcher_settings.py b/dm/tools/tests/test_launcher_settings.py
-index 25feee6..f00c1ab 100644
+index 25feee67..f00c1abc 100644
 --- a/dm/tools/tests/test_launcher_settings.py
 +++ b/dm/tools/tests/test_launcher_settings.py
 @@ -77,7 +77,7 @@ class LauncherSettingsTests(unittest.TestCase):
@@ -47,7 +47,7 @@ index 25feee6..f00c1ab 100644
          self.assertNotIn('DM_NVN_ANISO', build('010014E00DB56000', 'gl', 'mac'))
          s = mac['DM_FULLSCREEN']
 diff --git a/docs/env_switches.tsv b/docs/env_switches.tsv
-index 0a12fd1..233de0b 100644
+index 7e5d4758..0ec2c7c4 100644
 --- a/docs/env_switches.tsv
 +++ b/docs/env_switches.tsv
 @@ -54,6 +54,14 @@ DM_FORCE_STRICT	diagnostic	`=1` makes the loader fail on forced-hook entries no
@@ -65,6 +65,3 @@ index 0a12fd1..233de0b 100644
  DM_FS	diagnostic	When set, logs file opens, paths not found or not mounted, and a read summary every 64 MiB or 1000 reads
  DM_FSLOG	diagnostic	`=<file>` writes one TSV line per ReadFile: seconds since boot, guest path, offset, length and guest buffer address
  DM_FSLOG_HASH	diagnostic	With `DM_FSLOG`, adds a column with the FNV-1a 64 hash of the bytes read
--- 
-2.43.0
-

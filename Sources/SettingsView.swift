@@ -11,17 +11,23 @@ struct SettingsSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
-            Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
+            ScrollView {
+                Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tools: tools } }
+                    .frame(maxWidth: .infinity, alignment: .topLeading).padding(.leading, 2).padding(.trailing, 14).padding(.vertical, 4)
+            }.frame(height: 470)
+            Divider()
             HStack { Button("How to Use Docked") { model.leaveSettings { model.showHelp = true } }; Button("Release Notes") { model.leaveSettings { model.showReleaseNotes = true } }; Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button) }
-        }.padding(24).frame(width: 520).background(AllowQuit()).background(Backdrop())
+        }.padding(24).frame(width: 660).background(AllowQuit()).background(Backdrop())
     }
-    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { settingsRow(t, d, c) }
     func flip(_ t: String, _ d: String, _ b: Binding<Bool>) -> some View { line(t, d) { Toggle(t, isOn: b).labelsHidden().toggleStyle(.switch).tint(style.button) } }
     @ViewBuilder var general: some View {
         VStack(spacing: 14) {
-            line("Theme", "Docked keeps its own look, whatever your Mac's light or dark setting.") {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(60), spacing: 8), count: 5), spacing: 10) { ForEach(Style.all) { t in ThemeSwatch(theme: t, on: model.palette == t) { model.palette = t } } }.fixedSize()
-            }
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) { Text("Theme"); Text("Docked keeps its own look, whatever your Mac's light or dark setting.").font(.caption).foregroundStyle(.secondary) }
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(84), spacing: 12), count: 6), alignment: .leading, spacing: 12) { ForEach(Style.all) { t in ThemeSwatch(theme: t, on: model.palette == t) { model.palette = t } } }.fixedSize()
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Divider()
             line("Show games as", "") { Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
             flip("Open filling the screen", "A window as big as the screen, without a separate Space. From the next time Docked opens.", $model.fullScreen)
             flip("Play other consoles full screen", "Retro games fill the whole screen. Off: a window as big as the screen. Press F in a game to switch.", .init(get: { RetroArch.fullScreen }, set: { RetroArch.fullScreen = $0; model.objectWillChange.send() }))
@@ -34,8 +40,9 @@ struct SettingsSheet: View {
                 if !model.scoring.isEmpty { ProgressView().controlSize(.small) }
                 Button("Find for All Games") { model.lookUpAll(); model.findMetaAll() }.disabled(model.lookUp != true || !model.scoring.isEmpty)
             }
-            flip("Check for updates at launch", "Asks GitHub for the newest version numbers of Docked and its engine. Nothing else is sent.", $model.updatesAtLaunch)
-            line("Updates", "") { if model.checkingUpdate { ProgressView().controlSize(.small) }; Button("Check Now") { model.leaveSettings { model.lookForUpdate() } }.disabled(model.checkingUpdate) }
+            Divider()
+            line("Updates", "Asks GitHub for the newest version numbers of Docked and its engine. Nothing else is sent.") { if model.checkingUpdate { ProgressView().controlSize(.small) }; Button("Check Now") { model.leaveSettings { model.lookForUpdate() } }.disabled(model.checkingUpdate) }
+            flip("Check for updates at launch", "", $model.updatesAtLaunch)
         }
     }
     @ViewBuilder var converting: some View {
@@ -78,6 +85,15 @@ struct SettingsSheet: View {
 }
 
 // A game has arrived: its cover comes down, and what comes next is right there.
+/// One Settings row: title and description on the left, wrapping to fit; the control on the right at its natural size.
+func settingsRow<C: View>(_ t: String, _ d: String, _ c: () -> C) -> some View {
+    HStack(alignment: .center, spacing: 20) {
+        VStack(alignment: .leading, spacing: 2) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        c().fixedSize()
+    }
+}
+
 struct FinishCard: View {
     @EnvironmentObject var model: Model
     let game: Game
@@ -128,7 +144,7 @@ struct RetroSettings: View {
     @State private var busy = false
     @State private var note: String?
     @State private var pads = Pads.installed
-    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { settingsRow(t, d, c) }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let u = Cheevos.user, Cheevos.signedIn {
@@ -180,7 +196,7 @@ struct FriendsSettings: View {
     @State private var airDrop = UserDefaults.standard.string(forKey: "friends.airDrop") ?? ""
     @State private var share: URL?   // a copy made once, for AirDrop, Messages or Mail
     @State private var note: String?
-    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { settingsRow(t, d, c) }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             line("Friends circle", ready ? "Connected through \(Friends.meetingPoint ?? "your meeting point"). To add friends, open a game's Friends screen (Friends menu, or click both sticks) and swap codes." : "Play local wireless games with friends over the internet. Add the friends pass you were sent: AirDrop and Messages save it to Downloads.") {

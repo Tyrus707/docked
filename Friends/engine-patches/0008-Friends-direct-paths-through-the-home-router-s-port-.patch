@@ -1,16 +1,16 @@
-From 286ffc027bc770ee60d27e43d76f390838b89291 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
 Date: Thu, 26 Nov 2026 16:49:58 +0000
-Subject: [PATCH] Friends: direct paths through the home router's port mapping
- (NAT-PMP/PCP), and the socket errors games can meet mapped
+Subject: [PATCH 8/8] Friends: direct paths through the home router's port
+ mapping (NAT-PMP/PCP), and the socket errors games can meet mapped
 
 ---
- dm/host/friends_path.c | 44 +++++++++++++++++++++++++++++++++++++++++-
+ dm/host/friends_path.c | 42 ++++++++++++++++++++++++++++++++++++++++++
  dm/host/hle_net.c      |  2 +-
- 2 files changed, 44 insertions(+), 2 deletions(-)
+ 2 files changed, 43 insertions(+), 1 deletion(-)
 
 diff --git a/dm/host/friends_path.c b/dm/host/friends_path.c
-index 1b1acdd..dc01135 100644
+index 1b1acdd7..a225e33e 100644
 --- a/dm/host/friends_path.c
 +++ b/dm/host/friends_path.c
 @@ -7,6 +7,8 @@
@@ -22,13 +22,11 @@ index 1b1acdd..dc01135 100644
  #include <netdb.h>
  #include <pthread.h>
  #include <stdio.h>
-@@ -29,7 +31,8 @@ typedef struct { uint8_t tid[12]; uint64_t sent; int tries, method; } txn;
- typedef struct { addr a; uint64_t asked, ok; uint16_t chan; int slot, asks, chan_asks; uint64_t chan_asked, chan_ok; uint8_t tid_p[12], tid_c[12]; } permit;
+@@ -30,6 +32,7 @@ typedef struct { addr a; uint64_t asked, ok; uint16_t chan; int slot, asks, chan
  struct friends_path {
      pthread_mutex_t m; pthread_t th; int refs, fd[2], kq, stop, dirty; fp_hooks h; char stun_name[128], turn_name[128]; session s[FP_SLOTS]; fp_stats st;   // fd 0: IPv4, 1: IPv6
--    fp_cand mine[FP_CANDS]; int nmine; addr stun[2], turn[2]; txn bind[2]; addr mapped[2]; uint64_t ifs_at; struct in_addr ips[NETS], masks[NETS]; int nets;
-+    fp_cand mine[FP_CANDS]; int nmine; addr stun[2], turn[2]; txn bind[2]; addr mapped[2];
-+    struct in_addr pmp_gw, pmp_ip; uint16_t pmp_port; int pmp_tries; uint64_t pmp_at, pmp_until; addr pmp;   // the home router's own port mapping (NAT-PMP / PCP), when it offers one uint64_t ifs_at; struct in_addr ips[NETS], masks[NETS]; int nets;
+     fp_cand mine[FP_CANDS]; int nmine; addr stun[2], turn[2]; txn bind[2]; addr mapped[2]; uint64_t ifs_at; struct in_addr ips[NETS], masks[NETS]; int nets;
++    struct in_addr pmp_gw, pmp_ip; uint16_t pmp_port; int pmp_tries; uint64_t pmp_at, pmp_until; addr pmp;   // the home router's own port mapping (NAT-PMP / PCP), when it offers one
      int relay_on; char user[256], pass[256], realm[128], nonce[256]; uint8_t tkey[16]; int have_key, relay_up, relay_fam, relay_fail; addr relayed; txn alloc; uint64_t alloc_at, refresh_at; permit pm[PERMITS]; int npm; uint16_t chan_next;
  };
  static uint64_t us(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000; }
@@ -95,7 +93,7 @@ index 1b1acdd..dc01135 100644
      if (f->relay_up && n >= 4 && b[0] >= 0x40 && b[0] <= 0x7F && same_addr(from, turn_srv(f))) { uint16_t ch = (uint16_t)(b[0] << 8 | b[1]); size_t l = (size_t)b[2] << 8 | b[3]; if (l + 4 > n) return; for (int i = 0; i < f->npm; i++) if (f->pm[i].chan == ch) { addr a = f->pm[i].a; on_friend(f, b + 4, l, &a, 1, plain, slot, pn); return; } return; }
      on_friend(f, b, n, from, 0, plain, slot, pn);
 diff --git a/dm/host/hle_net.c b/dm/host/hle_net.c
-index 716aae7..00b6620 100644
+index 716aae70..00b66201 100644
 --- a/dm/host/hle_net.c
 +++ b/dm/host/hle_net.c
 @@ -46,7 +46,7 @@ static int sk_fail(void) { return sk_error(SK_ENETDOWN); }
@@ -107,6 +105,3 @@ index 716aae7..00b6620 100644
  }
  #define SKF(m, cname, ...) HLE_FORCE(m, "local BSD descriptor service; remote networking unavailable", int, cname, __VA_ARGS__)
  void dm_guest_sleep_ns(int64_t ns);
--- 
-2.43.0
-
