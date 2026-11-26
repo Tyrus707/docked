@@ -148,7 +148,7 @@ struct Grid: View {
     @State private var confirm: [Game]?
     var body: some View {
         let list = model.gridList, groups = model.gridGroups
-        let lost = list.filter { $0.missing && drive(of: $0.url.path)?.connected != false }   // can't be found, and not because a drive is away
+        let lost = list.filter { $0.missing && $0.away == nil && drive(of: $0.url.path)?.connected != false }   // can't be found, and not because a drive is away
         GeometryReader { geo in let back = model.marking ? [] : model.jumpBack(perRow(geo.size.width)); ScrollViewReader { p in ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline, spacing: 14) {
@@ -184,7 +184,10 @@ struct Grid: View {
             Text(n == 0 ? "Click games to choose them" : "\(n) chosen").foregroundStyle(style.text).monospacedDigit()
             Spacer()
             Button(n == list.count ? "Choose None" : "Choose All") { model.marked = n == list.count ? [] : Set(list.map(\.id)) }
-            Button("Remove from Library") { confirm = list.filter { model.marked.contains($0.id) } }.disabled(n == 0).tint(style.button)
+            let chosen = list.filter { model.marked.contains($0.id) }
+            Button("Offload") { model.offload(chosen); model.marking = false }.disabled(!chosen.contains { !$0.missing && $0.away == nil }).help("Free space: move them to iCloud Drive, another cloud folder or a drive")
+            Button("Download") { model.download(chosen); model.marking = false }.disabled(!chosen.contains { $0.away != nil })
+            Button("Remove from Library") { confirm = chosen }.disabled(n == 0).tint(style.button)
             Button("Done") { model.marking = false }
         }.padding(.horizontal, 18).padding(.vertical, 10).background(style.tile.opacity(0.97)).overlay(alignment: .top) { Rectangle().fill(style.line).frame(height: 1) }
     }
@@ -236,11 +239,13 @@ struct Tile: View {
     var small = false
     var body: some View {
         let e = model.library.entry(game.titleID)
-        let note = game.missing ? whereMissing(game.url.path) : model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
+        let note = game.away.map { "Offloaded to " + offloadName($0) } ?? (game.missing ? whereMissing(game.url.path) : model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID)))
         Group {
             if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
             else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), small: small, select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
-        }.opacity(game.missing ? 0.5 : 1).onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
+        }.opacity(game.away != nil ? 0.78 : game.missing ? 0.5 : 1)
+        .overlay(alignment: .topTrailing) { if game.away != nil, !model.marking { Image(systemName: "icloud.and.arrow.down").font(.system(size: small || model.compact ? 12 : 15, weight: .semibold)).foregroundStyle(.white).padding(6).background(.black.opacity(0.55), in: Circle()).padding(8).help("Offloaded. Play or Download brings it back.").accessibilityLabel("Offloaded") } }
+        .onDrop(of: [.fileURL], isTargeted: nil) { loadDropped($0) { model.dropped($0, on: game) }; return true }
         .overlay { if model.marking { Mark(on: model.marked.contains(game.id)).contentShape(Rectangle()).onTapGesture { model.mark(game) }.accessibilityElement().accessibilityLabel(game.name).accessibilityAddTraits(model.marked.contains(game.id) ? [.isButton, .isSelected] : .isButton) } }
     }
 }
@@ -260,8 +265,9 @@ struct GameActions: View {
     @Binding var deleting: Game?
     var body: some View {
         let e = model.library.entry(game.titleID)
-        if game.missing { Button("Locate…") { model.locate(game) }; Button("Remove from Library") { model.forget(game) }; Divider() }
-        Button("Play") { model.play(game) }.disabled(game.missing)
+        if game.away != nil { Button("Download") { model.download([game]) }; Button("Remove from Library") { model.forget(game) }; Divider() }
+        else if game.missing { Button("Locate…") { model.locate(game) }; Button("Remove from Library") { model.forget(game) }; Divider() }
+        Button("Play") { model.play(game) }.disabled(game.missing && game.away == nil)
         if game.rom == nil { Button("Game Settings…") { model.openSettings(game) }.disabled(game.missing); Button("Play with Settings…") { model.play(game, settings: true) } }
         Divider()
         Button(e.favorite ? "Remove from Favorites" : "Favorite") { model.edit(game) { $0.favorite.toggle() } }
@@ -277,9 +283,10 @@ struct GameActions: View {
         if game.rom == nil { Button("Add Update or DLC…") { model.addTo(game) }; Button("Move to Folder…") { model.moveGame(game) } }
         else { Button("Rename…") { model.retitling = game }; if let r = game.rom { Button(r.info == nil ? "Find Cover and Details…" : "Find Details Again…") { model.find(r.id, byHand: true) }.disabled(model.finding.contains(r.id)) } }
         Button("Choose Cover…") { model.pickArt(game) }; if model.hasArt(game) { Button("Use Original Cover") { model.clearArt(game) } }
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.url]) }.disabled(game.missing)
+        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.away.map { URL(fileURLWithPath: $0) } ?? game.url]) }.disabled(game.missing && game.away == nil)
         if !game.missing {
             Divider()
+            Button("Offload") { model.offload([game]) }.help("Move it to iCloud Drive, another cloud folder or a drive, to free space. Its tile and saves stay.")
             if game.rom == nil { Button("Clean Up…") { model.cleanUp(game) }; if !model.inLibrary(game.url) { Button("Remove from Library") { model.forget(game) } }; Button("Move Game to Trash…") { deleting = game } }
             else { Button("Remove from Library") { model.removeRom(game) } }
         }

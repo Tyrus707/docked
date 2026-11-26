@@ -239,7 +239,8 @@ final class Model: ObservableObject {
     func clearTheme(_ g: Game) { theme.stop(0.2); Theme.remove(g); objectWillChange.send() }
     var chosen: Game? { selected.flatMap { id in games.first { $0.id == id } } }
     func select(_ g: Game) { if cursor != nil, cursor?.game != g.id { cursor = nil }; if selected != g.id { selected = g.id } }   // a second click of a double-click must not close it again
-    private var sizes: [String: Int64] = [:], noted: [String: [String]] = [:]
+    var sizes: [String: Int64] = [:]
+    private var noted: [String: [String]] = [:]
     func notes(_ g: Game) -> [String] { if let n = noted[g.titleID] { return n }; let n = GameNotes.of(g.titleID); noted[g.titleID] = n; return n }
     func size(_ g: Game) -> Int64? {
         if let s = sizes[g.id] { return s }
@@ -487,8 +488,12 @@ final class Model: ObservableObject {
         found += l.settle(found: found)
         var all = found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         all += l.roms.map { Game(url: URL(fileURLWithPath: $0.path), name: $0.name, titleID: $0.id, rom: $0, missing: !FileManager.default.fileExists(atPath: $0.path)) }
+        // An offloaded game is away, not deleted. One whose file is back here by other means is just here.
+        let fm = FileManager.default
+        for (home, _) in l.offloaded where fm.fileExists(atPath: home) { l.offloaded[home] = nil }
+        for i in all.indices where all[i].missing { all[i].away = l.offloaded[all[i].url.path] }
         let busy = moving != nil || filing != nil || removing
-        let deleted = busy ? [] : all.filter { $0.missing && deletedFile($0.url.path) }
+        let deleted = busy ? [] : all.filter { $0.missing && $0.away == nil && deletedFile($0.url.path) }
         if !deleted.isEmpty {
             for g in deleted { if g.rom != nil { l.removeRom(g.titleID) } else { l.removeApp(g.url.path) } }
             let gone = Set(deleted.map(\.id)); all.removeAll { gone.contains($0.id) }
@@ -923,7 +928,7 @@ final class Model: ObservableObject {
     func windowAppeared() {
         guard !launched else { return }; launched = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
-        for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched() } } }
+        for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched(); self?.evictOffloaded() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers.removeAllObjects(); self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
         lookInWatched(force: true)
@@ -949,6 +954,7 @@ final class Model: ObservableObject {
 
     func play(_ g: Game, settings: Bool = false) {
         theme.stop(0.3)
+        if g.away != nil { askDownload(g, settings: settings); return }
         if g.missing { missingGame = g; return }
         if let r = g.rom { playRom(g, r); return }
         if isRunning(g), let a = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.path == g.url.path }) { a.activate(); return }

@@ -733,4 +733,27 @@ do {
     check(!fm.fileExists(atPath: b.path) && fm.fileExists(atPath: a.path) && !fm.fileExists(atPath: Artwork.found.appendingPathComponent("old-2.png").path) && fm.fileExists(atPath: Artwork.found.appendingPathComponent("snes-abc.png").path), "only leftovers removed")
 }
 
+
+// Offloading: a game goes to another folder whole and comes back to the same place
+do {
+    let fm = FileManager.default, base = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("offload-\(UUID().uuidString)")
+    let home = base.appendingPathComponent("lib/PlayStation"), cloud = base.appendingPathComponent("cloud/Docked Games")
+    try? fm.createDirectory(at: home, withIntermediateDirectories: true); try? fm.createDirectory(at: cloud, withIntermediateDirectories: true)
+    let cue = home.appendingPathComponent("Game.cue"), bin = home.appendingPathComponent("Game.bin"), solo = home.appendingPathComponent("Solo.sfc")
+    try? "FILE \"Game.bin\" BINARY\n  TRACK 01 MODE2/2352\n".write(to: cue, atomically: true, encoding: .utf8); try? Data(count: 2048).write(to: bin); try? Data(count: 512).write(to: solo)
+    let a = try? Offload.send(cue, console: "psx", set: true, to: cloud), b = try? Offload.send(solo, console: "snes", set: true, to: cloud)
+    check(a.map { fm.fileExists(atPath: $0.appendingPathComponent("Game.bin").path) && fm.fileExists(atPath: $0.appendingPathComponent("Game.cue").path) } == true && !fm.fileExists(atPath: bin.path), "a game of several files is offloaded together, in a folder of its own")
+    check(b.map { fm.fileExists(atPath: $0.path) && $0.lastPathComponent == "Solo.sfc" } == true && !fm.fileExists(atPath: solo.path), "a one-file game is offloaded")
+    if let a { try? Offload.bring(a, home: cue) }; if let b { try? Offload.bring(b, home: solo) }
+    check(fm.fileExists(atPath: cue.path) && fm.fileExists(atPath: bin.path) && fm.fileExists(atPath: solo.path) && a.map { !fm.fileExists(atPath: $0.path) } == true, "offloaded games come back to where they were")
+    try? Data(count: 1).write(to: base.appendingPathComponent("x"))
+    check((try? Offload.bring(base.appendingPathComponent("x"), home: solo)) == nil, "one coming back never replaces a file there")
+    check(offloadName(NSHomeDirectory() + "/Library/Mobile Documents/com~apple~CloudDocs/Docked Games") == "iCloud Drive" && offloadName(NSHomeDirectory() + "/Library/CloudStorage/GoogleDrive-me@x.com/My Drive") == "Google Drive" && offloadName("/Volumes/T7/Docked Games") == "T7", "offload places are named")
+    var l = LibraryData(); l.addApp("/g/A.app", "0100"); l.offloaded["/g/A.app"] = "/c/A.app"
+    let j = JSONEncoder(); j.dateEncodingStrategy = .iso8601; let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+    check((try? d.decode(LibraryData.self, from: j.encode(l)))?.offloaded["/g/A.app"] == "/c/A.app", "where an offloaded game is, is saved")
+    l.removeApp("/g/A.app"); check(l.offloaded.isEmpty, "a game taken out of the library forgets where it was offloaded")
+    try? fm.removeItem(at: base)
+}
+
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
