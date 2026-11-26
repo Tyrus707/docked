@@ -349,7 +349,7 @@ if fm.isExecutableFile(atPath: "/usr/bin/hdiutil") {
     RetroArch.buildbot = bb.absoluteString.hasSuffix("/") ? String(bb.absoluteString.dropLast()) : bb.absoluteString
     _ = mk("OldRA/saves/Puzzle Box.srm", "my save"); _ = mk("RA/saves/Kept.srm", "newer"); _ = mk("OldRA/saves/Kept.srm", "older")
     RetroArch.dmgSHA = "0000"; do { try RetroArch.setUp(console("gb")!); check(false, "a different RetroArch refused") } catch { check(!RetroArch.installed && (error as? RetroError)?.text.contains("reviewed") == true, "a different RetroArch refused") }
-    RetroArch.dmgSHA = RetroArch.sha256(dmg); var said: [String] = []
+    RetroArch.dmgSHA = sha256(dmg) ?? ""; var said: [String] = []
     do { try RetroArch.setUp(console("gb")!) { w, _ in said.append(w) } } catch { check(false, "set up: \(error)") }
     check(RetroArch.installed && RetroArch.installedVersion == RetroArch.version && !RetroArch.app.path.hasPrefix("/Applications"), "RetroArch inside Docked")
     check(RetroArch.core(console("gb")!)?.lastPathComponent == "gambatte_libretro.dylib" && RetroArch.ready(console("gb")!), "the next core when the best isn't built: \(said)")
@@ -403,7 +403,7 @@ var gone: [URL] = []; let kf = mk("my/prod.keys", "k = 1"); check(trashKeys(kf.p
 
 // ---- space, reports, updates, notices ----
 func sj(_ gb: Int64, _ a: After) -> Job { var j = job("s\(gb)\(a)"); j.bytes = gb * 1_000_000_000; j.after = a; return j }
-check(spaceForQueue([]) == 0 && spaceForQueue([sj(10, .ask)]) == 30_000_000_000, "one game"); check(spaceForQueue([sj(10, .ask), sj(5, .ask)]) == 40_000_000_000 && spaceForQueue([sj(10, .leftovers), sj(5, .ask)]) == 30_000_000_000, "what earlier ones leave counts"); check(spaceText(need: 10_000_000_000, free: 50_000_000_000).short == false && spaceText(need: 50_000_000_000, free: 10_000_000_000).text.contains("Free up about 40 GB"), "said plainly")
+check(spaceForQueue([]) == 0 && spaceForQueue([sj(10, .ask)]) == 30_000_000_000, "one game"); check(spaceForQueue([sj(10, .ask), sj(5, .ask)]) == 40_000_000_000 && spaceForQueue([sj(10, .leftovers), sj(5, .ask)]) == 30_000_000_000, "what earlier ones leave counts"); check(SpaceEstimate(need: 10_000_000_000, free: 50_000_000_000, destinationFree: nil, destinationNeed: nil).short == false && spaceAdvice(SpaceEstimate(need: 50_000_000_000, free: 10_000_000_000, destinationFree: nil, destinationNeed: nil)).contains("Free up about 40 GB"), "said plainly")
 let roomOK = spaceEstimate(bytes: 1_000_000_000, destination: tmp, free: 100_000_000_000, destinationFree: 100_000_000_000)
 let roomTight = spaceEstimate(bytes: 10_000_000_000, destination: tmp, free: 1_000_000_000, destinationFree: 1_000_000_000)
 let destTight = spaceEstimate(bytes: 10_000_000_000, destination: tmp, free: 100_000_000_000, destinationFree: 1_000_000_000)
