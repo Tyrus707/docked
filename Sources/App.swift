@@ -460,7 +460,7 @@ final class Model: ObservableObject {
     }
 
     private func finished() {
-        icons = [:]; covers = [:]; sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; metaArrived(builder.titleID) }; let job = queue.current
+        icons = [:]; covers = [:]; sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
         switch builder.stage {
         case "Done":
             if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
