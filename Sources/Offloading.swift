@@ -47,6 +47,7 @@ extension Model {
             var sent: [(Game, URL)] = [], failed: [String] = []
             for (i, g) in send.enumerated() {
                 if send.count > 1 { DispatchQueue.main.async { self.filing = "Offloading \(i + 1) of \(send.count)…" } }
+                if g.rom == nil { Artwork.keepAppIcon(g.titleID, from: g.url) }   // keep the art before its app leaves this Mac
                 do { sent.append((g, try Offload.send(g.url, console: g.rom?.console ?? consoleOf(g.titleID), set: g.rom != nil, to: root))) }
                 catch { failed.append("\(g.name): \(error.localizedDescription)") }
             }
