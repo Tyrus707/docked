@@ -1389,7 +1389,7 @@ struct SetupView: View {
     private let tick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
     private var first: URL? { model.waitingSwitch.first }   // the Switch game that brought this up, if one did
     private var keysFound: Bool { findKeys(model.keys) != nil }
-    private var room: SpaceEstimate { SpaceEstimate(need: spaceNeeded(0), free: freeSpace(), destinationFree: nil, destinationNeed: nil) }
+    private var room: SpaceEstimate { spaceEstimate(bytes: 0) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

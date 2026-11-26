@@ -86,7 +86,7 @@ extension Model {
         guard let src = GameData.saveIn(u) else { message = "That folder has no save in it."; return }
         let when = ((try? src.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()).formatted(date: .abbreviated, time: .shortened)
         let a = NSAlert(); a.messageText = "Use this save for \(g.name)?"
-        a.informativeText = "From \(when), \(ByteCountFormatter.string(fromByteCount: GameData.size(src), countStyle: .file)). Docked backs up the save you have now first, so you can go back to it."
+        a.informativeText = "From \(when), \(byteText(GameData.size(src))). Docked backs up the save you have now first, so you can go back to it."
         a.addButton(withTitle: "Use This Save"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
         do { try GameData(g.titleID).restore(src); tell("\(g.name) will start from that save."); logActivity("Restored \(g.name)'s save", detail: "Used the copy from \(when). The save you had was kept first.") }

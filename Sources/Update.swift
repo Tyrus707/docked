@@ -31,8 +31,7 @@ enum Update {
         let oldInfo = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")) as? [String: Any] ?? [:], tools = app.appendingPathComponent("Contents/Resources/tools.tar.xz"), to = c.appendingPathComponent("Resources/tools.tar.xz")
         if !fm.fileExists(atPath: to.path), fm.fileExists(atPath: tools.path), let want = oldInfo["DSPayloadSHA256"] as? String {
             if clonefile(tools.path, to.path, 0) != 0 { try fm.copyItem(at: tools, to: to) }
-            let h = try FileHandle(forReadingFrom: to); defer { try? h.close() }; var s = SHA256(); while let d = try h.read(upToCount: 1 << 20), !d.isEmpty { s.update(data: d) }
-            guard s.finalize().map({ String(format: "%02x", $0) }).joined() == want else { throw UpdateError("Docked's own tools look damaged. Download the full version from the Docked page. Nothing was changed.") }
+            guard sha256(to) == want else { throw UpdateError("Docked's own tools look damaged. Download the full version from the Docked page. Nothing was changed.") }
             i["DSPayloadSHA256"] = want; if let m = oldInfo["DSToolsMinimum"] { i["DSToolsMinimum"] = m }
             try PropertyListSerialization.data(fromPropertyList: i, format: .xml, options: 0).write(to: pl); try run("/usr/bin/codesign", ["--force", "--sign", "-", new.path]); try run("/usr/bin/codesign", ["--verify", "--strict", new.path])
         }

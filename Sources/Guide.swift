@@ -73,7 +73,7 @@ struct GuideView: View {
             Button(copied ? "Copied. Paste It in Terminal" : "Copy and Open Terminal") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.fix, forType: .string); copied = true; NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")); DispatchQueue.main.asyncAfter(deadline: .now() + 6) { copied = false } }
         } else { Text(c.detail).font(.callout).foregroundStyle(style.text) }
     }
-    private var room: SpaceEstimate { SpaceEstimate(need: spaceNeeded(0), free: freeSpace(), destinationFree: nil, destinationNeed: nil) }
+    private var room: SpaceEstimate { spaceEstimate(bytes: 0) }
     var found: String? { findKeys(model.keys) }
     var keysOK: Bool { found.map { readKeys($0).usable } ?? false }
     @ViewBuilder var keys: some View {
