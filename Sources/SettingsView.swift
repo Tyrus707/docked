@@ -77,10 +77,10 @@ struct SettingsSheet: View {
         let free = freeSpace()
         VStack(spacing: 14) {
             line("This Mac", cannotConvert() ?? (model.ready ? "Ready to convert Switch games." : model.checks.isEmpty ? "Checking…" : "\(model.checks.filter { !$0.ok }.count) to do: \(nextCheck(model.checks)?.title ?? "")")) { Button("Details…") { model.leaveSettings { model.recheck(); model.showSetup = true } } }
-            line("Room to convert", "\(byteText(free)) free. Converting needs about \(byteText(10_000_000_000)) of work space, plus twice each game's size.") {
-                Image(systemName: free >= 10_000_000_000 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(free >= 10_000_000_000 ? style.ok : style.warn)
-                    .accessibilityLabel(free >= 10_000_000_000 ? "Enough room" : "Not enough room")
+            line("Room to convert", "\(byteText(free)) free. Converting needs about \(byteText(spaceNeeded(0))) of work space, plus twice each game's size.") {
+                Image(systemName: free >= spaceNeeded(0) ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(free >= spaceNeeded(0) ? style.ok : style.warn)
+                    .accessibilityLabel(free >= spaceNeeded(0) ? "Enough room" : "Not enough room")
             }
             if model.carriesEngine { engineRows }
             line("Setup guide", "One step at a time, from the beginning.") { Button("Open Guide…") { model.leaveSettings { model.recheck(); model.showGuide = true } } }

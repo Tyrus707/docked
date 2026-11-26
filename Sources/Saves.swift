@@ -42,14 +42,20 @@ extension Model {
     @discardableResult func snapshotSave(_ g: Game, _ why: String, quiet: Bool = false) -> URL? {
         guard g.rom == nil else { return nil }   // a save can still be here when its game's drive is away
         do {
-            guard let u = try GameData(g.titleID).backUp(label: "Docked \(why)") else { return nil }
-            if !quiet { logActivity("Saved \(g.name)'s progress", detail: "A dated copy was kept before \(why).") }
+            let d = GameData(g.titleID)
+            guard let u = try d.backUp(label: "Docked \(why)") else { return nil }
+            d.pruneAutomatic()   // copies Docked makes by itself don't pile up; ones the player made are never removed
+            if !quiet { logActivity("Saved \(g.name)'s progress", detail: "A dated copy was kept \(why).") }
             return u
-        } catch { logActivity("Couldn't save a copy of \(g.name)'s progress", detail: "Before \(why). \(error.localizedDescription)", warn: true); return nil }
+        } catch { logActivity("Couldn't save a copy of \(g.name)'s progress", detail: "Docked tried to keep one \(why). \(error.localizedDescription)", warn: true); return nil }
     }
 
     // For changes to Docked itself: only games that have a save are copied.
-    func snapshotSaves(_ why: String) { for g in games where g.rom == nil && GameData(g.titleID).hasSave { snapshotSave(g, why) } }
+    // One line in Activity for all of them, so a big library doesn't push everything else out of it.
+    func snapshotSaves(_ why: String) {
+        let n = games.filter { $0.rom == nil && GameData($0.titleID).hasSave }.reduce(0) { $0 + (snapshotSave($1, why, quiet: true) != nil ? 1 : 0) }
+        if n > 0 { logActivity(n == 1 ? "Saved 1 game's progress" : "Saved \(n) games' progress", detail: "Dated copies were kept \(why).") }
+    }
 
     func backUpSave(_ g: Game) {
         guard GameData(g.titleID).hasSave else { tell("\(g.name) has no save yet.", good: false); return }

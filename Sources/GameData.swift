@@ -70,6 +70,13 @@ struct GameData {
         return to
     }
 
+    // Copies Docked made by itself ("<date> Docked before ...") beyond the newest few go. Copies the player made, or brought in, stay.
+    static let automaticKept = 8
+    func pruneAutomatic(keep: Int = automaticKept) {
+        let auto = list().filter { $0.name.contains(" Docked before ") }
+        for b in auto.dropFirst(max(keep, 1)) { try? FileManager.default.removeItem(at: b.url) }
+    }
+
     // A dated copy in a folder the player chose, such as iCloud Drive or another drive. Never copies keys or game files.
     // The chosen folder is never replaced: the save goes in a new folder inside it, with a name saying what and when.
     @discardableResult func export(into folder: URL, named name: String? = nil) throws -> URL? {

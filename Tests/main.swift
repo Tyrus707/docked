@@ -763,6 +763,10 @@ do {
     let b2 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b2 != b, "same second, new folder")
     check(d.list().count == 2 && d.list().allSatisfy { $0.bytes == 6 }, "backups listed")
     check(GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before convert"), date: Date(), bytes: 0).reason == "before conversion" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before engine update"), date: Date(), bytes: 0).reason == "before engine update" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked"), date: Date(), bytes: 0).reason == "manual backup", "backups say why they were made")
+    for i in 0..<10 { _ = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_001_000 + Double(i)), label: "Docked before update") }
+    d.pruneAutomatic()
+    check(d.list().filter { $0.name.contains(" Docked before ") }.count == GameData.automaticKept && d.list().count == GameData.automaticKept + 2, "Docked's own copies are kept to a few; the player's stay")
+    for b in d.list() where b.name.contains(" Docked before ") { try! fm.removeItem(at: b.url) }
     let carried = tmp.appendingPathComponent("carried")
     let out1 = try! d.export(into: carried, named: "My Game")!
     check(out1.lastPathComponent.contains("My Game") && fm.fileExists(atPath: out1.appendingPathComponent("save/0/file.bin").path), "a save can be copied out")

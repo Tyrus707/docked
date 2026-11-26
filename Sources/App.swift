@@ -904,7 +904,7 @@ final class Model: ObservableObject {
         retry?.cancel(); retry = nil
         guard !builder.running, moving == nil, !removing, !installing, !queue.paused, !engineBusy, !checkingGame else { return }
         guard ready else { if !checks.isEmpty, !queue.waiting.isEmpty { queue.paused = true }; return }
-        let now = convertOnce; convertOnce = false   // Convert Now starts this batch without changing the saved choice
+        let now = convertOnce; if queue.waiting.isEmpty { convertOnce = false }   // Convert Now carries on until everything waiting has started; the saved choice stays as it is
         if !queue.waiting.isEmpty, let why = now ? nil : Power.shared.wait(convertWhen) {   // looked at again every 5 minutes, and at once when the power changes
             convertWaiting = why; let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: w); return
         }
@@ -1161,7 +1161,7 @@ final class Model: ObservableObject {
         do {
             try FileManager.default.trashItem(at: u, resultingItemURL: nil)
             library.removeApp(u.path)
-            logActivity("Moved a game to the Trash", detail: saved ? "Its save was kept in the Save Vault first." : "Docked checked its save before moving it.")
+            logActivity("Moved a game to the Trash", detail: saved ? "Its save was kept in the Save Vault first." : nil)
         } catch { message = error.localizedDescription }
         reload()
     }
@@ -1392,7 +1392,7 @@ struct SetupView: View {
     private let tick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
     private var first: URL? { model.waitingSwitch.first }   // the Switch game that brought this up, if one did
     private var keysFound: Bool { findKeys(model.keys) != nil }
-    private var room: SpaceEstimate { SpaceEstimate(need: 10_000_000_000, free: freeSpace(), destinationFree: nil, destinationNeed: nil) }
+    private var room: SpaceEstimate { SpaceEstimate(need: spaceNeeded(0), free: freeSpace(), destinationFree: nil, destinationNeed: nil) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
