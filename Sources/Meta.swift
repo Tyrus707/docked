@@ -4,7 +4,8 @@ import Foundation
 // Only when the player has said yes. Wikidata (public domain, CC0) is searched by the game's name for a video game of that
 // name; its critic scores (Metacritic, OpenCritic and other aggregators), release year, genre, developer and publisher are kept.
 // How many people read the game's English Wikipedia article each month (Wikimedia's open page-view counts) stands for how
-// popular it is. Both see only the name. No account, no key.
+// popular it is. Wikidata sees the searched name and, when an item is read, its ID; Wikipedia sees the article title in the
+// pageviews count. No account, no key. No game files.
 struct Meta: Codable, Equatable {
     var critic: Int?        // 0 to 100
     var views: Int?         // Wikipedia readers a month, averaged over a year
@@ -34,7 +35,7 @@ struct Meta: Codable, Equatable {
         developer = try c.decodeIfPresent(String.self, forKey: .developer)
         publisher = try c.decodeIfPresent(String.self, forKey: .publisher)
         item = try c.decodeIfPresent(String.self, forKey: .item)
-        checked = (try? c.decode(Date.self, forKey: .checked)) ?? Date()
+        checked = (try? c.decode(Date.self, forKey: .checked)) ?? .distantPast   // an unreadable date must look stale, not fresh for a month
         manual = try c.decodeIfPresent(Bool.self, forKey: .manual) ?? false
     }
 }
@@ -51,6 +52,31 @@ enum MetaLookup {
     static let fresh: TimeInterval = 30 * 86400                      // looked up again after a month, for new scores and readers
 
     enum Refresh: Equatable { case none, automatic, manual(String) }
+    static func mayLookUp(_ setting: Bool?, explicit: Bool) -> Bool { setting == true || explicit }
+    // Docked's own result must not erase a match the player made; a chosen match with no item is broken and can recover.
+    static func automaticMayOverwrite(_ old: Meta?, explicit: Bool = false) -> Bool { explicit || old?.manual != true || old?.item == nil }
+    // Going back to Docked's own match needs a match; an empty answer is not one.
+    static func acceptsAutomatic(_ found: Meta?, explicit: Bool) -> Bool { guard let found else { return false }; return !explicit || found.item != nil }
+    // Which lookup owns a title. An explicit choice starts a new generation, so older work can no longer write.
+    struct MetaWork {
+        struct Job { let generation: UUID, work: UUID }
+        var generations: [String: UUID] = [:]
+        var active: [String: Set<UUID>] = [:]
+        mutating func begin(_ id: String, explicit: Bool) -> Job {
+            if explicit || generations[id] == nil { generations[id] = UUID() }
+            let job = Job(generation: generations[id]!, work: UUID())
+            active[id, default: []].insert(job.work)
+            return job
+        }
+        // Every job stops being active, but only the current one may write.
+        @discardableResult mutating func end(_ id: String, _ job: Job) -> Bool {
+            active[id]?.remove(job.work)
+            if active[id]?.isEmpty == true { active[id] = nil }
+            return generations[id] == job.generation
+        }
+        func current(_ id: String, _ job: Job) -> Bool { generations[id] == job.generation }
+        func busy(_ id: String) -> Bool { active[id]?.isEmpty == false }
+    }
     // What a refresh should do, kept apart from the network so the rules can be tested.
     static func refresh(_ m: Meta?, force: Bool, now: Date = Date()) -> Refresh {
         guard let m else { return .automatic }

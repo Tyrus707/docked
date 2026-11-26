@@ -104,7 +104,7 @@ final class Model: ObservableObject {
     @Published var finding = Set<String>()
     @Published var scoring = Set<String>()   // games whose scores and details are being looked up, by title ID
     @Published var choosingMeta = Set<String>()   // player-initiated metadata work, by title ID
-    var metaTokens: [String: UUID] = [:]   // changes when the player switches back to Docked's own match
+    var metaWork = MetaLookup.MetaWork()   // a new generation for every explicit pick, so older lookups can't write
     // Converted Switch games get their details when they are done; nil follows "Find covers and details"
     @Published var metaConverted = UserDefaults.standard.object(forKey: "metaConverted") as? Bool { didSet { UserDefaults.standard.set(metaConverted, forKey: "metaConverted") } }
     var waitingLookUp: [String] = [], picks: [Picking] = []
