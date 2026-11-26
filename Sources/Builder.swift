@@ -25,7 +25,7 @@ final class Builder: ObservableObject {
     private var watch: DispatchSourceTimer?, partsAt: (count: Int, at: Date)?
     private var proc: Process?
     private var activity: NSObjectProtocol?
-    private(set) var failedAt = ""
+    private(set) var failedAt = "", engineError = ""
     private var lastRed = "", stderrTail = "", cancelled = false
 
     func start(_ input: BuildInput, keys: String?, quick: Bool = false, phone: URL? = nil, xcode: XcodeBuild? = nil) {
@@ -37,7 +37,7 @@ final class Builder: ObservableObject {
         guard !running else { return }
         self.title = title; stage = "Starting"; stageIndex = 0; stageCount = 0; frac = nil; eta = nil; tested = nil
         shownSoFar = 0; started = Date(); stageStarted = started; estimator = Estimator.load(); times = []; stepOpen = nil; titleID = nil; output = nil
-        log = []; error = nil; warnings = []; lastRed = ""; stderrTail = ""; cancelled = false
+        log = []; error = nil; engineError = ""; warnings = []; lastRed = ""; stderrTail = ""; cancelled = false
         try? FileManager.default.createDirectory(at: Paths.games, withIntermediateDirectories: true)
         let p = Process(), out = Pipe(), err = Pipe()
         p.executableURL = URL(fileURLWithPath: exe); p.arguments = args; p.environment = engineEnvironment()
@@ -123,7 +123,7 @@ final class Builder: ObservableObject {
         return estimator.remaining(step: stageCount > 0 ? stage : "", elapsed: now.timeIntervalSince(stageStarted), engineETA: eta.map { max(0, $0 - now.timeIntervalSince(etaAt)) }, quick: skipsPipeline, pipelineLeft: pipelineLeft(now), phone: forPhone, xcode: forXcode)
     }
 
-    var report: String { let v = ProcessInfo.processInfo.operatingSystemVersion; return makeReport(title: titleID.map { "\(title) [\($0)]" } ?? title, step: failedAt, error: error ?? "", log: log, version: appVersion, os: "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)", chip: chipName(), space: freeSpace()) }
+    var report: String { let v = ProcessInfo.processInfo.operatingSystemVersion; return makeReport(title: titleID.map { "\(title) [\($0)]" } ?? title, step: failedAt, error: engineError.isEmpty ? error ?? "" : engineError, log: log, version: appVersion, os: "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)", chip: chipName(), space: freeSpace()) }
     // The whole conversion, 0 to 1. Estimates get better as it goes, so it may pause, but it never runs backwards.
     private var shownSoFar = 0.0
     func overall(_ now: Date = Date()) -> Double {
@@ -141,7 +141,8 @@ final class Builder: ObservableObject {
         else if cancelled { stage = "Stopped" }
         else {
             failedAt = stageCount > 0 ? "step \(stageIndex) of \(stageCount), \(stage)" : stage; stage = "Failed"
-            error = !lastRed.isEmpty ? lastRed : !stderrTail.isEmpty ? String(stderrTail.suffix(600)) : "The engine stopped with code \(code)."
+            engineError = !lastRed.isEmpty ? lastRed : !stderrTail.isEmpty ? String(stderrTail.suffix(600)) : "The engine stopped with code \(code)."
+            error = friendlyError(engineError)
         }
         onFinish()
     }

@@ -90,7 +90,7 @@ Docked is tested on macOS 27.2. Older versions and Intel Macs are supported in t
 - **Play with Settings.** Choose frame rate, resolution and language, where the game allows it.
 - **Checked before it's called done.** When a game finishes, Docked makes sure the app is whole, holds everything it needs and has a signature that matches. If something is off, such as graphics that were only partly prepared, Docked converts the game once more, which redoes only the missing part. If it's still not right, Docked tells you and keeps what it needs to try again quickly.
 - **A newer engine, without a new Docked.** New game profiles and fixes arrive as engine updates, signed like Docked's own. Docked checks every file, tries the new engine, and only swaps it in while nothing is converting. The previous engine is kept, and **Settings › Setup** can switch back.
-- **Clear reports.** If something goes wrong, **Copy Report** gives you a summary to share with your name, folders and anything that looks like a key taken out.
+- **Clear reports.** If something goes wrong, **Report Problem** copies a summary and opens a new GitHub issue to paste it into, with your name, folders and anything that looks like a key taken out.
 
 A converted game's graphics are prepared for the Mac that made it. On a different chip or major macOS version, its first start takes a little longer. Games that use OpenGL may need macOS 27 to convert.
 
@@ -178,7 +178,7 @@ Docked is not affiliated with, endorsed by or connected to Nintendo or any other
 
 ## Need a hand?
 
-[Open an issue](https://github.com/Tyrus707/docked/issues/new) and include your macOS version, your Mac's chip, and what Docked shows under **Details**. **Copy Report** is a good start, but give it a quick read before posting, and never attach games, keys or logs that contain them.
+[Open an issue](https://github.com/Tyrus707/docked/issues/new) and include your macOS version, your Mac's chip, and what Docked shows under **Details**. **Report Problem** is a good start, but give it a quick read before posting, and never attach games, keys or logs that contain them.
 
 ## Credits
 

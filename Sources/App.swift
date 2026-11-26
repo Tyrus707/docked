@@ -764,6 +764,7 @@ final class Model: ObservableObject {
     var waits: Bool { builder.running || moving != nil || removing || !queue.waiting.isEmpty }
     func queueTime(_ now: Double) -> Double { now + queue.waiting.reduce(0) { $0 + builder.whole(quick: $1.quick, phone: $1.phone, xcode: $1.xcode) } }
     func copyReport(_ t: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string); tell("Report copied, with your name, folders and keys taken out. Read it before you post it.") }
+    func reportProblem(_ t: String) { copyReport(t); NSWorkspace.shared.open(issuePage); tell("Report copied. Paste it into the page that opened, read it, then post it.") }
     // ---- moving with a controller or the arrow keys ----
     @Published var cursor: Cursor?
     @Published var padUsed = false
@@ -1068,7 +1069,7 @@ struct BuildBar: View {
                 }
                 Spacer()
                 Button(showLog ? "Hide Details" : "Details") { showLog.toggle() }
-                if builder.running { Button("Stop") { builder.cancel() } } else { Button("Copy Report") { model.copyReport(builder.report) }; Button("Dismiss") { builder.error = nil } }
+                if builder.running { Button("Stop") { builder.cancel() } } else { Button("Report Problem") { model.reportProblem(builder.report) }; Button("Dismiss") { builder.error = nil } }
             }
             if builder.running {
                 TimelineView(.periodic(from: .now, by: 5)) { t in VStack(spacing: 8) {
