@@ -49,6 +49,12 @@ let helpTopics: [HelpTopic] = [
         "Full screen: Control-Command-F. Quit: Command-Q, or hold the controller's Home button for 2 seconds. Save in the game first.",
         "Open a game's ••• menu and choose Play with Settings to change frame rate, resolution or language.",
     ]),
+    HelpTopic(title: "Couch Mode", symbol: "tv", lines: [
+        "Couch Mode fills the screen and shows several rows of games at once. The shelves are across the top; the arrows or D-pad move left and right inside a row, and up and down move to the row above or below.",
+        "LB and RB, or Shift-Tab and Tab, move to the previous or next shelf and wrap around. A or Return plays the chosen game, Y or F favorites it, and B or Escape leaves Couch Mode.",
+        "Scroll down to find collections that fill themselves from your library: Critically Acclaimed, Enjoy the 90's, and Hidden Gems. They use details already on this Mac, so nothing new is looked up.",
+        "The chosen game's own artwork sits behind the rows. After 45 seconds without input the controls fade away; moving the mouse or pressing one of the keys or controller buttons named above brings them back. That first press only wakes them.",
+    ]),
     HelpTopic(title: "iPhone and iPad", symbol: "iphone", lines: [
         "When you add a game, choose iPhone or iPad beside Make it for. Then choose how to install it.",
         "Needs an \(phoneNeeds)",
