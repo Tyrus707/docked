@@ -8,7 +8,7 @@ struct ReviewView: View {
     @State private var more = false
     @Environment(\.accessibilityReduceMotion) private var still
     var space: (text: String, short: Bool) { spaceText(need: spaceNeeded(model.review.parts.reduce(0) { $0 + $1.bytes }), free: freeSpace()) }
-    var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? (model.organized && model.existing == nil ? "Sorts into " : "Saves to ") + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil, model.effort < 100 ? "\(model.effort)% of your Mac" : nil].compactMap { $0 }).joined(separator: ", ") }
+    var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? (model.organized && model.existing == nil ? "Sorts into " : "Saves to ") + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil, model.speed != .full ? model.speed.label : nil].compactMap { $0 }).joined(separator: ", ") }
     func note(_ t: String, _ s: String, _ warn: Bool) -> some View { Label(t, systemImage: s).foregroundStyle(warn ? style.warn : Color.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
 
     // Only a copy in Docked's own folder, or in the chosen folder, is replaced.
@@ -70,10 +70,8 @@ struct ReviewView: View {
                     Toggle("Skip the pipeline step", isOn: $model.quick)
                     Text("Converts faster, but the game's first start takes longer and may stutter.").font(.caption).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack { Text("Conversion speed"); Spacer(); Text("\(model.effort)%").font(.caption).monospacedDigit().foregroundStyle(.secondary) }
-                        Slider(value: model.effortSlider, in: 0.1...1, step: 0.05)
-                        Text(conversionEffortNote(model.effort)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Text("Lower is slower to convert; the finished game is the same.").font(.caption).foregroundStyle(.secondary)
+                        Picker("Conversion speed", selection: $model.speed) { ForEach(Speed.allCases, id: \.self) { Text($0.label).tag($0) } }.pickerStyle(.segmented)
+                        Text(model.speed.note + " The finished game is the same.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     ForEach(model.review.notes.filter { !$0.1 }, id: \.0) { n in note(n.0, "checkmark.circle", false) }
                     if !model.review.parts.isEmpty, !space.short { note(space.text, "internaldrive", false) }
