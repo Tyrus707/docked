@@ -24,6 +24,7 @@ struct SettingsSheet: View {
             }
             line("Show games as", "") { Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
             flip("Open filling the screen", "A window as big as the screen, without a separate Space. From the next time Docked opens.", $model.fullScreen)
+            flip("Play other consoles full screen", "Retro games fill the whole screen. Off: a window as big as the screen. Press F in a game to switch.", .init(get: { RetroArch.fullScreen }, set: { RetroArch.fullScreen = $0; model.objectWillChange.send() }))
             flip("Step aside while playing", "Docked hides when a game starts and comes back when it closes.", $model.hideWhilePlaying)
             flip("Theme music", "Plays a game's own theme while it is selected.", $model.themes)
             flip("Couch Mode sounds", "Soft clicks and chimes as you move around Couch Mode.", $model.couchSounds)
