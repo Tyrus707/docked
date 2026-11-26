@@ -8,7 +8,7 @@ enum After: String, Codable, CaseIterable {
 struct Job: Codable, Equatable, Identifiable {
     var id = UUID()
     var title: String, family: String?, parts: [String], place: String, quick: Bool, after: After, bytes: Int64, needsKeys: Bool, sources: [SourceFile]
-    var effort: Int = 100   // how much of the Mac this job may use; older queues keep full speed
+    var speed: Speed = .full   // how hard this job may work the Mac; older queues keep full speed
     var target: Target? = nil
     var viaXcode: Bool? = nil   // for iPhone: a project for Xcode, not an .ipa file
     var again: Bool? = nil   // converted a second time, because the first did not pass Docked's check
@@ -16,10 +16,10 @@ struct Job: Codable, Equatable, Identifiable {
     var xcode: Bool { phone && viaXcode == true }
     var urls: [URL] { parts.map { URL(fileURLWithPath: $0) } }
 
-    enum CodingKeys: String, CodingKey { case id, title, family, parts, place, quick, after, bytes, needsKeys, sources, target, viaXcode, again, effort }
-    init(id: UUID = UUID(), title: String, family: String? = nil, parts: [String], place: String, quick: Bool = false, after: After = .ask, bytes: Int64 = 0, needsKeys: Bool = false, sources: [SourceFile] = [], target: Target? = nil, viaXcode: Bool? = nil, again: Bool? = nil, effort: Int = 100) {
+    enum CodingKeys: String, CodingKey { case id, title, family, parts, place, quick, after, bytes, needsKeys, sources, target, viaXcode, again, speed, effort }
+    init(id: UUID = UUID(), title: String, family: String? = nil, parts: [String], place: String, quick: Bool = false, after: After = .ask, bytes: Int64 = 0, needsKeys: Bool = false, sources: [SourceFile] = [], target: Target? = nil, viaXcode: Bool? = nil, again: Bool? = nil, speed: Speed = .full) {
         self.id = id; self.title = title; self.family = family; self.parts = parts; self.place = place; self.quick = quick; self.after = after
-        self.bytes = bytes; self.needsKeys = needsKeys; self.sources = sources; self.target = target; self.viaXcode = viaXcode; self.again = again; self.effort = effort
+        self.bytes = bytes; self.needsKeys = needsKeys; self.sources = sources; self.target = target; self.viaXcode = viaXcode; self.again = again; self.speed = speed
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -36,7 +36,15 @@ struct Job: Codable, Equatable, Identifiable {
         target = try c.decodeIfPresent(Target.self, forKey: .target)
         viaXcode = try c.decodeIfPresent(Bool.self, forKey: .viaXcode)
         again = try c.decodeIfPresent(Bool.self, forKey: .again)
-        effort = try c.decodeIfPresent(Int.self, forKey: .effort) ?? 100   // queues saved before this setting keep full speed
+        // 1.8.1 saved a percentage; queues from before either keep full speed
+        speed = try c.decodeIfPresent(Speed.self, forKey: .speed) ?? (try c.decodeIfPresent(Int.self, forKey: .effort)).map(Speed.init(effort:)) ?? .full
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encodeIfPresent(family, forKey: .family); try c.encode(parts, forKey: .parts)
+        try c.encode(place, forKey: .place); try c.encode(quick, forKey: .quick); try c.encode(after, forKey: .after); try c.encode(bytes, forKey: .bytes)
+        try c.encode(needsKeys, forKey: .needsKeys); try c.encode(sources, forKey: .sources); try c.encodeIfPresent(target, forKey: .target)
+        try c.encodeIfPresent(viaXcode, forKey: .viaXcode); try c.encodeIfPresent(again, forKey: .again); try c.encode(speed, forKey: .speed)
     }
     var placeURL: URL { URL(fileURLWithPath: place) }
 }

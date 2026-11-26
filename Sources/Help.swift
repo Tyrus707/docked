@@ -19,7 +19,7 @@ let helpTopics: [HelpTopic] = [
         "To add an update or DLC later, open the game's ••• menu and choose Add Update or DLC (also in the File menu). It converts again, reusing what it can, and keeps your save.",
         "Choose where the game is saved before you convert, or open its ••• menu later and choose Move to Folder. Use Docked to move it, so it stays in the window.",
         "Add more games while one converts: they wait in a queue and start by themselves. Docked remembers the queue if you quit.",
-        "To keep playing while a game converts, open More options and turn down 'How much of your Mac can converting use?' before you start it. You can also change it in Settings > Converting for games you add later. A conversion already running keeps the choice it started with. It takes longer, but the finished game is the same.",
+        "To keep playing while a game converts, open More options and set Conversion speed to Balanced or Background before you start it. You can also change it in Settings > Converting for games you add later. A conversion already running keeps the choice it started with. It takes longer, but the finished game is the same.",
         "To save space, choose Clean Up from a game's ••• menu, or in Settings, and pick what to remove. Docked keeps a link to each original file, so deleting one in Finder alone doesn't free its space.",
     ]),
     HelpTopic(title: "Your library", symbol: "books.vertical", lines: [
