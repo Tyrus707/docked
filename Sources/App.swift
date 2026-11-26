@@ -677,10 +677,11 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || editingMeta != nil || importing != nil || tidying != nil || health != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || editingMeta != nil || importing != nil || tidying != nil || health != nil || tuning != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSetup(_ f: @escaping () -> Void) { showSetup = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
+    func leaveGameSettings(_ f: @escaping () -> Void) { tuning = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     @Published var guided = UserDefaults.standard.bool(forKey: "guided") { didSet { UserDefaults.standard.set(guided, forKey: "guided") } }
     @Published var fetching = false
     func offerKeys(_ u: URL) { if readKeys(u.path) == .notKeys { message = KeysVerdict.notKeys.text } else { keys = u.path } }
@@ -826,7 +827,7 @@ final class Model: ObservableObject {
     func reconvertForFriends(_ g: Game) {
         guard ready else { showSetup = true; return }
         review = Review(parts: []); review.add(keptFiles(g.titleID))
-        reviewNote = review.parts.isEmpty ? "Docked doesn't have \(g.name)'s original files. Add the game again, with its update and DLC, and turn on Enable multiplayer when you convert." : nil
+        reviewNote = review.parts.isEmpty ? Friends.missingOriginals(g.name) : nil
         reviewFriends = true; setReviewPlace(); showReview = true
     }
 
