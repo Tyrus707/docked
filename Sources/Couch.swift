@@ -90,12 +90,12 @@ extension Model {
     }
 
     // ---- the big picture behind the chosen game ----
-    // The best art already on this Mac, at a size worth showing across a TV: an in-game picture for an older game,
-    // else its box art, a picture the player chose, or a Switch game's own icon. Loaded in the background, a few kept.
+    // The best art already on this Mac, at a size worth showing across a TV: an in-game picture for an older game or the
+    // eShop banner for a Switch game, else its box art, a picture the player chose, or the game's own icon. Loaded in the background, a few kept.
     func couchArt(_ g: Game) -> NSImage? {
         if let a = couchArts[g.id] { return a }
         guard couchTried.insert("art" + g.id).inserted else { return nil }
-        let snap = g.rom.map { CouchArt.snap($0) }, places = [snap, Cover.custom(g), g.rom.flatMap { RetroArch.art($0) }, g.url.appendingPathComponent("Contents/Resources/AppIcon.icns")].compactMap { $0 }
+        let snap = g.rom.map { CouchArt.snap($0) } ?? CouchArt.banner(g.titleID), places = [snap, Cover.custom(g), g.rom.flatMap { RetroArch.art($0) }, g.url.appendingPathComponent("Contents/Resources/AppIcon.icns")].compactMap { $0 }
         Cover.queue.async {
             let a = places.lazy.compactMap { CouchArt.load($0) }.first
             DispatchQueue.main.async {
@@ -105,6 +105,9 @@ extension Model {
                 if self.couchArtOrder.count > 12 { self.couchArts[self.couchArtOrder.removeFirst()] = nil }
                 self.couchArtTick += 1
             }
+        }
+        if g.rom == nil, lookUp == true, CouchArt.switchID(g.titleID), !FileManager.default.fileExists(atPath: CouchArt.banner(g.titleID).path), couchTried.insert("snap" + g.id).inserted {
+            Lookup.queue.async { if CouchArt.fetchBanner(g.titleID) { DispatchQueue.main.async { self.couchArts[g.id] = nil; if self.couch { _ = self.couchArt(g) } } } }
         }
         if let r = g.rom, lookUp == true, let info = r.info, !FileManager.default.fileExists(atPath: CouchArt.snap(r).path), couchTried.insert("snap" + g.id).inserted {
             Lookup.queue.async { if CouchArt.fetchSnap(r, names: [info.title, URL(fileURLWithPath: r.path).deletingPathExtension().lastPathComponent]) { DispatchQueue.main.async { self.couchArts[g.id] = nil; if self.couch { _ = self.couchArt(g) } } } }
@@ -122,6 +125,18 @@ enum CouchArt {
         let o = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 1920, kCGImageSourceCreateThumbnailWithTransform: true] as [CFString: Any] as CFDictionary
         guard let c = CGImageSourceCreateThumbnailAtIndex(src, best, o) else { return nil }
         return NSImage(cgImage: c, size: NSSize(width: c.width, height: c.height))
+    }
+    // A Switch game's wide eShop banner (1920 x 1080), from the nlib title API, which serves Nintendo's own store art by title ID.
+    // Only the title ID is sent, and only when the player allowed lookups. Kept in Docked/Metadata/Banners.
+    static func switchID(_ t: String) -> Bool { t.count == 16 && t.allSatisfy(\.isHexDigit) }
+    static func banner(_ titleID: String) -> URL { Lookup.home.appendingPathComponent("Banners/" + titleID.uppercased() + ".jpg") }
+    static var banners = "https://api.nlib.cc/nx/"
+    static func fetchBanner(_ titleID: String) -> Bool {
+        guard switchID(titleID), let u = URL(string: banners + titleID.uppercased() + "/banner/1080p"), let d = try? Lookup.get(u, limit: 8 << 20),
+              d.starts(with: [0xFF, 0xD8, 0xFF]) || d.starts(with: [0x89, 0x50, 0x4E, 0x47]), let src = CGImageSourceCreateWithData(d as CFData, nil),
+              let p = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any], let w = p[kCGImagePropertyPixelWidth] as? Int, let h = p[kCGImagePropertyPixelHeight] as? Int, w >= 320, w <= 4096, h >= 180, h <= 4096 else { return false }
+        let out = banner(titleID); try? FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
+        return (try? d.write(to: out, options: .atomic)) != nil
     }
     // An in-game picture from libretro's collection, at the same fixed commit as the covers. Only when the player allowed lookups.
     static func fetchSnap(_ r: Rom, names: [String]) -> Bool {

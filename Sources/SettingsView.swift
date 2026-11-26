@@ -28,7 +28,7 @@ struct SettingsSheet: View {
             flip("Step aside while playing", "Docked hides when a game starts and comes back when it closes.", $model.hideWhilePlaying)
             flip("Theme music", "Plays a game's own theme while it is selected.", $model.themes)
             flip("Couch Mode sounds", "Soft clicks and chimes as you move around Couch Mode.", $model.couchSounds)
-            flip("Find covers and details", "Covers and descriptions for games from other consoles, and critic scores, popularity, year and genre for every game. Your files are matched on this Mac; libretro, Wikidata and Wikipedia see only a game's name.", .init(get: { model.lookUp == true }, set: { model.lookUp = $0; if $0 { model.lookUpAll(); model.findMetaAll() } }))
+            flip("Find covers and details", "Covers and descriptions for games from other consoles, Switch banners in Couch Mode, and critic scores, popularity, year and genre for every game. Your files are matched on this Mac; libretro, Wikidata and Wikipedia see only a game's name, the banner service only its title ID.", .init(get: { model.lookUp == true }, set: { model.lookUp = $0; if $0 { model.lookUpAll(); model.findMetaAll() } }))
             line("Game details", model.scoring.isEmpty ? "Looks up every game not checked in the last month, a couple of seconds each, while you use Docked." : "Finding details, \(model.scoring.count) to go…") {
                 if !model.scoring.isEmpty { ProgressView().controlSize(.small) }
                 Button("Find for All Games") { model.lookUpAll(); model.findMetaAll() }.disabled(model.lookUp != true || !model.scoring.isEmpty)
