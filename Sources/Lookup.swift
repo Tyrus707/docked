@@ -146,7 +146,7 @@ enum Lookup {
         "Atari - 2600": "8c91fd5d4cdadb6e66e146ab5b5334aebd3c82e9",
     ]
     static var wikipedia: String? = "https://en.wikipedia.org"   // nil: no descriptions from it
-    static let consent = "Docked can fill in each game's cover, year, publisher and description. It downloads libretro's public game list for that console once and compares your files with it on this Mac, so your files never leave it. Covers and in-game pictures come from libretro's picture collection on GitHub, and some descriptions from Wikipedia. Both see only the game's name. You can change this in Settings."
+    static let consent = "Docked can fill in each game's cover, year, publisher and description. It downloads libretro's public game list for that console once and compares your files with it on this Mac, so your files never leave it. Covers and in-game pictures come from libretro's picture collection on GitHub, and some descriptions from Wikipedia; both see only the game's name. Switch banners for Couch Mode come from the nlib title API, which sees only the game's title ID. You can change this in Settings."
     static var home: URL { Paths.root.appendingPathComponent("Metadata") }
     static func artFile(_ id: String) -> URL { home.appendingPathComponent("Covers/" + id.replacingOccurrences(of: ":", with: "-") + ".png") }
     static let queue = DispatchQueue(label: "lookup", qos: .utility)
