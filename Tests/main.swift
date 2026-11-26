@@ -30,6 +30,12 @@ fails(.unsupported, "text refused") { _ = try resolveInput([txt]) }; fails(.mixe
 fails(.missing, "missing refused") { _ = try resolveInput([tmp.appendingPathComponent("none.nsp")]) }
 fails(.unsupported, "empty folder refused") { let d = tmp.appendingPathComponent("e"); try fm.createDirectory(at: d, withIntermediateDirectories: true); _ = try resolveInput([d]) }
 let a = buildArguments(r, keys: "/k y/prod.keys"); check(a.contains("/k y/prod.keys") && a.contains("mac-app"), "arguments"); check(!buildArguments(n, keys: "/k").contains("-k"), "nup gets no keys")
+check(conversionWorkers(100, cores: 8) == 8 && conversionWorkers(50, cores: 8) == 4 && conversionWorkers(10, cores: 8) == 1 && conversionWorkers(50, cores: 1) == 1, "effort maps to workers, never none")
+let gentleEnv = conversionEnvironment(["PATH": "x"], effort: 50, cores: 8)
+check(gentleEnv["J"] == "4" && gentleEnv["DMSH_PROCS"] == "4" && gentleEnv["DM_REWRITE_J"] == "4" && gentleEnv["DM_PSO_PREBUILD_THREADS"] == nil && gentleEnv["PATH"] == "x", "gentle conversion only limits byte-safe workers")
+let fullEnv = conversionEnvironment(["J": "9"], effort: 100, cores: 8)
+check(fullEnv["J"] == "9" && fullEnv.count == 1, "full speed leaves the engine's own setting alone")
+check(conversionEffortNote(100).contains("Full speed") && conversionEffortNote(50).contains("half"), "plain-English effort notes")
 check(!isTested("../../x") && !isTested(""), "bad title IDs refused")
 
 // library
@@ -450,7 +456,8 @@ check(readKeys(mk("k/a.keys", "master_key_00 = \(hexv)\n").path) == .incomplete 
 let pa = buildArguments(n, keys: "/k", phone: URL(fileURLWithPath: "/o/x.ipa")); check(pa.contains("ios") && !pa.contains("mac-app") && pa.contains("/o/x.ipa") && !pa.contains("--no-prebake"), "iPhone build"); check(buildArguments(n, keys: "/k").contains("mac-app") && !buildArguments(n, keys: "/k").contains("-o"), "Mac build as before")
 let pd = tmp.appendingPathComponent("ph"); try! fm.createDirectory(at: pd, withIntermediateDirectories: true); check(phoneFile("A: B/C\\..", in: pd).lastPathComponent == "A BC.ipa" && phoneFile("../../x", in: pd).deletingLastPathComponent().path == pd.path && phoneFile("", in: pd).lastPathComponent == "Game.ipa", "file names"); _ = mk("ph/Z.ipa"); check(phoneFile("Z", in: pd).lastPathComponent == "Z 2.ipa", "never over another")
 check(!looksLikeIPA(mk("ph/empty.ipa", "")) && !looksLikeIPA(mk("ph/text.ipa", String(repeating: "x", count: 5000))) && !looksLikeIPA(pd.appendingPathComponent("gone.ipa")), "not an app file"); let ipa = pd.appendingPathComponent("r.ipa"); try! (Data([0x50, 0x4B, 3, 4]) + Data(count: 5000)).write(to: ipa); check(looksLikeIPA(ipa), "an app file")
-var tq = Queue(); var pj = job("P", "0100000000000009"); pj.target = .phone; check(tq.add(job("P", "0100000000000009")) && tq.add(pj) && !tq.add(pj), "the same game for Mac and iPhone, each once"); let oldQ = try! JSONDecoder().decode(Job.self, from: Data(#"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"t","parts":["/a"],"place":"/g","quick":false,"after":"ask","bytes":1,"needsKeys":true,"sources":[]}"#.utf8)); check(!oldQ.phone, "a queue from before")
+var tq = Queue(); var pj = job("P", "0100000000000009"); pj.target = .phone; check(tq.add(job("P", "0100000000000009")) && tq.add(pj) && !tq.add(pj), "the same game for Mac and iPhone, each once"); let oldQ = try! JSONDecoder().decode(Job.self, from: Data(#"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"t","parts":["/a"],"place":"/g","quick":false,"after":"ask","bytes":1,"needsKeys":true,"sources":[]}"#.utf8)); check(!oldQ.phone && oldQ.effort == 100, "a queue from before keeps full speed")
+var effortJob = job("E"); effortJob.effort = 35; let effortBack = try! JSONDecoder().decode(Job.self, from: JSONEncoder().encode(effortJob)); check(effortBack.effort == 35 && effortBack == effortJob, "effort survives the queue file")
 check(nextCheck([Check(title: "a", ok: true, detail: "", fix: ""), Check(title: "b", ok: false, detail: "", fix: ""), Check(title: "c", ok: false, detail: "", fix: "")])?.title == "b" && nextCheck([]) == nil, "one step at a time")
 
 // ---- engine updates: only a signed engine, checked file by file, swapped in whole, and the one before kept ----

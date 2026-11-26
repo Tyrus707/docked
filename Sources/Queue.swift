@@ -8,12 +8,36 @@ enum After: String, Codable, CaseIterable {
 struct Job: Codable, Equatable, Identifiable {
     var id = UUID()
     var title: String, family: String?, parts: [String], place: String, quick: Bool, after: After, bytes: Int64, needsKeys: Bool, sources: [SourceFile]
+    var effort: Int = 100   // how much of the Mac this job may use; older queues keep full speed
     var target: Target? = nil
     var viaXcode: Bool? = nil   // for iPhone: a project for Xcode, not an .ipa file
     var again: Bool? = nil   // converted a second time, because the first did not pass Docked's check
     var phone: Bool { target == .phone }
     var xcode: Bool { phone && viaXcode == true }
     var urls: [URL] { parts.map { URL(fileURLWithPath: $0) } }
+
+    enum CodingKeys: String, CodingKey { case id, title, family, parts, place, quick, after, bytes, needsKeys, sources, target, viaXcode, again, effort }
+    init(id: UUID = UUID(), title: String, family: String? = nil, parts: [String], place: String, quick: Bool = false, after: After = .ask, bytes: Int64 = 0, needsKeys: Bool = false, sources: [SourceFile] = [], target: Target? = nil, viaXcode: Bool? = nil, again: Bool? = nil, effort: Int = 100) {
+        self.id = id; self.title = title; self.family = family; self.parts = parts; self.place = place; self.quick = quick; self.after = after
+        self.bytes = bytes; self.needsKeys = needsKeys; self.sources = sources; self.target = target; self.viaXcode = viaXcode; self.again = again; self.effort = effort
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        family = try c.decodeIfPresent(String.self, forKey: .family)
+        parts = try c.decode([String].self, forKey: .parts)
+        place = try c.decode(String.self, forKey: .place)
+        quick = try c.decode(Bool.self, forKey: .quick)
+        after = try c.decode(After.self, forKey: .after)
+        bytes = try c.decode(Int64.self, forKey: .bytes)
+        needsKeys = try c.decode(Bool.self, forKey: .needsKeys)
+        sources = try c.decode([SourceFile].self, forKey: .sources)
+        target = try c.decodeIfPresent(Target.self, forKey: .target)
+        viaXcode = try c.decodeIfPresent(Bool.self, forKey: .viaXcode)
+        again = try c.decodeIfPresent(Bool.self, forKey: .again)
+        effort = try c.decodeIfPresent(Int.self, forKey: .effort) ?? 100   // queues saved before this setting keep full speed
+    }
     var placeURL: URL { URL(fileURLWithPath: place) }
 }
 struct Problem: Codable, Equatable, Identifiable { var id = UUID(); var title: String, reason: String, report: String? = nil }

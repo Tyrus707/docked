@@ -8,7 +8,7 @@ def log(s): open(root + '/engine.log', 'a').write(s + '\n')
 f = next(n for n in os.listdir(src) if n.endswith('.nsp')); tid = re.search(r'\[([0-9A-F]{16})\]', f).group(1); mode = open(os.path.join(src, f)).read(); name = f.split(' [')[0]
 signal.signal(signal.SIGTERM, lambda *_: (os.path.exists(root + '/busy') and os.remove(root + '/busy'), sys.exit(143)))
 if os.path.exists(root + '/busy'): log('overlap')
-open(root + '/busy', 'w').close(); log('start ' + tid); os.makedirs(work + '/extract', exist_ok=True); open(work + '/extract/x', 'w').write('y' * 5000)
+open(root + '/busy', 'w').close(); log('start ' + tid); log('effort ' + ' '.join(k + '=' + os.environ.get(k, '-') for k in ('J', 'DMSH_PROCS', 'DM_REWRITE_J'))); os.makedirs(work + '/extract', exist_ok=True); open(work + '/extract/x', 'w').write('y' * 5000)
 app = os.path.join(root, 'Games', name + '.app'); say(ev='game', title_id=tid, name=name, out=app); say(ev='stage', k=1, n=2, name='Mac shaders'); time.sleep(3 if mode == 'slow' else 0.6)
 if mode == 'fail': say(ev='say', msg='[RED] broken on purpose'); os.remove(root + '/busy'); sys.exit(1)
 if '--prepare-xcode' in a:

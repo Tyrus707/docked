@@ -28,19 +28,21 @@ final class Builder: ObservableObject {
     private(set) var failedAt = ""
     private var lastRed = "", stderrTail = "", cancelled = false
 
-    func start(_ input: BuildInput, keys: String?, quick: Bool = false, phone: URL? = nil, xcode: XcodeBuild? = nil) {
+    func start(_ input: BuildInput, keys: String?, quick: Bool = false, effort: Int = 100, phone: URL? = nil, xcode: XcodeBuild? = nil) {
         skipsPipeline = quick; forPhone = phone != nil || xcode != nil; forXcode = xcode != nil; work = Paths.games.appendingPathComponent(input.key + "_build")
-        launch(exe: Paths.python.path, args: buildArguments(input, keys: keys, quick: quick, phone: phone, xcode: xcode), title: input.title)
+        launch(exe: Paths.python.path, args: buildArguments(input, keys: keys, quick: quick, phone: phone, xcode: xcode), title: input.title, effort: effort)
     }
 
-    func launch(exe: String, args: [String], title: String) {
+    func launch(exe: String, args: [String], title: String, effort: Int = 100) {
         guard !running else { return }
         self.title = title; stage = "Starting"; stageIndex = 0; stageCount = 0; frac = nil; eta = nil; tested = nil
         shownSoFar = 0; started = Date(); stageStarted = started; estimator = Estimator.load(); times = []; stepOpen = nil; titleID = nil; output = nil
         log = []; error = nil; warnings = []; lastRed = ""; stderrTail = ""; cancelled = false
         try? FileManager.default.createDirectory(at: Paths.games, withIntermediateDirectories: true)
         let p = Process(), out = Pipe(), err = Pipe()
-        p.executableURL = URL(fileURLWithPath: exe); p.arguments = args; p.environment = engineEnvironment()
+        let gentle = effort < 100
+        p.qualityOfService = gentle ? .background : .default   // the child does the heavy work, not this activity
+        p.executableURL = URL(fileURLWithPath: exe); p.arguments = args; p.environment = engineEnvironment(effort: effort)
         p.standardOutput = out; p.standardError = err; p.standardInput = FileHandle.nullDevice
         p.currentDirectoryURL = Paths.games
         // Exit is handled only after both pipes are drained, so the engine's last message is never lost.
@@ -65,7 +67,8 @@ final class Builder: ObservableObject {
             self.error = "The conversion engine did not start: \(error.localizedDescription)"; return
         }
         proc = p; running = true
-        activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled], reason: "Converting a game")
+        let options: ProcessInfo.ActivityOptions = gentle ? [.background, .idleSystemSleepDisabled] : [.userInitiated, .idleSystemSleepDisabled]
+        activity = ProcessInfo.processInfo.beginActivity(options: options, reason: gentle ? "Converting a game, leaving room to play" : "Converting a game")
         group.notify(queue: .main) { [weak self] in self?.finished(p.terminationStatus) }
     }
 
