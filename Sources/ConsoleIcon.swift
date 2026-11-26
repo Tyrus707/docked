@@ -72,5 +72,10 @@ struct ConsoleGlyph: Shape {
 
 struct ConsoleIcon: View {
     let id: String
-    var body: some View { ConsoleGlyph(kind: ConsoleGlyph.kind(id)).stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)).frame(width: 18, height: 18).accessibilityHidden(true) }
+    var body: some View {
+        Group {
+            if ControllerArt.has(id) { ControllerShape(id: id).fill() }   // home consoles: their own controller (Controllercons)
+            else { ConsoleGlyph(kind: ConsoleGlyph.kind(id)).stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)) }   // handhelds: Docked's own drawing
+        }.frame(width: 20, height: 20).accessibilityHidden(true)
+    }
 }
