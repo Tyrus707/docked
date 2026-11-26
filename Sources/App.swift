@@ -982,7 +982,7 @@ struct ContentView: View {
             }
             Tray()
         }
-        .background(Backdrop())
+        .background(Backdrop(sky: true))
         .overlay { if model.couch { CouchView().transition(.opacity) } }
         .animation(still ? nil : .easeInOut(duration: 0.35), value: model.couch)
         .preferredColorScheme(model.palette.dark ? .dark : .light)

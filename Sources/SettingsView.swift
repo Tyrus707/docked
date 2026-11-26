@@ -20,7 +20,7 @@ struct SettingsSheet: View {
     @ViewBuilder var general: some View {
         VStack(spacing: 14) {
             line("Theme", "Docked keeps its own look, whatever your Mac's light or dark setting.") {
-                HStack(spacing: 8) { ForEach(Style.all) { t in ThemeSwatch(theme: t, on: model.palette == t) { model.palette = t } } }
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(60), spacing: 8), count: 5), spacing: 10) { ForEach(Style.all) { t in ThemeSwatch(theme: t, on: model.palette == t) { model.palette = t } } }.fixedSize()
             }
             line("Show games as", "") { Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
             flip("Open filling the screen", "A window as big as the screen, without a separate Space. From the next time Docked opens.", $model.fullScreen)
