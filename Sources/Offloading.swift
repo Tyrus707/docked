@@ -42,6 +42,7 @@ extension Model {
         guard let root else { return }
         let busy = go.filter { isOpen($0) || isRunning($0) }, send = go.filter { g in !busy.contains(g) }, place = offloadName(root.path)
         if send.isEmpty { message = "Quit \(busy.map(\.name).joined(separator: ", ")) first, then offload."; return }
+        for g in send { snapshotSave(g, "before offload") }
         filing = send.count == 1 ? "Offloading \(send[0].name)…" : "Offloading \(send.count) games…"
         DispatchQueue.global(qos: .userInitiated).async {
             var sent: [(Game, URL)] = [], failed: [String] = []
@@ -62,7 +63,8 @@ extension Model {
                 if !say.isEmpty { self.message = say.joined(separator: "\n\n") }
                 if !sent.isEmpty {
                     let what = sent.count == 1 ? "\(sent[0].0.name) is offloaded to \(place)." : "\(sent.count) games are offloaded to \(place)."
-                    self.tell(what + (drive(of: root.path) == nil ? " It leaves this Mac once \(place) has uploaded it. Saves stay here." : " Saves stay on this Mac."))
+                    let detail = what + (drive(of: root.path) == nil ? " It leaves this Mac once \(place) has uploaded it. Saves stay here." : " Saves stay on this Mac.")
+                    self.tell(detail); self.logActivity("Games offloaded", detail: detail)
                 }
             }
         }

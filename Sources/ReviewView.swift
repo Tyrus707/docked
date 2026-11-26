@@ -7,7 +7,10 @@ struct ReviewView: View {
     @State private var dropping = false
     @State private var more = false
     @Environment(\.accessibilityReduceMotion) private var still
-    var space: (text: String, short: Bool) { spaceText(need: spaceNeeded(model.review.parts.reduce(0) { $0 + $1.bytes }), free: freeSpace()) }
+    private var reviewBytes: Int64 { model.review.parts.reduce(0) { $0 + $1.bytes } }
+    private var reviewDestination: URL { model.target == .phone ? phoneFolder : model.reviewPlace }
+    private var reviewSpace: SpaceEstimate { spaceEstimate(bytes: reviewBytes, destination: reviewDestination) }
+    private var destinationName: String { model.target == .phone ? "iPhone and iPad apps" : FileManager.default.displayName(atPath: model.reviewPlace.path) }
     var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? (model.organized && model.existing == nil ? "Sorts into " : "Saves to ") + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil, model.reviewFriends ? "Multiplayer" : nil, model.speed != .full ? model.speed.label : nil].compactMap { $0 }).joined(separator: ", ") }
     func note(_ t: String, _ s: String, _ warn: Bool) -> some View { Label(t, systemImage: s).foregroundStyle(warn ? style.warn : Color.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
 
@@ -56,7 +59,7 @@ struct ReviewView: View {
             ForEach(model.review.notes.filter(\.1), id: \.0) { n in note(n.0, "exclamationmark.triangle", true) }
             if model.target == .mac, let g = model.existing { note(existingNote(g), "arrow.triangle.2.circlepath", false) }
             if let f = model.review.family, let c = model.compat[f.uppercased()], c.kind != .good { note(compatNote(c), "exclamationmark.triangle", true) }
-            if !model.review.parts.isEmpty, space.short { note(space.text, "exclamationmark.triangle", true) }
+            if !model.review.parts.isEmpty { SpaceCheck(estimate: reviewSpace, destination: destinationName) }
             if model.after == .everything, !model.forXcode { note("The original files go to the Trash before you've tried the game. Don't empty it until you have.", "exclamationmark.triangle", true) }
             if let n = model.reviewNote { Label(n, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout).fixedSize(horizontal: false, vertical: true) }
             if model.target == .mac {
@@ -83,7 +86,6 @@ struct ReviewView: View {
                         Text(model.speed.note + " The finished game is the same.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     ForEach(model.review.notes.filter { !$0.1 }, id: \.0) { n in note(n.0, "checkmark.circle", false) }
-                    if !model.review.parts.isEmpty, !space.short { note(space.text, "internaldrive", false) }
                 }.padding(.leading, 16)
             }
             HStack {
@@ -91,7 +93,7 @@ struct ReviewView: View {
                 Spacer()
                 if model.waits { Text("Starts by itself").font(.caption).foregroundStyle(.secondary) }
                 Button("Cancel") { model.review.parts = []; dismiss() }.keyboardShortcut(.cancelAction)
-                Button(model.waits ? "Add to Queue" : "Convert") { if model.convert() { dismiss() } }.keyboardShortcut(.defaultAction).tint(style.button).disabled(model.review.blocker != nil || (model.target == .phone && !model.phoneSet))
+                Button(model.waits ? "Add to Queue" : "Convert") { if model.convert() { dismiss() } }.keyboardShortcut(.defaultAction).tint(style.button).disabled(model.review.blocker != nil || (model.target == .phone && !model.phoneSet) || (!model.review.parts.isEmpty && reviewSpace.short))
             }
         }
         .whenChanged(model.review) { model.reviewNote = nil }

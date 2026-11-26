@@ -21,7 +21,7 @@ extension Model {
     // Each one is added to the queue from its kept files, just as Add Update or DLC would, into the folder it is in now
     func rebuild(_ list: [Health]) {
         guard ready else { health = nil; showSetup = true; return }
-        let wasTarget = target; target = .mac
+        let wasTarget = target, wasFriends = reviewFriends; target = .mac; reviewFriends = false   // a rebuild never carries over the multiplayer choice of an earlier review
         var queued = 0, not: [String] = []
         for h in list where h.fixable {
             guard let g = games.first(where: { $0.url.path == h.path }) else { continue }
@@ -29,7 +29,7 @@ extension Model {
             reviewPlace = g.url.deletingLastPathComponent(); if placeProblem(reviewPlace) != nil { reviewPlace = Paths.games }
             if convert() { queued += 1 } else { not.append("\(g.name): \(reviewNote ?? "it couldn't be added")") }
         }
-        review = Review(parts: []); reviewNote = nil; target = wasTarget; health = nil
+        review = Review(parts: []); reviewNote = nil; target = wasTarget; reviewFriends = wasFriends; health = nil
         if queued > 0 { tell(queued == 1 ? "1 game will be rebuilt. It stays playable until the new one is ready." : "\(queued) games will be rebuilt, one at a time. Each stays playable until its new one is ready.") }
         if !not.isEmpty { message = "These weren't rebuilt: " + not.prefix(4).joined(separator: "; ") }
     }

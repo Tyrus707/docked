@@ -57,6 +57,8 @@ final class Model: ObservableObject {
     @Published var checking = false
     @Published var message: String?   // an alert, for a problem the player must act on
     @Published var notice: Notice?     // a quiet word in the tray (Tray.swift)
+    @Published var activity: [ActivityEntry] = []   // what happened this session, in the tray's Activity list
+    @Published var vaultGame: Game?    // the game whose Save Vault sheet is open
     @Published var showSetup = false
     @Published var showHelp = false
     @Published var showReleaseNotes = false
@@ -281,12 +283,35 @@ final class Model: ObservableObject {
         if !Pads.installed { DispatchQueue.global(qos: .utility).async { try? Pads.install() } }
         do { try RetroArch.prepare(shader: shader != nil) } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
         let ra = NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == RetroArch.app.path }
-        if let ra { if isRunning(g) { ra.activate() } else { message = "RetroArch is already open. Quit it first, then play \(g.name)." }; return }
+        if let ra {
+            if isRunning(g) { ra.activate(); return }
+            let was = games.first(where: { isRunning($0) && $0.rom != nil })?.name
+            let a = NSAlert(); a.messageText = "Switch games?"
+            a.informativeText = (was.map { "RetroArch is playing \($0). " } ?? "RetroArch is open. ") + "Docked saves a resume point when allowed, closes it safely, then opens \(g.name)."
+            a.addButton(withTitle: "Save and Switch"); a.addButton(withTitle: "Cancel")
+            guard a.runModal() == .alertFirstButtonReturn else { return }
+            switchRetro(ra, to: g, r, from: was); return
+        }
         do {
             let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path, shader: shader, net: net) { [weak self] in self?.backFromGame() }
             adoptRetro(pid, as: g.titleID.uppercased(), tries: 20); stepAside()
         } catch { message = "RetroArch couldn't start. \(error.localizedDescription)" }
     }
+    // Closes the old game through RetroArch's own clean exit, then comes back and starts the chosen one.
+    private func switchRetro(_ ra: NSRunningApplication, to g: Game, _ r: Rom, from was: String?) {
+        retro = RetroWork(what: "Saving and switching games…", fraction: nil)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let closed = RetroArch.quitCleanly(ra)
+            DispatchQueue.main.async {
+                self.retro = nil
+                guard closed else { self.message = "RetroArch didn't close. Quit it yourself, then play \(g.name)."; return }
+                let detail = was.map { "Opened \(g.name). \($0)'s save was written before the switch." } ?? "Opened \(g.name). RetroArch closed cleanly."
+                self.logActivity("Switched retro games", detail: detail)
+                self.playRom(g, r)
+            }
+        }
+    }
+
     // ---- retro games online with a friend (Netplay.swift) ----
     func hostOnline(_ g: Game) {
         guard let r = g.rom else { return }
@@ -588,7 +613,8 @@ final class Model: ObservableObject {
         if !deleted.isEmpty {
             for g in deleted { if g.rom != nil { l.removeRom(g.titleID) } else { l.removeApp(g.url.path) } }
             let gone = Set(deleted.map(\.id)); all.removeAll { gone.contains($0.id) }
-            tell(deleted.count == 1 ? "\(deleted[0].name) was deleted, so it has left the library. Add it again and its play time comes back." : "\(deleted.count) games were deleted, so they have left the library. Add one again and its play time comes back.")
+            let what = deleted.count == 1 ? "\(deleted[0].name) was deleted, so it has left the library. Add it again and its play time comes back." : "\(deleted.count) games were deleted, so they have left the library. Add one again and its play time comes back."
+            tell(what); logActivity("Games left the library", detail: what, warn: true)
         }
         games = all
         l.meet(games); if l != library { library = l }; offers = offers.filter { o in games.contains { $0.id == o.id } }; if let s = selected, !games.contains(where: { $0.id == s }) { selected = nil }
@@ -641,6 +667,7 @@ final class Model: ObservableObject {
             else { queue.stopped(); reload() }
         default:
             let (t, b) = Notify.text(done: nil, failed: job?.title ?? builder.title, left: queue.waiting.count, problems: 0); Notify.say(t, b)
+            logActivity("\(job?.title ?? builder.title) could not be converted", detail: builder.error ?? "It stopped without saying why.", warn: true, report: builder.report)
             queue.failed(builder.error ?? "It stopped without saying why.", report: builder.report); reload(); startNext()
         }
     }
@@ -659,6 +686,7 @@ final class Model: ObservableObject {
         if j.xcode {
             guard let w = builder.work, hasXcodeProject(w), xcodeGames().contains(where: { $0.project.standardizedFileURL.resolvingSymlinksInPath().path == xcodeProject(in: w).standardizedFileURL.resolvingSymlinksInPath().path }) else { queue.problems.append(Problem(title: j.title, reason: "It finished, but there is no Xcode project where it should be.")); reload(); startNext(); return }
             xcodeReady.removeAll { $0 == name }; xcodeReady.append(name)
+            logActivity("\(name) is ready for Xcode", detail: "Converted and checked.")
             let (t, b) = Notify.text(done: name + " for Xcode", failed: nil, left: queue.waiting.count, problems: queue.problems.count); Notify.say(t, b); reload(); startNext(); return
         }
         guard let from = phoneOut, looksLikeIPA(from) else { queue.problems.append(Problem(title: j.title, reason: "It finished, but there is no iPhone app where it should be.")); reload(); startNext(); return }
@@ -677,7 +705,7 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || editingMeta != nil || importing != nil || tidying != nil || health != nil || tuning != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil || editingMeta != nil || health != nil || tuning != nil || vaultGame != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSetup(_ f: @escaping () -> Void) { showSetup = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
@@ -691,6 +719,8 @@ final class Model: ObservableObject {
     }
     private func settle(_ j: Job?, _ c: GameCheck = GameCheck()) {
         let g = builder.titleID.flatMap { id in games.first(where: { $0.titleID.uppercased() == id }) }
+        if c.ok { logActivity("\(builder.title) is ready", detail: "Converted and checked.") }
+        else { logActivity("\(builder.title) needs attention", detail: c.text(again: j?.again == true), warn: true, report: builder.report) }
         // One that did not pass is converted once more, first in line: the engine keeps what it finished, so only the missing part is redone
         if !c.ok, c.mendable, let j, j.again != true { var a = j; a.id = UUID(); a.again = true; queue.waiting.insert(a, at: 0); startNext(); return }
         // A game that still did not pass keeps everything it was made from: nothing is removed, whatever was chosen
@@ -864,8 +894,8 @@ final class Model: ObservableObject {
         for p in j.parts where !FileManager.default.fileExists(atPath: p) { return .no("\((p as NSString).lastPathComponent) can't be found.") }
         if !j.phone, let e = placeProblem(j.placeURL), j.place != Paths.games.path { return .no(e.localizedDescription) }
         if j.needsKeys, findKeys(keys) == nil { return .no("Your prod.keys file can't be found.") }
-        let free = freeSpace(), need = spaceNeeded(j.bytes), f = ByteCountFormatter()
-        if free < need { return .no("Not enough disk space. It needs about \(f.string(fromByteCount: need)) while converting and you have \(f.string(fromByteCount: free)).") }
+        let room = spaceEstimate(bytes: j.bytes, destination: j.phone ? phoneFolder : j.placeURL)
+        if room.short { return .no("Not enough room. \(spaceAdvice(room))") }
         return .go
     }
     private func phoneStart(_ key: String) -> URL { try? FileManager.default.createDirectory(at: phoneFolder, withIntermediateDirectories: true); let u = phoneFolder.appendingPathComponent(".\(key).ipa"); try? FileManager.default.removeItem(at: u); phoneOut = u; return u }
@@ -874,19 +904,29 @@ final class Model: ObservableObject {
         retry?.cancel(); retry = nil
         guard !builder.running, moving == nil, !removing, !installing, !queue.paused, !engineBusy, !checkingGame else { return }
         guard ready else { if !checks.isEmpty, !queue.waiting.isEmpty { queue.paused = true }; return }
-        let now = convertOnce; convertOnce = false   // Convert Now starts this batch without changing the saved choice
+        let now = convertOnce; if queue.waiting.isEmpty { convertOnce = false }   // Convert Now carries on until everything waiting has started; the saved choice stays as it is
         if !queue.waiting.isEmpty, let why = now ? nil : Power.shared.wait(convertWhen) {   // looked at again every 5 minutes, and at once when the power changes
             convertWaiting = why; let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: w); return
         }
         convertWaiting = nil
-        while let j = queue.next(verdict) {
+        while let j = queue.next({ job in
+            let v = self.verdict(job)
+            if case let .no(why) = v { self.logActivity("\(job.title) was not started", detail: why, warn: true) }
+            return v
+        }) {
             do {
+                if let id = j.family, let g = games.first(where: { $0.titleID.uppercased() == id }) { snapshotSave(g, "before convert") }
                 let input = try resolveInput(j.urls, family: j.family)
                 buildPlace = j.placeURL; buildSources = j.sources
                 builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, speed: j.speed, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone; Notify.ask()
                 if builder.running { if now { oneOffRunning = true }; return }
-                queue.failed(builder.error ?? "The conversion engine did not start.")
-            } catch { queue.problems.append(Problem(title: j.title, reason: error.localizedDescription)); queue.done() }
+                let why = builder.error ?? "The conversion engine did not start."
+                logActivity("\(j.title) could not start", detail: why, warn: true, report: builder.report)
+                queue.failed(why)
+            } catch {
+                queue.problems.append(Problem(title: j.title, reason: error.localizedDescription)); queue.done()
+                logActivity("\(j.title) could not start", detail: error.localizedDescription, warn: true)
+            }
         }
         // Only games that are open are left: look again shortly.
         if !queue.waiting.isEmpty { let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: w) }
@@ -971,7 +1011,7 @@ final class Model: ObservableObject {
                     DispatchQueue.main.async {
                         self.updating = false
                         switch r { case let .failure(e): self.message = e.localizedDescription
-                        case .success: self.update = nil; if self.builder.running || self.moving != nil || self.removing { self.tell("Docked \(v) is in place. It opens next time.") } else { Update.reopen(Bundle.main.bundleURL); NSApp.terminate(nil) } }
+                        case .success: self.update = nil; self.logActivity("Docked \(v) is installed", detail: "Your games, saves and settings are unchanged."); if self.builder.running || self.moving != nil || self.removing { self.tell("Docked \(v) is in place. It opens next time.") } else { Update.reopen(Bundle.main.bundleURL); NSApp.terminate(nil) } }
                     }
                 }
             }
@@ -1011,7 +1051,11 @@ final class Model: ObservableObject {
                 case let .success(next):
                     // Nothing can have started meanwhile, but the swap is the one step that must never happen during a conversion
                     guard self.engineFree else { try? FileManager.default.removeItem(at: next); self.tell("Docked can update its engine once it has finished its current job.", good: false); break }
-                    do { try Engine.swapIn(next); self.engine = nil; self.engineSigned = nil; self.tell("The conversion engine is updated" + (day.map { " to the one from \($0)" } ?? "") + ". Converted games stay as they are, and Settings can switch back.") }
+                    do {
+                        try Engine.swapIn(next); self.engine = nil; self.engineSigned = nil
+                        let note = "The conversion engine is updated" + (day.map { " to the one from \($0)" } ?? "") + ". Converted games stay as they are, and Settings can switch back."
+                        self.tell(note); self.logActivity("Conversion engine updated", detail: note)
+                    }
                     catch { self.message = error.localizedDescription }
                 }
                 self.engineBusy = false; self.recheck()
@@ -1021,7 +1065,7 @@ final class Model: ObservableObject {
     func engineBack() {
         guard !engineBusy else { return }
         guard engineFree else { tell("Docked can change its engine once it has finished its current job.", good: false); return }
-        do { try Engine.goBack(); engine = nil; tell("Docked has switched engines. Settings can switch back.") } catch { message = error.localizedDescription }
+        do { try Engine.goBack(); engine = nil; let note = "Docked has switched engines. Settings can switch back."; tell(note); logActivity("Conversion engine switched back", detail: note) } catch { message = error.localizedDescription }
         recheck()
     }
     @Published var checkingUpdate = false
@@ -1068,7 +1112,7 @@ final class Model: ObservableObject {
             switch a {
             case .newest: self.tell("You have the newest Docked (\(appVersion)).")
             case .unknown: self.tell("Docked could not check for updates. Try again later.", good: false)
-            case let .available(v): let n = NSAlert(); n.messageText = "Docked \(v) is available"; n.informativeText = "You have \(appVersion). Docked checks the update is genuine, keeps a copy of this version, and reopens. Your games and settings stay."; n.addButton(withTitle: "Update and Reopen"); n.addButton(withTitle: "Not Now"); if n.runModal() == .alertFirstButtonReturn { self.update = v; self.installUpdate(v) }
+            case let .available(v): let n = NSAlert(); n.messageText = "Docked \(v) is available"; n.informativeText = "You have \(appVersion). Docked checks the update is genuine, replaces itself with the new version, and reopens. Your games, saves and settings stay."; n.addButton(withTitle: "Update and Reopen"); n.addButton(withTitle: "Not Now"); if n.runModal() == .alertFirstButtonReturn { self.update = v; self.installUpdate(v) }
             }
         }
     }
@@ -1110,7 +1154,12 @@ final class Model: ObservableObject {
     }
 
     func trash(_ u: URL) {
-        do { try FileManager.default.trashItem(at: u, resultingItemURL: nil); library.removeApp(u.path) } catch { message = error.localizedDescription }
+        let saved = games.first(where: { $0.url.standardizedFileURL == u.standardizedFileURL }).map { snapshotSave($0, "before trash") != nil } ?? false
+        do {
+            try FileManager.default.trashItem(at: u, resultingItemURL: nil)
+            library.removeApp(u.path)
+            logActivity("Moved a game to the Trash", detail: saved ? "Its save was kept in the Save Vault first." : nil)
+        } catch { message = error.localizedDescription }
         reload()
     }
 }
@@ -1169,6 +1218,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showReview) { ReviewView() }
         .sheet(item: $model.editing) { SmartEditor(s: $0) }
         .sheet(item: $model.tuning) { g in if let gs = GameSettings(app: g.url) { GameSettingsView(game: g, gs: gs) } }
+        .sheet(item: $model.vaultGame) { SaveVaultView(game: $0) }
         .sheet(isPresented: .init(get: { model.cleaning != nil }, set: { if !$0 { model.cleaning = nil } })) { CleanUpView() }
         .alert("Docked", isPresented: .init(get: { model.message != nil && !model.couch }, set: { if !$0 { model.message = nil } })) { Button("OK") {} } message: { Text(model.message ?? "") }
         .confirmationDialog("Move \(deleting?.name ?? "") to the Trash?", isPresented: .init(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { g in
@@ -1339,6 +1389,7 @@ struct SetupView: View {
     private let tick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
     private var first: URL? { model.waitingSwitch.first }   // the Switch game that brought this up, if one did
     private var keysFound: Bool { findKeys(model.keys) != nil }
+    private var room: SpaceEstimate { SpaceEstimate(need: spaceNeeded(0), free: freeSpace(), destinationFree: nil, destinationNeed: nil) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1381,6 +1432,11 @@ struct SetupView: View {
                     }
                 }
             }.padding(first == nil ? 0 : 12).background(first == nil ? Color.clear : style.tile, in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Setup Check", systemImage: "checkmark.seal").font(.callout.weight(.semibold)).foregroundStyle(style.text)
+                SpaceCheck(estimate: room, compact: true)
+                Text(model.waitingSwitch.isEmpty ? "Converting needs about 10 GB of work space, plus twice the size of each game." : "\(model.waitingSwitch.count) \(model.waitingSwitch.count == 1 ? "game is" : "games are") waiting. Each needs about twice its size plus 10 GB of work space.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if let p = model.installProblem { Label(p, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout) }
             if first != nil { Label("Your game is kept here. Once everything is ready, Docked picks up where you left off, so you can close this and keep playing.", systemImage: "clock").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             HStack {

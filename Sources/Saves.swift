@@ -9,9 +9,10 @@ struct SaveMenu: View {
     var body: some View {
         let d = GameData(game.titleID), list = d.list()
         Menu("Saves") {
+            Button("Save Vault…") { model.openVault(game) }
             Button("Back Up Now") { model.backUpSave(game) }.disabled(!d.hasSave)
             Menu("Restore a Backup") {
-                ForEach(Array(list.prefix(12)), id: \.url) { b in Button("\(b.date.formatted(date: .abbreviated, time: .shortened)), \(ByteCountFormatter.string(fromByteCount: b.bytes, countStyle: .file))") { model.restoreSave(game, from: b.url) } }
+                ForEach(Array(list.prefix(12)), id: \.url) { b in Button("\(b.reason), \(b.date.formatted(date: .abbreviated, time: .shortened)), \(byteText(b.bytes))") { model.restoreSave(game, from: b.url) } }
             }.disabled(list.isEmpty)
             Button("Import Save…") { model.importSave(game) }
             Divider()
@@ -35,9 +36,48 @@ extension Model {
 
     func reveal(_ u: URL) { if FileManager.default.fileExists(atPath: u.path) { NSWorkspace.shared.activateFileViewerSelecting([u]) } else { _ = NSWorkspace.shared.open(u.deletingLastPathComponent()) } }
 
+    func openVault(_ g: Game) { vaultGame = g }
+
+    // A dated copy in the game's Save Vault, before anything that can disturb its progress.
+    @discardableResult func snapshotSave(_ g: Game, _ why: String, quiet: Bool = false) -> URL? {
+        guard g.rom == nil else { return nil }   // a save can still be here when its game's drive is away
+        do {
+            let d = GameData(g.titleID)
+            guard let u = try d.backUp(label: "Docked \(why)") else { return nil }
+            if !quiet { logActivity("Saved \(g.name)'s progress", detail: "A dated copy was kept \(why).") }
+            return u
+        } catch { logActivity("Couldn't save a copy of \(g.name)'s progress", detail: "Docked tried to keep one \(why). \(error.localizedDescription)", warn: true); return nil }
+    }
+
+
     func backUpSave(_ g: Game) {
-        do { if try GameData(g.titleID).backUp() != nil { tell("\(g.name)'s save is backed up.") } else { tell("\(g.name) has no save yet.", good: false) } }
-        catch { message = "Docked couldn't back up \(g.name)'s save. \(error.localizedDescription)" }
+        guard GameData(g.titleID).hasSave else { tell("\(g.name) has no save yet.", good: false); return }
+        if snapshotSave(g, "manual backup", quiet: true) != nil {
+            tell("\(g.name)'s save is in its Save Vault.")
+            logActivity("Saved \(g.name)'s progress", detail: "Made a backup now.")
+        } else { message = "Docked couldn't back up \(g.name)'s save. Check free space, then try again." }
+    }
+
+    // A copy the player can carry to another Mac or keep somewhere of their own. Nothing is sent anywhere.
+    func exportSave(_ g: Game, from source: URL? = nil, label: String = "save") {
+        let p = NSOpenPanel(); p.canChooseFiles = false; p.canChooseDirectories = true; p.canCreateDirectories = true; p.prompt = "Use"
+        p.message = "Choose where to keep a copy of \(g.name)'s save."
+        guard p.runModal() == .OK, let folder = p.url else { return }
+        let safe = g.name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        do {
+            let to: URL?
+            if let source {
+                let fm = FileManager.default
+                try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                var dest = folder.appendingPathComponent("\(safe) \(label)"); var i = 2
+                while fm.fileExists(atPath: dest.path) { dest = folder.appendingPathComponent("\(safe) \(label) \(i)"); i += 1 }
+                try fm.copyItem(at: source, to: dest); to = dest
+            } else { to = try GameData(g.titleID).export(into: folder, named: safe) }
+            if to != nil {
+                tell("A copy of \(g.name)'s save is in \(folder.lastPathComponent).")
+                logActivity("Copied \(g.name)'s save out", detail: "A copy is in \(folder.lastPathComponent).")
+            } else { tell("\(g.name) has no save yet.", good: false) }
+        } catch { message = "Docked couldn't copy out \(g.name)'s save. \(error.localizedDescription)" }
     }
 
     // Always asked first, with the save's date and size: the newer save is not always the one with more progress.
@@ -49,7 +89,7 @@ extension Model {
         a.informativeText = "From \(when), \(ByteCountFormatter.string(fromByteCount: GameData.size(src), countStyle: .file)). Docked backs up the save you have now first, so you can go back to it."
         a.addButton(withTitle: "Use This Save"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
-        do { try GameData(g.titleID).restore(src); tell("\(g.name) will start from that save.") }
+        do { try GameData(g.titleID).restore(src); tell("\(g.name) will start from that save."); logActivity("Restored \(g.name)'s save", detail: "Used the copy from \(when). The save you had was kept first.") }
         catch { message = "Docked couldn't bring in that save. Your save is as it was. \(error.localizedDescription)" }
     }
 

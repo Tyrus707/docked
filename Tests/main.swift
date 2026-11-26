@@ -404,6 +404,13 @@ var gone: [URL] = []; let kf = mk("my/prod.keys", "k = 1"); check(trashKeys(kf.p
 // ---- space, reports, updates, notices ----
 func sj(_ gb: Int64, _ a: After) -> Job { var j = job("s\(gb)\(a)"); j.bytes = gb * 1_000_000_000; j.after = a; return j }
 check(spaceForQueue([]) == 0 && spaceForQueue([sj(10, .ask)]) == 30_000_000_000, "one game"); check(spaceForQueue([sj(10, .ask), sj(5, .ask)]) == 40_000_000_000 && spaceForQueue([sj(10, .leftovers), sj(5, .ask)]) == 30_000_000_000, "what earlier ones leave counts"); check(spaceText(need: 10_000_000_000, free: 50_000_000_000).short == false && spaceText(need: 50_000_000_000, free: 10_000_000_000).text.contains("Free up about 40 GB"), "said plainly")
+let roomOK = spaceEstimate(bytes: 1_000_000_000, destination: tmp, free: 100_000_000_000, destinationFree: 100_000_000_000)
+let roomTight = spaceEstimate(bytes: 10_000_000_000, destination: tmp, free: 1_000_000_000, destinationFree: 1_000_000_000)
+let destTight = spaceEstimate(bytes: 10_000_000_000, destination: tmp, free: 100_000_000_000, destinationFree: 1_000_000_000)
+check(!roomOK.short && roomOK.destinationNeed == 1_000_000_000 && roomText(free: 100, need: 40).contains("left after"), "both volumes read")
+check(roomTight.short && spaceAdvice(roomTight).contains("on this Mac") && destTight.short && spaceAdvice(destTight).contains("destination drive"), "the full volume is named")
+check(roomText(free: 10, need: 20).contains("short") && !roomText(free: 10, need: 20).contains("-"), "no minus sign in a warning")
+check(freeSpace(at: URL(fileURLWithPath: "/Volumes/NotMounted/x")) == 0, "an unplugged drive has no room")
 let rd = redact("at /Users/jo/Games/x.nsp and /Users/other/y on /Volumes/My Disk/z by Jo Smith (jo) jo@mail.example.com 192.168.1.20 key 0123456789abcdef0123456789abcdef ghp_abcdefghijkl1234 title 0100AAAAAAAAA000 joke", home: "/Users/jo", user: "jo", full: "Jo Smith"); check(!rd.contains("/Users") && !rd.contains("My Disk") && !rd.contains("mail.example") && !rd.contains("192.168") && !rd.contains("0123456789abcdef0") && !rd.contains("ghp_") && !rd.contains("Smith"), "who and where are taken out: " + rd); check(rd.contains("0100AAAAAAAAA000") && rd.contains("joke") && rd.contains("x.nsp"), "what helps stays")
 check(redact("user sam ran", home: "/Users/sam", user: "sam", full: "Sam Lee") == "user (name) ran" && redact("sample", home: "/Users/sam", user: "sam", full: "Sam Lee") == "sample", "names, not parts of words")
 let rp = makeReport(title: "G [0100]", step: "step 3", error: "broke in \(NSHomeDirectory())/x", log: (0..<200).map { "line \($0)" }, version: "1.1", os: "27.2", chip: "Apple M9", space: 5_000_000_000); check(rp.contains("Docked 1.1") && rp.contains("line 199") && !rp.contains("line 100\n") && rp.contains("broke in ~/x"), "report")
@@ -751,14 +758,24 @@ do {
     check(d.root.lastPathComponent == "0100ABC000010000" && !d.hasSave && d.list().isEmpty, "no save yet")
     check((try! d.backUp()) == nil, "nothing to back up")
     _ = mk("nx/0100ABC000010000/save/0/file.bin", "one"); _ = mk("nx/0100ABC000010000/save_device/d.bin", "dev"); _ = mk("nx/0100ABC000010000/save.sync", "base x")
-    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
-    check(fm.fileExists(atPath: b.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b.appendingPathComponent("save.sync").path), "backup holds the save parts only")
-    let b2 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b2 != b, "same second, new folder")
-    check(d.list().count == 2 && d.list().allSatisfy { $0.bytes == 6 }, "backups listed")
+    let b0 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
+    check(fm.fileExists(atPath: b0.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b0.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b0.appendingPathComponent("save.sync").path), "backup holds the save parts only")
+    let b1 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b1 == b0 && d.list().count == 1 && d.list().allSatisfy { $0.bytes == 6 }, "an unchanged save makes no second copy")
+    for i in 0..<5 { try! Data("v\(i)".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02); _ = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_001_000 + Double(i)), label: "Docked before convert") }
+    check(d.list().count == GameData.kept && (try? String(contentsOf: d.list()[0].url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "v4", "a game keeps only its newest 3 copies")
+    try! Data("one".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02)
+    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_002_000))!
+    check(GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before convert"), date: Date(), bytes: 0).reason == "before conversion" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before engine update"), date: Date(), bytes: 0).reason == "before engine update" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked"), date: Date(), bytes: 0).reason == "manual backup", "backups say why they were made")
+    let carried = tmp.appendingPathComponent("carried")
+    let out1 = try! d.export(into: carried, named: "My Game")!
+    check(out1.lastPathComponent.contains("My Game") && fm.fileExists(atPath: out1.appendingPathComponent("save/0/file.bin").path), "a save can be copied out")
+    let keep = mk("carried/keep.txt", "mine")
+    let out2 = try! d.export(into: carried, named: "My Game")!
+    check(out2 != out1 && fm.fileExists(atPath: keep.path), "copying out never replaces a folder the player chose")
     try! Data("two".utf8).write(to: d.save.appendingPathComponent("0/file.bin"))
     try! d.restore(b)
     check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "one", "backup restored")
-    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" }, "the save it replaced is kept")
+    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" } && d.list().count <= GameData.kept, "the save it replaced is kept, still within 3 copies")
     let loose = mk("elsewhere/mysave/0/file.bin", "three").deletingLastPathComponent().deletingLastPathComponent()
     try! d.restore(loose); check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "three" && fm.fileExists(atPath: d.root.appendingPathComponent("save_device").path), "a bare save folder becomes the save")
     try? fm.createDirectory(at: tmp.appendingPathComponent("emptyfolder"), withIntermediateDirectories: true)

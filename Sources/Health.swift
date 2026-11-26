@@ -21,7 +21,7 @@ func healthOf(app: URL, titleID: String, name: String, engine: String?, active: 
     if !selfContained(app, titleID: titleID) { h.problems.append("It is missing a part it needs, or still uses files outside itself.") }
     else if verify(app) == false { h.problems.append("Its signature doesn't match what is inside it, so macOS may refuse to open it.") }
     if let e = engine, e != active { h.better.append("It was made with an older engine. A rebuild uses the newer one.") }
-    if !friends(app) { h.better.append("It was made before Play with friends. A rebuild adds it.") }
+    if !friends(app) { h.better.append("It was made before Play with friends. A rebuild adds the switch; turn it on in its Game Settings.") }
     if let c = compat, c.kind == .poor { h.reports.append("Players report it doesn't run yet (\(c.label)).") }
     return h
 }
