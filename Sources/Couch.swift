@@ -341,6 +341,7 @@ struct CouchInfo: View {
                 if let d = e.lastPlayed { stat("calendar", "Last played " + RelativeDateTimeFormatter().localizedString(for: d, relativeTo: Date())) }
                 if e.status != .none { stat("bookmark", e.status.rawValue) }
                 if e.favorite { stat("heart.fill", "Favorite", style.accent) }
+                if let r = game.rom, let p = Cheevos.of(r) { stat("trophy", "\(Cheevos.text(p)) achievements", p.earned == p.total ? style.accent : nil) }
                 if model.isRunning(game) { stat("play.fill", "Playing now", style.ok) }
             }
             if let why = game.cannot { stat("exclamationmark.triangle.fill", why, style.warn) }

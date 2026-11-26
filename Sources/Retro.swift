@@ -56,13 +56,14 @@ enum RetroArch {
     // N64: GLideN64 draws only black on macOS's OpenGL, so ParaLLEl's renderer is used, on Vulkan (MoltenVK, inside RetroArch).
     static let coreDefaults = [("mupen64plus-rdp-plugin", "parallel"), ("mupen64plus-rsp-plugin", "parallel")]
     // Its own settings, then Docked's folders on top, so nothing the player changes in RetroArch can move them.
-    static func arguments(core: URL, rom: String) -> [String] { ["--config", settings.path, "--appendconfig", docked.path, "-L", core.path, rom] }
+    // A retro look comes as its own argument, so it is used for this game only and never saved over the player's own choice.
+    static func arguments(core: URL, rom: String, shader: URL? = nil) -> [String] { ["--config", settings.path, "--appendconfig", docked.path] + (shader.map { ["--set-shader", $0.path] } ?? []) + ["-L", core.path, rom] }
     // Games open in RetroArch's own full screen unless the player turns it off in Settings; then a window as big as the screen.
     static var fullScreen: Bool {
         get { UserDefaults.standard.object(forKey: "retroFullScreen") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "retroFullScreen") }
     }
-    static func prepare(full: Bool = fullScreen) throws {
+    static func prepare(full: Bool = fullScreen, shader: Bool = false) throws {
         let fm = FileManager.default
         for d in ["cores", "system", "saves", "states", "screenshots", "thumbnails"] { try fm.createDirectory(at: support.appendingPathComponent(d), withIntermediateDirectories: true) }
         if !fm.fileExists(atPath: settings.path) { try line("config_save_on_exit", "true").write(to: settings, atomically: true, encoding: .utf8) }
@@ -74,6 +75,7 @@ enum RetroArch {
             + line("savestate_directory", support.appendingPathComponent("states").path) + line("screenshot_directory", support.appendingPathComponent("screenshots").path)
             + line("thumbnails_directory", support.appendingPathComponent("thumbnails").path) + line("quit_on_close_content", "2")
             + line("global_core_options", "true") + line("core_options_path", options.path) + line("pause_nonactive", "false") + (full ? line("video_fullscreen", "true") : filling(screen()))
+            + line("video_shader_dir", Shaders.slang.path) + line("video_shader_enable", shader ? "true" : "false") + Cheevos.lines() + Pads.lines()
         try mine.write(to: docked, atomically: true, encoding: .utf8)
     }
     static func line(_ k: String, _ v: String) -> String { "\(k) = \"\(v.replacingOccurrences(of: "\"", with: ""))\"\n" }
@@ -149,6 +151,7 @@ enum RetroArch {
         if !installed { try installApp(progress) }
         try prepare()
         if core(c) == nil { try installCore(c, progress) }
+        if !Pads.installed { try? Pads.install() }   // controller profiles: small, and a game still starts without them
     }
     static func installApp(_ progress: @escaping (String, Double?) -> Void = { _, _ in }) throws {
         let fm = FileManager.default
@@ -188,10 +191,10 @@ enum RetroArch {
     }
     // Starts a game in Docked's RetroArch, as a program Docked runs, not an app opened through Launch Services (which would list it again).
     // ended runs on the main thread when RetroArch quits, which it does when the game is closed (quit_on_close_content).
-    static func launch(core: URL, rom: String, ended: @escaping () -> Void) throws -> pid_t {
-        let p = Process(); p.executableURL = app.appendingPathComponent("Contents/MacOS/RetroArch"); p.arguments = arguments(core: core, rom: rom)
+    static func launch(core: URL, rom: String, shader: URL? = nil, ended: @escaping () -> Void) throws -> pid_t {
+        let p = Process(); p.executableURL = app.appendingPathComponent("Contents/MacOS/RetroArch"); p.arguments = arguments(core: core, rom: rom, shader: shader)
         p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { _ in DispatchQueue.main.async(execute: ended); DispatchQueue.global(qos: .utility).async { unregister(app) } }
+        p.terminationHandler = { _ in Cheevos.scrub(settings); Cheevos.scrub(docked); DispatchQueue.main.async(execute: ended); DispatchQueue.global(qos: .utility).async { unregister(app) } }
         try p.run(); return p.processIdentifier
     }
     // A RetroArch the player had before keeps going in Docked's: its saves, save states and system files are copied over, never moved.

@@ -255,11 +255,15 @@ final class Model: ObservableObject {
         if let p = RetroArch.problem(c, rom: r.path) { message = p; return }
         if !RetroArch.ready(c) { setUpRetro(c) { [weak self] in self?.playRom(g, r) }; if retro == nil { tell("Docked is getting \(c.name) games ready. The game starts when it's done.") }; return }
         if let b = RetroArch.missingBios(c, rom: r.path), b.required || !biosAsked(c) { askBios(c) { [weak self] in self?.playRom(g, r) }; return }
-        do { try RetroArch.prepare() } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
+        let look = Shaders.look(r)
+        if look != .off && !Shaders.installed { getLooks { [weak self] in self?.playRom(g, r) }; return }
+        let shader = Shaders.preset(look)
+        if !Pads.installed { DispatchQueue.global(qos: .utility).async { try? Pads.install() } }
+        do { try RetroArch.prepare(shader: shader != nil) } catch { message = "RetroArch's settings couldn't be written. \(error.localizedDescription)"; return }
         let ra = NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == RetroArch.app.path }
         if let ra { if isRunning(g) { ra.activate() } else { message = "RetroArch is already open. Quit it first, then play \(g.name)." }; return }
         do {
-            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path) { [weak self] in self?.backFromGame() }
+            let pid = try RetroArch.launch(core: RetroArch.core(c)!, rom: r.path, shader: shader) { [weak self] in self?.backFromGame() }
             adoptRetro(pid, as: g.titleID.uppercased(), tries: 20); stepAside()
         } catch { message = "RetroArch couldn't start. \(error.localizedDescription)" }
     }
@@ -271,10 +275,32 @@ final class Model: ObservableObject {
     }
     // A RetroArch game closed: back to the library.
     func backFromGame() {
-        NSApp.unhide(nil)
+        NSApp.unhide(nil); refreshCheevos()
         for w in NSApp.windows where w.isMiniaturized { w.deminiaturize(nil) }
         if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
         NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil); if couch { couchBack() }
+    }
+    // Retro looks: libretro's shaders, downloaded the first time a game uses one; the game starts when they're here
+    private var gettingLooks: [() -> Void] = []
+    func getLooks(then: @escaping () -> Void) {
+        gettingLooks.append(then); guard gettingLooks.count == 1 else { return }
+        retro = RetroWork(what: "Downloading retro looks…", fraction: nil); var last = Date.distantPast
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = Result { try Shaders.install { w, f in
+                guard Date().timeIntervalSince(last) > 0.25 else { return }; last = Date()
+                DispatchQueue.main.async { self.retro = RetroWork(what: w, fraction: f) }
+            } }
+            DispatchQueue.main.async {
+                self.retro = nil; let waiting = self.gettingLooks; self.gettingLooks = []
+                switch r { case .success: waiting.forEach { $0() }; case .failure(let e): self.message = "The retro looks couldn't be downloaded. \(e.localizedDescription)" }
+            }
+        }
+    }
+    // RetroAchievements progress, fetched again after a retro game and when asked, at most once a minute
+    func refreshCheevos(force: Bool = false) {
+        guard Cheevos.signedIn, Cheevos.hasWebKey, force || Date().timeIntervalSince(Cheevos.checked) > 60 else { return }
+        Cheevos.checked = Date()
+        DispatchQueue.global(qos: .utility).async { let e = Result { try Cheevos.refresh() }; DispatchQueue.main.async { self.objectWillChange.send(); if force, case .failure(let x) = e { self.message = x.localizedDescription } } }
     }
 
     func shown(_ s: Section, by: SortBy = .name) -> [Game] {

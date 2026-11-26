@@ -11,7 +11,7 @@ struct SettingsSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
-            Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
+            Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
             HStack { Button("How to Use Docked") { model.leaveSettings { model.showHelp = true } }; Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button) }
         }.padding(24).frame(width: 520).background(AllowQuit()).background(Backdrop())
     }
@@ -110,5 +110,56 @@ struct ThemeSwatch: View {
                 Text(theme.name).font(.caption).foregroundStyle(on ? style.text : style.soft)
             }.contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel("\(theme.name) theme").accessibilityAddTraits(on ? .isSelected : []).help(theme.name)
+    }
+}
+
+// Other consoles: RetroAchievements, retro looks and controllers
+struct RetroSettings: View {
+    @EnvironmentObject var model: Model
+    @State private var user = "", password = "", key = "", busy = false, note: String?, pads = Pads.installed
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let u = Cheevos.user, Cheevos.signedIn {
+                line("RetroAchievements", "Signed in as \(u). Unlocks pop up while you play.") { Button("Sign Out") { Cheevos.signOut(); model.objectWillChange.send() } }
+                line("Hardcore", "No save states, rewind or cheats, and unlocks count as hardcore. From the next game you start.") { Toggle("Hardcore", isOn: .init(get: { Cheevos.hardcore }, set: { Cheevos.hardcore = $0; model.objectWillChange.send() })).labelsHidden().toggleStyle(.switch).tint(style.button) }
+                line("Progress in Docked", Cheevos.hasWebKey ? "Shown on each game's page and in Couch Mode." : "Paste the Web API key from your RetroAchievements settings page to see it on each game.") {
+                    if Cheevos.hasWebKey { Button("Refresh") { model.refreshCheevos(force: true) } }
+                    else { SecureField("Web API key", text: $key).frame(width: 150); Button("Save") { Cheevos.setWebKey(key); key = ""; model.refreshCheevos(force: true) }.disabled(key.isEmpty) }
+                }
+            } else {
+                line("RetroAchievements", "Earn achievements in retro games with your free retroachievements.org account. Docked keeps only a sign-in token, in your Keychain.") { Button("Create Account…") { NSWorkspace.shared.open(URL(string: "https://retroachievements.org/createaccount")!) } }
+                HStack(spacing: 8) {
+                    TextField("User name", text: $user); SecureField("Password", text: $password); SecureField("Web API key (optional)", text: $key)
+                    if busy { ProgressView().controlSize(.small) }
+                    Button("Sign In") { signIn() }.disabled(busy || user.isEmpty || password.isEmpty)
+                }.textFieldStyle(.roundedBorder)
+            }
+            if let note { Text(note).font(.caption).foregroundStyle(style.warn) }
+            Divider()
+            Text("Retro looks").font(.callout.weight(.semibold))
+            Text("A filter over the picture for each console. A game can have its own in its details.").font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(consoles.filter { !$0.native }) { c in
+                        HStack { Text(c.name); Spacer(); Picker(c.name, selection: .init(get: { Shaders.look(console: c.id) }, set: { Shaders.setLook($0, console: c.id); model.objectWillChange.send() })) { ForEach(RetroLook.allCases) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
+                    }
+                }.padding(.trailing, 6)
+            }.frame(height: 130)
+            Divider()
+            line("Controllers", pads ? "Most game pads work as soon as they are plugged in, using libretro's controller profiles." : "Docked downloads libretro's controller profiles with your first retro game, so most pads work without setup.") {
+                if !pads { Button("Download Now") { busy = true; DispatchQueue.global(qos: .userInitiated).async { let ok = (try? Pads.install()) != nil; DispatchQueue.main.async { busy = false; pads = Pads.installed; if !ok { note = "The controller profiles couldn't be downloaded. Check your connection." } } } }.disabled(busy) }
+            }
+        }
+    }
+    func signIn() {
+        busy = true; note = nil; let (u, p, k) = (user, password, key)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = Result { try Cheevos.signIn(user: u, password: p, webKey: k) }
+            DispatchQueue.main.async {
+                busy = false; password = ""
+                switch r { case .success: key = ""; model.objectWillChange.send(); model.refreshCheevos(force: true); case .failure(let e): note = e.localizedDescription }
+            }
+        }
     }
 }
