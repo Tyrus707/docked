@@ -181,21 +181,21 @@ struct FriendsSettings: View {
     func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            line("Friends circle", ready ? "Your games meet friends through \(Friends.meetingPoint ?? "your meeting point"). Add friends by their code on a game's Friends screen (its Friends menu, or press both sticks in)." : "Play your games' local wireless modes with friends over the internet. Add the friends pass that whoever set up your circle sent you (AirDrop and Messages put it in Downloads).") {
+            line("Friends circle", ready ? "Connected through \(Friends.meetingPoint ?? "your meeting point"). To add friends, open a game's Friends screen (Friends menu, or click both sticks) and swap codes." : "Play local wireless games with friends over the internet. Add the friends pass you were sent: AirDrop and Messages save it to Downloads.") {
                 Button(ready ? "Replace Pass…" : "Add Friends Pass…") { pick() }
                 if ready, let u = share { ShareLink("Send to a Friend…", item: u) }
             }
             if let note { Text(note).font(.caption).foregroundStyle(.red) }
-            line("In each game", "Open a game's Game Settings and switch on Play with friends, then use the game's own local wireless play. A game converted before this version of Docked needs Convert Again first.") { EmptyView() }
-            line("For smooth play", "Use Ethernet if you can. On Wi-Fi, Docked offers to pause AirDrop while you play, because it makes Mac Wi-Fi step away many times a second, which fighting and racing games feel as lag. Both Macs need to hold full speed, so on a slower Mac set Upscaling to Standard. Connection smoothing is off by default, so nothing is held back; raise it only for relaxed games like Animal Crossing.") { EmptyView() }
-            line("Pause AirDrop on Wi-Fi", "While a friends game runs, so Wi-Fi stays on your network. Needs your password each time.") {
+            line("In each game", "Turn on Play with friends in a game's Game Settings, then start its local wireless mode. Games converted before this version need Convert Again.") { EmptyView() }
+            line("For smooth play", "Ethernet plays best. On Wi-Fi, let Docked pause AirDrop while you play. A slower Mac slows both players, so set its Upscaling to Standard. Keep Connection smoothing off for fighting and racing games.") { EmptyView() }
+            line("Pause AirDrop on Wi-Fi", "Keeps Wi-Fi on your network during friends games. Asks for your password each time.") {
                 Picker("Pause AirDrop on Wi-Fi", selection: $airDrop) { Text("Ask").tag(""); Text("Always").tag("pause"); Text("Never").tag("leave") }.labelsHidden().fixedSize()
                     .onChange(of: airDrop) { v in if v.isEmpty { UserDefaults.standard.removeObject(forKey: "friends.airDrop") } else { UserDefaults.standard.set(v, forKey: "friends.airDrop") } }
             }
-            line("Start your own circle", "Run Friends/meeting/setup_meeting.py once with a Cloudflare token. It puts a free meeting point on your own account and saves your pass here. Send the pass only to friends you trust.") {
+            line("Start your own circle", "Run Friends/meeting/setup_meeting.py once with a Cloudflare token. It sets up a free meeting point and saves your pass here. Share the pass only with friends you trust.") {
                 Button("How…") { NSWorkspace.shared.open(URL(string: "https://github.com/Tyrus707/docked/blob/main/Friends/README.md")!) }
             }
-            Text("Friends you play with can see your Mac's internet address, as in any game played directly between two computers.").font(.caption).foregroundStyle(.secondary)
+            Text("Friends you play with can see your internet address, as in any direct online game.").font(.caption).foregroundStyle(.secondary)
         }.onAppear { Friends.adoptOlder(); ready = Friends.ready; share = Friends.shareable() }
     }
     func pick() {

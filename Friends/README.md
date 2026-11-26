@@ -30,6 +30,8 @@ It puts a small meeting point on your own Cloudflare account (`worker.js`, `core
 
 Lag work (patches 0005 and 0007): lockstep games wait every frame for the other Mac, so any time a packet is held back is time both games stand still. Nothing is held back by default (the jitter cushion is a game setting, 0 to 25 ms), a packet from a friend goes to the game straight from the thread that received it instead of waking another thread first, two spare copies follow 3 and 10 ms later so a lost packet costs a few ms instead of a stall, and in a room the game log gets a line every 5 seconds with sent/received packets, spare copies, drops, and each friend's ping, worst ping and cushion. Tunables: `DM_FRIENDS_CUSHION_MS` (0 to 25, the game setting), `DM_FRIENDS_COPIES` (0 to 2), `DM_FRIENDS_TRACE=1` (calls, no names or addresses).
 
+**Direct paths (patch 0008):** besides STUN, the link asks the home router for a port mapping (NAT-PMP, which PCP routers also answer), as Tailscale and game consoles do, so two homes behind strict routers can still connect directly instead of through the relay. Routers with it turned off simply don't answer.
+
 **Engine updates:** `bump-engine.sh` stops before changing anything when the patches no longer apply. To refresh them: check out the new engine, `git am` the patches, fix what conflicts, then `git format-patch <new pin>..HEAD -o Friends/engine-patches` and update `engine-patches/BASE`.
 
 **Tests:** in an engine checkout with the patches applied, the friends tests live in `dm/host/tests` (`t_friends_link.c`, `t_friends_net.c`, `t_friends_path.c`, `t_friends_internet.py`); the meeting point's own test is `node Friends/meeting/test/run.mjs`.

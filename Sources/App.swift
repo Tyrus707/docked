@@ -999,7 +999,7 @@ final class Model: ObservableObject {
             case "leave": break
             default:
                 let a = NSAlert(); a.messageText = "Pause AirDrop while you play?"
-                a.informativeText = "You're on Wi-Fi. AirDrop and Handoff make Mac Wi-Fi step away many times a second, which fighting and racing games feel as lag. Docked can pause them until the game closes (it asks for your password). Ethernet avoids this altogether."
+                a.informativeText = "AirDrop and Handoff make Wi-Fi step away many times a second, which shows up as lag. Docked can pause them until the game closes. You'll be asked for your password. Ethernet avoids this entirely."
                 a.addButton(withTitle: "Pause AirDrop and Play"); a.addButton(withTitle: "Just Play"); a.addButton(withTitle: "Cancel")
                 a.showsSuppressionButton = true; a.suppressionButton?.title = "Remember my choice"
                 let r = a.runModal()
