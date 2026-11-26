@@ -3,7 +3,9 @@ import CryptoKit
 
 // ---- RetroArch, inside Docked ----
 // Docked doesn't carry RetroArch. The first time a game for another console is added, Docked downloads the official
-// RetroArch from libretro's buildbot and keeps it in its own folder (~/Docked/RetroArch), never in Applications.
+// RetroArch from libretro's buildbot and keeps the program out of sight in ~/Library/Application Support/Docked, in a
+// folder Spotlight skips and unregistered from Launch Services, so it is never listed as an app of its own. Its saves and
+// settings stay in ~/Docked/RetroArch, with the rest of the library. Games start from Docked, and Docked comes back when they close.
 // Each console's core is downloaded from the same place when it is first needed. Docked starts the game in that
 // RetroArch with its own settings file, so the player never has to open RetroArch or set anything up there.
 struct RetroError: LocalizedError { let text: String; init(_ t: String) { text = t }; var errorDescription: String? { text } }
@@ -26,7 +28,10 @@ enum RetroArch {
     static var dmgSHA = "81b79121ba26d539064ae13b4d0419a120c3d165afbe656cf5f5412b15fdb434"
     static var buildbot = "https://buildbot.libretro.com"
     static var home = Paths.root.appendingPathComponent("RetroArch")
-    static var app = home.appendingPathComponent("RetroArch.app")
+    // The program itself: hidden, not indexed (".noindex"), not registered, so only Docked opens it.
+    static var hidden = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Docked/RetroArch.noindex")
+    static var app = hidden.appendingPathComponent("RetroArch.app")
+    static var earlier: URL { home.appendingPathComponent("RetroArch.app") }   // where Docked 1.3 to 1.5 kept it, in plain sight
     static var support = home                     // its settings, cores, system files and saves
     static var old = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/RetroArch")   // a RetroArch the player had before
     static var installed: Bool { FileManager.default.isExecutableFile(atPath: app.path + "/Contents/MacOS/RetroArch") }
@@ -133,8 +138,8 @@ enum RetroArch {
     }
     static func installApp(_ progress: @escaping (String, Double?) -> Void = { _, _ in }) throws {
         let fm = FileManager.default
-        try fm.createDirectory(at: home, withIntermediateDirectories: true)
-        let work = home.appendingPathComponent(".setup-\(UUID().uuidString)"); try fm.createDirectory(at: work, withIntermediateDirectories: false); defer { try? fm.removeItem(at: work) }
+        try fm.createDirectory(at: home, withIntermediateDirectories: true); try makeHidden()
+        let work = hidden.appendingPathComponent(".setup-\(UUID().uuidString)"); try fm.createDirectory(at: work, withIntermediateDirectories: false); defer { try? fm.removeItem(at: work) }
         let dmg = work.appendingPathComponent("RetroArch.dmg")
         try download(appURL, to: dmg, limit: 700 << 20) { progress("Downloading RetroArch \(version)…", $0) }
         progress("Checking RetroArch…", nil)
@@ -146,8 +151,34 @@ enum RetroArch {
         run("/usr/bin/hdiutil", ["detach", "-force", mount.path], timeout: 60)
         guard copied, fm.isExecutableFile(atPath: copy.path + "/Contents/MacOS/RetroArch") else { throw RetroError("RetroArch wasn't where it should be in the download.") }
         guard run("/usr/bin/codesign", ["--verify", "--deep", "--strict", copy.path], timeout: 300).code == 0 else { throw RetroError("RetroArch's signature didn't check out, so it wasn't used.") }
-        try? fm.removeItem(at: app); try fm.moveItem(at: copy, to: app)
+        try? fm.removeItem(at: app); try fm.moveItem(at: copy, to: app); unregister(app)
         adoptOld()
+    }
+    static func makeHidden() throws {
+        try FileManager.default.createDirectory(at: hidden, withIntermediateDirectories: true)
+        var u = hidden, v = URLResourceValues(); v.isHidden = true; try? u.setResourceValues(v)
+    }
+    // Launch Services lists every app it has seen (Launchpad, Open With, Spotlight). Docked's RetroArch is taken off that list.
+    static var lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    static func unregister(_ u: URL) { if FileManager.default.isExecutableFile(atPath: lsregister) { run(lsregister, ["-u", u.path], timeout: 30) } }
+    // Docked 1.3 to 1.5 kept RetroArch in ~/Docked/RetroArch, where macOS found it and listed it as an app. Moved once, whole;
+    // if a copy is already in the hidden place, the old one is set aside, never deleted. Blocking; call it off the main thread.
+    static func hideEarlier() {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: earlier.path), NSWorkspace.shared.runningApplications.allSatisfy({ $0.bundleURL?.standardizedFileURL.path != earlier.standardizedFileURL.path }) else { return }
+        guard (try? makeHidden()) != nil else { return }
+        unregister(earlier)
+        if !installed { if (try? fm.moveItem(at: earlier, to: app)) != nil { unregister(app) }; return }
+        let aside = hidden.appendingPathComponent("RetroArch earlier \(Int(Date().timeIntervalSince1970)).app")
+        try? fm.moveItem(at: earlier, to: aside); unregister(aside)
+    }
+    // Starts a game in Docked's RetroArch, as a program Docked runs, not an app opened through Launch Services (which would list it again).
+    // ended runs on the main thread when RetroArch quits, which it does when the game is closed (quit_on_close_content).
+    static func launch(core: URL, rom: String, ended: @escaping () -> Void) throws -> pid_t {
+        let p = Process(); p.executableURL = app.appendingPathComponent("Contents/MacOS/RetroArch"); p.arguments = arguments(core: core, rom: rom)
+        p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        p.terminationHandler = { _ in DispatchQueue.main.async(execute: ended); DispatchQueue.global(qos: .utility).async { unregister(app) } }
+        try p.run(); return p.processIdentifier
     }
     // A RetroArch the player had before keeps going in Docked's: its saves, save states and system files are copied over, never moved.
     static func adoptOld() {
