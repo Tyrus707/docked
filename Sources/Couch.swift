@@ -96,7 +96,7 @@ extension Model {
         if let a = couchArts[g.id] { return a }
         guard couchTried.insert("art" + g.id).inserted else { return nil }
         let snap = g.rom.map { CouchArt.snap($0) } ?? CouchArt.banner(g.titleID), places = [snap, Cover.custom(g), g.rom.flatMap { RetroArch.art($0) }, g.url.appendingPathComponent("Contents/Resources/AppIcon.icns")].compactMap { $0 }
-        Cover.queue.async {
+        Cover.work.addOperation {
             let a = places.lazy.compactMap { CouchArt.load($0) }.first
             DispatchQueue.main.async {
                 self.couchTried.remove("art" + g.id)
