@@ -22,7 +22,7 @@ One library, from NES to Switch. Free, open source, quick to open.</p>
 
 **Everything you already own, on one shelf.** NES, SNES, Game Boy, N64, GameCube, Wii, PlayStation, PS2, PSP, Dreamcast, Saturn and more. Drag a game in and Docked works out what it is. RetroArch installs itself the first time — you never have to open it.
 
-**A library that gets out of the way.** Covers, play time, favourites and a quick "pick up where you left off". Light or dark mode, keyboard or controller, and Couch Mode when you're on the sofa.
+**A cozy library that gets out of the way.** Covers, play time, favourites, sorting and a quick "pick up where you left off". Keep games on your Mac or an external SSD; unplug it and they wait for you. Pick a theme, play with keyboard or controller, and switch on Couch Mode when you're on the sofa.
 
 ## See it
 
