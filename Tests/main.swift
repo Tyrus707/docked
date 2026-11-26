@@ -384,6 +384,8 @@ q.up(q.waiting[1].id); check(q.waiting.map(\.title) == ["C", "B"], "moved up"); 
 check(q.next { $0.title == "C" ? .wait : .go }?.title == "B" && q.waiting.map(\.title) == ["C"], "one that must wait lets others go"); q.done(); check(q.next { _ in .no("gone") } == nil && q.waiting.isEmpty && q.problems.last == Problem(id: q.problems.last!.id, title: "C", reason: "gone"), "one that cannot start is set aside")
 _ = q.add(job("D")); _ = q.add(job("E")); _ = q.next { _ in .go }; q.stopped(); check(q.paused && q.next { _ in .go } == nil && q.waiting.map(\.title) == ["E"], "stopping pauses the rest"); q.paused = false; check(q.next { _ in .go }?.title == "E", "continues"); q.stopped(); check(!q.paused, "nothing left, nothing paused"); var lone = Queue(); _ = lone.add(job("L")); _ = lone.next { _ in .go }; lone.failed("x"); check(lone.problems.isEmpty, "a lone failure is shown by the conversion itself")
 let qf = tmp.appendingPathComponent("queue/queue.json"); var qs = Queue(); _ = qs.add(job("F")); _ = qs.add(job("G")); _ = qs.next { _ in .go }; qs.save(qf); let ql = Queue.load(qf); check(ql.current == nil && ql.waiting.map(\.title) == ["F", "G"] && ql.paused, "after a crash: back in the queue, paused"); Queue().save(qf); check(!fm.fileExists(atPath: qf.path) && Queue.load(qf) == Queue(), "an empty queue leaves no file"); try! "broken".write(to: qf, atomically: true, encoding: .utf8); check(Queue.load(qf) == Queue(), "a damaged file is not a crash")
+var friendsJob = job("Friends", "0100000000000003"); friendsJob.friends = true
+check((try? JSONDecoder().decode(Job.self, from: JSONEncoder().encode(friendsJob)))?.friends == true && job("Plain").friends == nil, "the friends flag survives the queue file")
 
 // ---- cleaning up ----
 let cg = tmp.appendingPathComponent("cg"), ci = tmp.appendingPathComponent("ci")
@@ -908,6 +910,12 @@ do {
     try? Data(#"{"schema":1,"settings":[{"env":"DM_FRIENDS","kind":"toggle"}]}"#.utf8).write(to: dm.appendingPathComponent("launcher.json"))
     check(Friends.supported(base.appendingPathComponent("New.app")), "a game converted with friends offers it")
     check(!Friends.supported(base.appendingPathComponent("Old.app")), "an older game does not")
+    let ready = base.appendingPathComponent("Ready.app"), plist = ready.appendingPathComponent("Contents/Info.plist"), rd = ready.appendingPathComponent("Contents/Resources/dm")
+    try? fm.createDirectory(at: rd, withIntermediateDirectories: true)
+    NSDictionary(dictionary: ["CFBundleIdentifier": "local.docked.friends.test.\(UUID().uuidString)"]).write(to: plist, atomically: true)
+    try? Data(#"{"schema":1,"settings":[{"env":"DM_FRIENDS","kind":"toggle","section":"Game","label":"Play with friends","default":"0","on":"1","off":"0"}]}"#.utf8).write(to: rd.appendingPathComponent("launcher.json"))
+    check(Friends.enable(on: ready) && Friends.on(ready), "multiplayer is switched on in the game's own settings")
+    check(!Friends.enable(on: base.appendingPathComponent("Old.app")), "an older game cannot be switched on")
     try? fm.removeItem(at: base)
 }
 

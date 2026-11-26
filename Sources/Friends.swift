@@ -84,4 +84,12 @@ enum Friends {
         guard let d = try? Data(contentsOf: app.appendingPathComponent("Contents/Resources/dm/launcher.json")) else { return false }
         return d.range(of: Data("\"DM_FRIENDS\"".utf8)) != nil
     }
+    // Turn it on in the game's own settings, which live outside the signed app. Only works once the conversion has added the switch.
+    @discardableResult
+    static func enable(on app: URL) -> Bool {
+        guard let settings = GameSettings(app: app), let s = settings.settings.first(where: { $0.env == "DM_FRIENDS" }), s.kind == .toggle else { return false }
+        guard !settings.isFixed(s) else { return settings.value(s) == (s.on ?? "1") }
+        settings.set(s, s.on ?? "1")
+        return on(app)
+    }
 }
