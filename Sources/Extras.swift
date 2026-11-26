@@ -33,7 +33,7 @@ func chipName() -> String { var n = 0; guard sysctlbyname("machdep.cpu.brand_str
 
 // ---- updates: looked for once at launch, unless switched off, and when asked. Only the newest version number is read; nothing is sent but the request itself ----
 let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-let releasePage = URL(string: "https://github.com/Tyrus707/docked/releases/latest")!
+let allReleasesPage = URL(string: "https://github.com/Tyrus707/docked/releases")!
 func newer(_ a: String, than b: String) -> Bool {
     func n(_ s: String) -> [Int]? { let t = s.hasPrefix("v") ? String(s.dropFirst()) : s, p = t.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }; return p.isEmpty || p.contains(nil) ? nil : p.map { $0! } }
     guard let x = n(a), let y = n(b) else { return false }
@@ -49,4 +49,40 @@ func checkForUpdate(_ done: @escaping (UpdateAnswer) -> Void) {
     var r = URLRequest(url: URL(string: "https://api.github.com/repos/Tyrus707/docked/releases/latest")!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15); r.setValue("Docked", forHTTPHeaderField: "User-Agent"); r.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
     let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil; let s = URLSession(configuration: c)
     s.dataTask(with: r) { d, p, _ in let a = readRelease(d, (p as? HTTPURLResponse)?.statusCode ?? 0); DispatchQueue.main.async { done(a) }; s.finishTasksAndInvalidate() }.resume()
+}
+
+// ---- notes for every release, read only when the player opens them ----
+struct ReleaseNote: Identifiable, Equatable { let tag: String, title: String, body: String, url: URL?; var id: String { tag } }
+func readReleases(_ d: Data?, _ code: Int) -> [ReleaseNote]? {
+    guard code == 200, let d, d.count < 2_000_000, let all = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] else { return nil }
+    let notes = all.compactMap { j -> ReleaseNote? in
+        guard j["draft"] as? Bool != true, j["prerelease"] as? Bool != true, let tag = j["tag_name"] as? String, tag.count < 24,
+              tag.range(of: #"^v?\d+(\.\d+){0,3}$"#, options: .regularExpression) != nil else { return nil }
+        let title = (j["name"] as? String ?? tag).trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = (j["html_url"] as? String).flatMap { URL(string: $0) }.flatMap { $0.scheme?.lowercased() == "https" && $0.host == "github.com" ? $0 : nil }
+        return ReleaseNote(tag: tag, title: title.isEmpty ? tag : title, body: j["body"] as? String ?? "", url: url)
+    }
+    return notes.sorted { newer($0.tag, than: $1.tag) }
+}
+func fetchReleases(_ done: @escaping ([ReleaseNote]?) -> Void) {
+    var r = URLRequest(url: URL(string: "https://api.github.com/repos/Tyrus707/docked/releases?per_page=100")!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+    r.setValue("Docked \(appVersion) (https://github.com/Tyrus707/docked)", forHTTPHeaderField: "User-Agent"); r.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+    let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil; let s = URLSession(configuration: c)
+    s.dataTask(with: r) { d, p, _ in let notes = readReleases(d, (p as? HTTPURLResponse)?.statusCode ?? 0); DispatchQueue.main.async { done(notes) }; s.finishTasksAndInvalidate() }.resume()
+}
+// GitHub's notes are Markdown. Keep the player-facing words, in the same order, without rendering remote text.
+func releaseLines(_ markdown: String) -> [String] {
+    let link = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\([^)]+\)"#)
+    var out: [String] = []
+    for raw in markdown.split(whereSeparator: \.isNewline) {
+        var s = String(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.isEmpty || s == "---" { continue }
+        while s.hasPrefix("#") { s.removeFirst() }
+        s = s.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("- ") || s.hasPrefix("* ") { s = "• " + String(s.dropFirst(2)) }
+        s = s.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "__", with: "").replacingOccurrences(of: "`", with: "")
+        if let link = link { s = link.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "$1") }
+        if !s.isEmpty { out.append(s) }
+    }
+    return out
 }

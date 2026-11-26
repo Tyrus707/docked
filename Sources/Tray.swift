@@ -130,7 +130,7 @@ struct Tray: View {
         } else if let v = model.update {
             card("arrow.down.circle", "Docked \(v) is ready", "You have \(appVersion). Your games and settings stay.") {
                 if model.updating { ProgressView().controlSize(.small) } else {
-                    Button("What's New") { NSWorkspace.shared.open(releasePage) }
+                    Button("What's New") { model.showReleaseNotes = true }
                     Button("Update and Reopen") { model.installUpdate(v) }.buttonStyle(.borderedProminent).tint(style.button)
                 }
             } close: { model.update = nil }

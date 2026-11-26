@@ -56,6 +56,7 @@ final class Model: ObservableObject {
     @Published var notice: Notice?     // a quiet word in the tray (Tray.swift)
     @Published var showSetup = false
     @Published var showHelp = false
+    @Published var showReleaseNotes = false
     @Published var showReview = false
     @Published var review = Review(parts: [])
     @Published var reviewNote: String?   // shown on the review sheet, where the window's own alert can't appear
@@ -564,7 +565,7 @@ final class Model: ObservableObject {
     @Published var showGuide = false
     @Published var showSettings = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func leaveSetup(_ f: @escaping () -> Void) { showSetup = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
@@ -898,6 +899,23 @@ final class Model: ObservableObject {
     @Published var checkingUpdate = false
     @Published var update: String?   // a newer version, found at launch
     @Published var updatesAtLaunch = UserDefaults.standard.object(forKey: "updatesAtLaunch") as? Bool ?? true { didSet { UserDefaults.standard.set(updatesAtLaunch, forKey: "updatesAtLaunch") } }
+    @Published var releaseNotes: [ReleaseNote]?
+    @Published var releaseNotesFailed = false
+    @Published var loadingReleaseNotes = false
+    private var releaseNotesRequest = 0
+    func loadReleaseNotes(_ again: Bool = false) {
+        if releaseNotes != nil && !again { return }
+        if loadingReleaseNotes && !again { return }
+        releaseNotesRequest += 1
+        let request = releaseNotesRequest
+        loadingReleaseNotes = true
+        releaseNotesFailed = false
+        fetchReleases { notes in
+            guard request == self.releaseNotesRequest else { return }
+            self.loadingReleaseNotes = false
+            if let notes = notes, !notes.isEmpty { self.releaseNotes = notes } else { self.releaseNotesFailed = true }
+        }
+    }
     @Published var fullScreen = UserDefaults.standard.object(forKey: "fullScreen") as? Bool ?? true { didSet { UserDefaults.standard.set(fullScreen, forKey: "fullScreen") } }
     private var launched = false
     // Once, when the window first appears. A failed look says nothing: being offline is not a problem worth a message.
@@ -995,6 +1013,7 @@ struct ContentView: View {
         .alert("Find covers and details for your games?", isPresented: .init(get: { model.askLookUp && model.wantsBios == nil }, set: { if !$0 { model.askLookUp = false } })) { Button("Find Them") { model.allowLookUp(true) }; Button("Not Now", role: .cancel) { model.allowLookUp(false) } } message: { Text(Lookup.consent) }
         .sheet(item: $model.picking, onDismiss: { model.nextPick() }) { GamePicker(pick: $0) }
         .sheet(isPresented: $model.showHelp) { HelpView() }
+        .sheet(isPresented: $model.showReleaseNotes) { ReleaseNotesView() }
         .sheet(isPresented: $model.showReview) { ReviewView() }
         .sheet(item: $model.editing) { SmartEditor(s: $0) }
         .sheet(item: $model.tuning) { g in if let gs = GameSettings(app: g.url) { GameSettingsView(game: g, gs: gs) } }

@@ -12,7 +12,7 @@ struct SettingsSheet: View {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
             Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
-            HStack { Button("How to Use Docked") { model.leaveSettings { model.showHelp = true } }; Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button) }
+            HStack { Button("How to Use Docked") { model.leaveSettings { model.showHelp = true } }; Button("Release Notes") { model.leaveSettings { model.showReleaseNotes = true } }; Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button) }
         }.padding(24).frame(width: 520).background(AllowQuit()).background(Backdrop())
     }
     func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
