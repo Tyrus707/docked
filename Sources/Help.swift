@@ -13,7 +13,7 @@ let helpTopics: [HelpTopic] = [
     ]),
     HelpTopic(title: "Convert a game", symbol: "square.and.arrow.down", lines: [
         "1. Drop the game in the window, then add its update and DLC. Nothing starts yet.",
-        "2. Check the list and any warnings, then choose Convert. If asked, choose your prod.keys file.",
+        "2. Check the list and any warnings, then choose Convert. If asked, choose your prod.keys file. Turn on Enable multiplayer - experimental to add friends play; it is off by default.",
         "3. Wait 10 to 60 minutes the first time. Stay plugged in with the lid open.",
         "4. When it finishes, the game appears in the window. Click it for its details; double-click it, or press Play, to start it.",
         "To add an update or DLC later, open the game's ••• menu and choose Add Update or DLC (also in the File menu). It converts again, reusing what it can, and keeps your save.",

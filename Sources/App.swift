@@ -60,6 +60,7 @@ final class Model: ObservableObject {
     @Published var showReview = false
     @Published var review = Review(parts: [])
     @Published var reviewNote: String?   // shown on the review sheet, where the window's own alert can't appear
+    @Published var reviewFriends = false   // turn on Play with friends when the game being reviewed is done
     @Published var keys: String? = UserDefaults.standard.string(forKey: "keysPath").map({ Paths.now($0) }) {
         didSet { UserDefaults.standard.set(keys, forKey: "keysPath") }   // only the location; the keys are never copied
     }
@@ -562,6 +563,7 @@ final class Model: ObservableObject {
             DispatchQueue.global(qos: .userInitiated).async {
                 let c = checkGame(app, titleID: id, quick: quick, warned: warned)
                 DispatchQueue.main.async {
+                    if job?.friends == true, !Friends.enable(on: app) { self.message = "Multiplayer could not be switched on in \(job?.title ?? "the game"). Open its Game Settings to check." }
                     self.checkingGame = false
                     if place.path != Paths.games.path { self.move(app, to: place) { self.settle(job, c) } } else { self.reload(); self.settle(job, c) }
                 }
@@ -732,7 +734,7 @@ final class Model: ObservableObject {
         }
         review.add(good)
         if good.count < urls.count { showReview ? (reviewNote = InputError.unsupported.errorDescription) : (message = InputError.unsupported.errorDescription) }
-        if !good.isEmpty { if !showReview { setReviewPlace() }; showReview = true }
+        if !good.isEmpty { if !showReview { reviewFriends = false; setReviewPlace() }; showReview = true }
     }
 
     // Switch games added before this Mac was ready: brought back once it is, unless something else is on screen
@@ -747,7 +749,15 @@ final class Model: ObservableObject {
         guard ready else { showSetup = true; return }
         review = Review(parts: []); review.add(keptFiles(g.titleID))
         reviewNote = review.parts.isEmpty ? "Docked doesn't have \(g.name)'s original files. Add them again, together with the update or DLC." : nil
-        setReviewPlace(); showReview = true
+        reviewFriends = false; setReviewPlace(); showReview = true
+    }
+
+    // A game converted before the friends switch existed: convert it again from the files it was made from, then turn friends on.
+    func reconvertForFriends(_ g: Game) {
+        guard ready else { showSetup = true; return }
+        review = Review(parts: []); review.add(keptFiles(g.titleID))
+        reviewNote = review.parts.isEmpty ? "Docked doesn't have \(g.name)'s original files. Add the game again, with its update and DLC, and turn on Enable multiplayer when you convert." : nil
+        reviewFriends = true; setReviewPlace(); showReview = true
     }
 
     var existing: Game? { review.family.flatMap { f in games.first { $0.titleID.uppercased() == f } } }
@@ -763,7 +773,7 @@ final class Model: ObservableObject {
             if packages, findKeys(keys) == nil, !pickKeys() { return false }
             let kept = Set(review.family.map { keptFiles($0).map(\.path) } ?? []), before = review.family.flatMap { sources[$0] } ?? []
             let now = review.parts.filter { !kept.contains($0.url.path) && packageTypes.union(["nup"]).contains($0.url.pathExtension.lowercased()) }.map { SourceFile(path: $0.url.path, size: $0.bytes) }
-            let job = Job(title: existing?.name ?? jobTitle, family: review.family, parts: parts.map(\.path), place: reviewPlace.path, quick: quick, after: forXcode ? .ask : after, bytes: parts.reduce(0) { $0 + folderSize($1) }, needsKeys: packages, sources: before.filter { b in !now.contains { $0.path == b.path } } + now, target: target, viaXcode: forXcode ? true : nil, speed: speed)
+            let job = Job(title: existing?.name ?? jobTitle, family: review.family, parts: parts.map(\.path), place: reviewPlace.path, quick: quick, after: forXcode ? .ask : after, bytes: parts.reduce(0) { $0 + folderSize($1) }, needsKeys: packages, sources: before.filter { b in !now.contains { $0.path == b.path } } + now, target: target, viaXcode: forXcode ? true : nil, friends: target == .mac && reviewFriends, speed: speed)
             if existing == nil, !organized { destination = reviewPlace }
             let idle = queue.current == nil && queue.waiting.isEmpty
             // With nothing ahead of it, a problem is said here and now; otherwise it is checked again when its turn comes.

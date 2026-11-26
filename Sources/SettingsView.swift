@@ -190,10 +190,12 @@ struct RetroSettings: View {
 }
 
 struct FriendsSettings: View {
+    @EnvironmentObject var model: Model
     @State private var ready = Friends.ready
     @State private var airDrop = UserDefaults.standard.string(forKey: "friends.airDrop") ?? ""
     @State private var share: URL?   // a copy made once, for AirDrop, Messages or Mail
     @State private var note: String?
+    @State private var choosing = false
     func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { settingsRow(t, d, c) }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -202,7 +204,10 @@ struct FriendsSettings: View {
                 if ready, let u = share { ShareLink("Send to a Friend…", item: u) }
             }
             if let note { Text(note).font(.caption).foregroundStyle(.red) }
-            line("In each game", "Turn on Play with friends in a game's Game Settings, then start its local wireless mode. Games converted before this version need Convert Again.") { EmptyView() }
+            line("Multiplayer for older games", "For a game converted before multiplayer: converts it again, then turns Play with friends on. Its save stays, but this takes a while.") {
+                Button("Add Multiplayer to Game…") { choosing = true }
+            }
+            line("In each game", "Turn on Play with friends in a game's Game Settings, then start its local wireless mode. Older games need the button above first.") { EmptyView() }
             line("For smooth play", "Ethernet plays best. On Wi-Fi, let Docked pause AirDrop while you play. A slower Mac slows both players, so set its Upscaling to Standard. Keep Connection smoothing off for fighting and racing games.") { EmptyView() }
             line("Pause AirDrop on Wi-Fi", "Keeps Wi-Fi on your network during friends games. Asks for your password each time.") {
                 Picker("Pause AirDrop on Wi-Fi", selection: $airDrop) { Text("Ask").tag(""); Text("Always").tag("pause"); Text("Never").tag("leave") }.labelsHidden().fixedSize()
@@ -213,11 +218,40 @@ struct FriendsSettings: View {
             }
             Text("Friends you play with can see your internet address, as in any direct online game.").font(.caption).foregroundStyle(.secondary)
         }.onAppear { Friends.adoptOlder(); ready = Friends.ready; share = Friends.shareable() }
+        .sheet(isPresented: $choosing) { FriendsGamePicker() }
     }
     func pick() {
         let p = NSOpenPanel(); p.canChooseDirectories = false; p.allowsMultipleSelection = false; p.message = "Choose the friends pass (friends.cfg) you were sent."; p.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first   // where AirDrop and Messages put it
         guard p.runModal() == .OK, let u = p.url else { return }
         do { try Friends.use(u); note = nil } catch { note = error.localizedDescription }
         ready = Friends.ready; share = Friends.shareable()
+    }
+}
+
+// Pick an older Switch game to convert again with the friends switch added.
+struct FriendsGamePicker: View {
+    @EnvironmentObject var model: Model
+    @Environment(\.dismiss) var dismiss
+    private var games: [Game] { model.games.filter { $0.rom == nil && !$0.missing && $0.away == nil && !Friends.supported($0.url) } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add Multiplayer to Game").font(.title2.weight(.semibold))
+            Text("Choose a Switch game converted before multiplayer. Docked converts it again, then turns on Play with friends. Its save stays; the original game files must still be on this Mac.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                if games.isEmpty {
+                    Text("Every converted game here already has multiplayer. Turn on Play with friends in a game's Game Settings.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.vertical, 12)
+                } else {
+                    ForEach(games) { g in
+                        Button { choose(g) } label: { HStack { Text(g.name).foregroundStyle(style.text); Spacer(); Image(systemName: "chevron.right").foregroundStyle(.secondary) } }.buttonStyle(.plain)
+                        Divider()
+                    }
+                }
+            }.frame(minHeight: 120, maxHeight: 300)
+            HStack { Spacer(); Button("Cancel") { dismiss() } }
+        }.padding(24).frame(width: 480).background(Backdrop())
+    }
+    func choose(_ g: Game) {
+        dismiss()
+        model.leaveSettings { model.reconvertForFriends(g) }
     }
 }
