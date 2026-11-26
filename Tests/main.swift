@@ -56,6 +56,8 @@ var b = drive(#"echo '{"ev":"stage","k":1,"n":2,"name":"A"}'; echo '{"ev":"game"
 check(b.stage == "Done" && b.title == "Real Name" && b.log.contains("hi") && b.error == nil && !b.running, "success")
 check(b.tested == false, "untested flagged")
 b = drive(#"echo '{"ev":"say","msg":"[RED] prod.keys is wrong"}'; exit 1"#); check(b.error == "prod.keys is wrong" && b.stage == "Failed", "engine error shown")
+b = drive(#"echo '{"ev":"say","msg":"[RED] the shader split found no shaders in main or the RomFS: the game keeps them in a form shader_split.py does not read; locate them (docs/agents) and add a reader"}'; exit 1"#)
+check(b.error?.hasPrefix("This game isn't supported yet") == true && b.report.contains("shader_split.py"), "unsupported game told plainly, engine line kept in report")
 b = drive("echo boom >&2; exit 1"); check(b.error?.contains("boom") == true, "crash text shown")
 b = drive("trap 'exit 143' TERM; while :; do sleep 0.1; done", cancelAfter: 0.5); check(b.stage == "Stopped" && b.error == nil, "cancel")
 b = drive("", exe: "/nonexistent"); check(b.error != nil && !b.running, "missing engine")

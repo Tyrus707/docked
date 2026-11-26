@@ -52,6 +52,6 @@ Prefer a zip? [Docked.zip](https://github.com/Tyrus707/docked/releases/latest/do
 
 Docked has no sign-in and collects nothing. It checks for updates when it opens (you can turn that off) and fetches RetroArch or cover art only when you ask. Your games, keys and system files stay on your Mac. Bring games from your own console, where local law allows.
 
-Need a hand? [Open an issue](https://github.com/Tyrus707/docked/issues/new) with your macOS version, your Mac's chip and a **Copy Report** — give it a quick read first, and never post games or keys.
+Need a hand? [Open an issue](https://github.com/Tyrus707/docked/issues/new) with your macOS version, your Mac's chip and a **Report Problem** summary — give it a quick read first, and never post games or keys.
 
 Docked is free under the [MIT licence](LICENSE). It wouldn't exist without [nxnative](https://github.com/seedds/nxnative). Console names belong to their owners; Docked isn't affiliated with Nintendo or anyone else. [Credits](THIRD-PARTY.md).

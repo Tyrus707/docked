@@ -60,7 +60,7 @@ struct QueueBar: View {
                 HStack(alignment: .firstTextBaseline) {
                     Image(systemName: "exclamationmark.circle").foregroundStyle(style.danger).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) { Text(p.title).font(.callout.weight(.medium)); Text(p.reason).font(.caption).foregroundStyle(.secondary).lineLimit(3).textSelection(.enabled) }
-                    Spacer(); if let r = p.report { Button("Copy Report") { model.copyReport(r) } }; Button("Dismiss") { model.queue.problems.removeAll { $0.id == p.id } }
+                    Spacer(); if let r = p.report { Button("Report Problem") { model.reportProblem(r) } }; Button("Dismiss") { model.queue.problems.removeAll { $0.id == p.id } }
                 }
             }
             if !model.queue.waiting.isEmpty {

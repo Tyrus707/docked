@@ -121,7 +121,7 @@ struct Tray: View {
         if let e = builder.error, !builder.running {
             card("exclamationmark.triangle", "\(builder.title) stopped converting", e, warn: true) {
                 Button("Details") { open = true }
-                Button("Copy Report") { model.copyReport(builder.report) }
+                Button("Report Problem") { model.reportProblem(builder.report) }
             } close: { builder.error = nil }
         } else if let p = model.queue.problems.first {
             card("exclamationmark.triangle", p.title, p.reason, warn: true) {
