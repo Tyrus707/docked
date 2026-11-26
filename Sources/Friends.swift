@@ -1,4 +1,5 @@
 import Foundation
+import CoreWLAN
 
 // Play with friends: a converted game's Local Wireless reaches the friends in the player's circle, over the internet (Friends/engine-patches).
 // Docked only keeps the circle's pass, friends.cfg (the meeting point's address and the circle's shared key), where every converted game looks for it.
@@ -38,6 +39,31 @@ enum Friends {
     }
     // A pass the earlier setup made is taken as it is, once
     static func adoptOlder() { if !ready, read(older) != nil { try? use(older) } }
+    // A copy to send to a friend (AirDrop, Messages, Mail), with a name that says what it is
+    static func shareable() -> URL? {
+        guard ready, let d = try? Data(contentsOf: pass) else { return nil }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("docked-pass-\(UUID().uuidString)"), u = dir.appendingPathComponent("Docked Friends Pass.cfg")
+        guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil, FileManager.default.createFile(atPath: u.path, contents: d, attributes: [.posixPermissions: 0o600]) else { return nil }
+        return u
+    }
+    // Is Play with friends switched on in this game's own settings
+    static func on(_ app: URL) -> Bool {
+        guard let p = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")), let b = p["CFBundleIdentifier"] as? String, let u = UserDefaults(suiteName: b) else { return false }
+        return u.string(forKey: "launcher.DM_FRIENDS") == "1"
+    }
+    // On Wi-Fi with no wired connection up: Mac Wi-Fi pauses now and then to look for AirDrop and Handoff devices, which lockstep games feel as slow motion
+    static func wifiOnly() -> Bool {
+        guard let wifi = CWWiFiClient.shared().interface(), wifi.powerOn(), wifi.ssid() != nil || wifi.wlanChannel() != nil, let name = wifi.interfaceName else { return false }
+        var list: UnsafeMutablePointer<ifaddrs>?; guard getifaddrs(&list) == 0, let first = list else { return true }
+        defer { freeifaddrs(list) }
+        var wired = false
+        for p in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let i = p.pointee, n = String(cString: i.ifa_name), up = (i.ifa_flags & UInt32(IFF_UP | IFF_RUNNING)) == UInt32(IFF_UP | IFF_RUNNING)
+            if up, n != name, n.hasPrefix("en"), let a = i.ifa_addr, a.pointee.sa_family == UInt8(AF_INET) { wired = true }
+        }
+        return !wired
+    }
+
     // Games converted before Play with friends have no friends link in them: their settings list has no DM_FRIENDS
     static func supported(_ app: URL) -> Bool {
         guard let d = try? Data(contentsOf: app.appendingPathComponent("Contents/Resources/dm/launcher.json")) else { return false }

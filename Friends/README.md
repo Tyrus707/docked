@@ -4,13 +4,13 @@ Switch games' **local wireless** play (Smash, Mario Kart 8 Deluxe, Animal Crossi
 
 ## For players
 
-1. Get the **friends pass** (`friends.cfg`) from whoever set up your circle, and add it in **Docked › Settings › Friends**.
+1. Get the **friends pass** from whoever set up your circle (they press **Send to a Friend…** in Docked › Settings › Friends; AirDrop and Messages save it in Downloads), then press **Add Friends Pass…** there.
 2. In a game's **Game Settings**, switch on **Play with friends**.
 3. Start the game, open its Friends screen (the Friends menu in the menu bar, or press both sticks in) to see your code and add your friends' codes, then use the game's own local wireless mode (for Smash: Local Wireless; Mario Kart: Wireless Play).
 
 Games converted before this version of Docked need **Convert Again** to get the switch.
 
-**Smooth play:** use Ethernet if you can. Mac Wi-Fi pauses briefly now and then to look for AirDrop and Handoff devices, and lockstep games (fighting, racing) feel those pauses as slow motion. If a game still feels slow, set its **Connection smoothing** to Off; for relaxed games (Animal Crossing) Medium can even out a bumpy connection.
+**Smooth play:** use Ethernet if you can (Docked asks once a day when you start a friends game on Wi-Fi only). Mac Wi-Fi pauses briefly now and then to look for AirDrop and Handoff devices, and lockstep games (fighting, racing) feel those pauses as slow motion. If a game still feels slow, set its **Connection smoothing** to Off; for relaxed games (Animal Crossing) Medium can even out a bumpy connection. Both Macs must hold full speed, because each waits for the other: on a slower Mac, set Upscaling to Standard.
 
 Friends you play with see your Mac's internet address, as with any game played directly between two computers. The pass lets anyone who has it into your circle, so send it privately.
 

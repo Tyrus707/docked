@@ -175,27 +175,28 @@ struct RetroSettings: View {
 
 struct FriendsSettings: View {
     @State private var ready = Friends.ready
+    @State private var share: URL?   // a copy made once, for AirDrop, Messages or Mail
     @State private var note: String?
     func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            line("Friends circle", ready ? "Your games meet friends through \(Friends.meetingPoint ?? "your meeting point"). Add friends by their code on a game's Friends screen (its Friends menu, or press both sticks in)." : "Play your games' local wireless modes with friends over the internet. Add the friends pass (friends.cfg) that whoever set up your circle sent you.") {
+            line("Friends circle", ready ? "Your games meet friends through \(Friends.meetingPoint ?? "your meeting point"). Add friends by their code on a game's Friends screen (its Friends menu, or press both sticks in)." : "Play your games' local wireless modes with friends over the internet. Add the friends pass that whoever set up your circle sent you (AirDrop and Messages put it in Downloads).") {
                 Button(ready ? "Replace Pass…" : "Add Friends Pass…") { pick() }
-                if ready { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Friends.pass]) } }
+                if ready, let u = share { ShareLink("Send to a Friend…", item: u) }
             }
             if let note { Text(note).font(.caption).foregroundStyle(.red) }
             line("In each game", "Open a game's Game Settings and switch on Play with friends, then use the game's own local wireless play. A game converted before this version of Docked needs Convert Again first.") { EmptyView() }
-            line("For smooth play", "Use Ethernet if you can, or sit near your router: Mac Wi-Fi pauses for a moment now and then to look for AirDrop devices, which shows as slowdown in fighting and racing games. If a game still feels slow, set its Connection smoothing to Off.") { EmptyView() }
+            line("For smooth play", "Use Ethernet if you can, or sit near your router: Mac Wi-Fi pauses for a moment now and then to look for AirDrop devices, which shows as slowdown in fighting and racing games. Both Macs need to hold full speed, so on a slower Mac set Upscaling to Standard. If a game still feels slow, set its Connection smoothing to Off.") { EmptyView() }
             line("Start your own circle", "Run Friends/meeting/setup_meeting.py once with a Cloudflare token. It puts a free meeting point on your own account and saves your pass here. Send the pass only to friends you trust.") {
                 Button("How…") { NSWorkspace.shared.open(URL(string: "https://github.com/Tyrus707/docked/blob/main/Friends/README.md")!) }
             }
             Text("Friends you play with can see your Mac's internet address, as in any game played directly between two computers.").font(.caption).foregroundStyle(.secondary)
-        }.onAppear { Friends.adoptOlder(); ready = Friends.ready }
+        }.onAppear { Friends.adoptOlder(); ready = Friends.ready; share = Friends.shareable() }
     }
     func pick() {
-        let p = NSOpenPanel(); p.canChooseDirectories = false; p.allowsMultipleSelection = false; p.message = "Choose the friends pass (friends.cfg) you were sent."
+        let p = NSOpenPanel(); p.canChooseDirectories = false; p.allowsMultipleSelection = false; p.message = "Choose the friends pass (friends.cfg) you were sent."; p.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first   // where AirDrop and Messages put it
         guard p.runModal() == .OK, let u = p.url else { return }
         do { try Friends.use(u); note = nil } catch { note = error.localizedDescription }
-        ready = Friends.ready
+        ready = Friends.ready; share = Friends.shareable()
     }
 }

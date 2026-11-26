@@ -990,6 +990,16 @@ final class Model: ObservableObject {
         if isRunning(g), let a = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.path == g.url.path }) { a.activate(); return }
         if let why = g.cannot { message = "\(g.name) cannot run here. \(why)."; return }
         if !cloudSaves.isEmpty { CloudSaves.apply(cloudSaves, was: "", to: g.url) }
+        if !settings, !UserDefaults.standard.bool(forKey: "friends.wifiTipOff"), Friends.on(g.url), Friends.wifiOnly() {   // asked, once a day at most, never again if the player says so
+            let d = UserDefaults.standard, today = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+            if d.double(forKey: "friends.wifiTipDay") != today {
+                d.set(today, forKey: "friends.wifiTipDay")
+                let a = NSAlert(); a.messageText = "You're on Wi-Fi"; a.informativeText = "For the smoothest play with friends, plug in Ethernet or sit near your router. Mac Wi-Fi pauses for a moment now and then to look for AirDrop devices, which fighting and racing games feel as slowdown. Turning off AirDrop, Handoff and Bluetooth devices you don't need helps too."
+                a.addButton(withTitle: "Play"); a.addButton(withTitle: "Cancel"); a.showsSuppressionButton = true; a.suppressionButton?.title = "Don't show this again"
+                let r = a.runModal(); if a.suppressionButton?.state == .on { d.set(true, forKey: "friends.wifiTipOff") }
+                if r != .alertFirstButtonReturn { return }
+            }
+        }
         let c = NSWorkspace.OpenConfiguration()
         if !settings { c.environment = ["DM_LAUNCHER": "0"] }   // straight into the game
         NSWorkspace.shared.openApplication(at: g.url, configuration: c) { _, e in
