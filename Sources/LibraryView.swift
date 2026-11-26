@@ -51,6 +51,18 @@ struct Sidebar: View {
                 }
                 ForEach(model.library.smart) { c in row(.smart(c)).contextMenu { Button("Edit…") { model.editing = c }; Button("Remove Collection") { if model.section == .smart(c) { model.section = .home }; model.library.smart.removeAll { $0.id == c.id } } } }
                 if model.library.collections.isEmpty && model.library.smart.isEmpty { Text("Group games your way").font(.caption).foregroundStyle(style.soft).padding(.leading, 10) }
+                let drives = model.drivesInUse
+                if !drives.isEmpty {
+                    head("Drives")
+                    ForEach(drives, id: \.name) { d in
+                        HStack(spacing: 9) {
+                            Circle().fill(d.connected ? style.ok : .clear).overlay(Circle().strokeBorder(d.connected ? .clear : style.soft, lineWidth: 1.5)).frame(width: 7, height: 7).frame(width: 18)
+                            Text(d.name).foregroundStyle(d.connected ? style.text : style.soft).lineLimit(1)
+                            Spacer()
+                            if !d.connected { Text("Unplugged").font(.caption).foregroundStyle(style.soft) }
+                        }.padding(.horizontal, 10).frame(height: 30).accessibilityElement(children: .combine)
+                    }
+                }
             }.padding(.horizontal, 10).padding(.vertical, 12)
         }
         .frame(width: 216)
@@ -121,24 +133,29 @@ struct Shelf<C: View>: View {
 }
 
 // The last game played, on a wash of its own art: the icon drawn tiny and stretched, which costs nothing to keep on screen.
+// The game you were playing, by the fire: its wide art when Docked has it, one brass action, the rest quiet.
 struct Hero: View {
     @EnvironmentObject var model: Model
     let game: Game
+    @State private var art: NSImage?
     var body: some View {
-        let e = model.library.entry(game.titleID)
-        HStack(spacing: 20) {
-            Image(nsImage: model.icon(game)).resizable().frame(width: 128, height: 128).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(model.isRunning(game) ? "Playing now" : e.lastPlayed == nil ? "Ready to play" : "Continue playing").font(.callout.weight(.medium)).foregroundStyle(.white.opacity(0.86))
-                Text(game.name).font(.title.weight(.bold)).foregroundStyle(.white).lineLimit(2)
-                Text(e.lastPlayed == nil ? consoleName(consoleOf(game.titleID)) : "\(lastPlayedText(e.lastPlayed)), \(playTimeText(e.seconds).lowercased())").font(.callout).foregroundStyle(.white.opacity(0.86))
-                Button { model.play(game) } label: { Label(model.isRunning(game) ? "Show" : "Play", systemImage: "play.fill").font(.body.weight(.semibold)).padding(.horizontal, 18).frame(height: 34).foregroundStyle(Color(hex: 0x14242B)).background(.white, in: Capsule()) }.buttonStyle(.plain).padding(.top, 4).accessibilityLabel("Play \(game.name)")
-            }
+        let e = model.library.entry(game.titleID), c = game.rom == nil ? model.compat[game.titleID.uppercased()] : nil
+        let label = model.isRunning(game) ? "PLAYING NOW" : game.missing ? "NOT CONNECTED" : e.lastPlayed == nil ? "READY TO PLAY" : "CONTINUE PLAYING"
+        let facts = [consoleName(consoleOf(game.titleID)), e.seconds >= 60 ? playTimeText(e.seconds).replacingOccurrences(of: " played", with: "") : nil, e.lastPlayed.map { lastPlayedText($0) }, c.map { $0.label + ($0.fps.isEmpty ? "" : ", \($0.fps)") }].compactMap { $0 }
+        VStack(alignment: .leading, spacing: 10) {
             Spacer(minLength: 0)
+            HStack(spacing: 7) { Circle().fill(game.missing ? style.soft : style.accent).frame(width: 7, height: 7); Text(label).font(.caption.weight(.semibold)).tracking(1.4) }.foregroundStyle(game.missing ? style.soft : style.accent).accessibilityElement(children: .combine)
+            Text(game.name).font(.system(size: 40, weight: .heavy)).tracking(-0.6).foregroundStyle(.white).lineLimit(2).minimumScaleFactor(0.6)
+            Text(facts.joined(separator: " · ")).font(.callout).foregroundStyle(.white.opacity(0.82)).lineLimit(1)
+            HStack(spacing: 10) {
+                Button { model.play(game) } label: { Label(model.isRunning(game) ? "Show" : "Play", systemImage: "play.fill").font(.body.weight(.bold)).padding(.horizontal, 24).frame(height: 40).foregroundStyle(Color(hex: 0x1B1612)).background(style.accent, in: Capsule()) }.buttonStyle(.plain).disabled(game.missing)
+                if game.rom == nil, !game.missing { Button { model.openSettings(game) } label: { Text("Game Settings").font(.body.weight(.medium)).padding(.horizontal, 18).frame(height: 40).foregroundStyle(.white).background(Capsule().fill(.black.opacity(0.3))).overlay(Capsule().strokeBorder(.white.opacity(0.28))) }.buttonStyle(.plain) }
+            }.padding(.top, 4)
         }
-        .padding(20).frame(maxWidth: .infinity, minHeight: 196, alignment: .leading)
-        .background { ZStack { Color(hex: 0x14242B); Image(nsImage: model.wash(game)).resizable().interpolation(.high).scaledToFill(); LinearGradient(colors: [.black.opacity(0.76), .black.opacity(0.44)], startPoint: .leading, endPoint: .trailing) } }
+        .padding(.horizontal, 34).padding(.vertical, 28).frame(maxWidth: .infinity, minHeight: 300, alignment: .leading)
+        .background { ZStack { style.bottom; if let art { Image(nsImage: art).resizable().interpolation(.high).scaledToFill() } else { Image(nsImage: model.wash(game)).resizable().interpolation(.high).scaledToFill().opacity(0.9) }; LinearGradient(colors: [style.bottom.opacity(0.94), style.bottom.opacity(0.55), .clear], startPoint: .leading, endPoint: .trailing) }.accessibilityHidden(true) }
         .clipShape(RoundedRectangle(cornerRadius: 18)).overlay { if model.cursor == Cursor(row: "recent", game: game.id) { RoundedRectangle(cornerRadius: 18).strokeBorder(style.accent, lineWidth: 4) } }.contentShape(RoundedRectangle(cornerRadius: 18)).onTapGesture { model.select(game) }
+        .task(id: game.id) { let u = CouchArt.banner(game.titleID); art = await Task.detached(priority: .utility) { CouchArt.load(u) }.value }
     }
 }
 
@@ -236,7 +253,8 @@ struct Tile: View {
     var small = false
     var body: some View {
         let e = model.library.entry(game.titleID)
-        let note = game.missing ? whereMissing(game.url.path) : model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
+        let c = game.rom == nil ? model.compat[game.titleID.uppercased()] : nil, worry = c.map { $0.kind == .okay || $0.kind == .poor } ?? false
+        let note = game.missing ? whereMissing(game.url.path) : model.isRunning(game) ? "Playing now" : game.cannot != nil ? game.cannot! : worry ? c!.label : e.kept && e.lastPlayed == nil ? "Kept build" : e.lastPlayed != nil ? lastPlayedText(e.lastPlayed) : game.rom == nil ? "Version \(game.version)" : consoleName(consoleOf(game.titleID))
         Group {
             if model.look == .covers { CoverTile(game: game, art: model.cover(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }
             else { GameTile(game: game, icon: model.icon(game), favorite: e.favorite, running: model.isRunning(game), note: note, chosen: model.cursor.map { $0.row == row && $0.game == game.id } ?? (model.selected == game.id), small: small, select: { model.select(game) }, play: { model.play(game) }, fave: { model.edit(game) { $0.favorite.toggle() } }) { AnyView(GameActions(game: game, deleting: $deleting)) } }

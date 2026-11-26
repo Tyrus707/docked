@@ -26,6 +26,13 @@ struct SaveMenu: View {
 }
 
 extension Model {
+    // The removable drives the library's games are on, and whether each is plugged in now: one look per drive, not per game
+    var drivesInUse: [(name: String, connected: Bool)] {
+        var names: [String] = []
+        for g in games { let p = (g.url.path as NSString).pathComponents; if p.count > 2, p[1] == "Volumes", !names.contains(p[2]) { names.append(p[2]) } }
+        return names.sorted().map { ($0, FileManager.default.fileExists(atPath: "/Volumes/" + $0)) }
+    }
+
     func reveal(_ u: URL) { if FileManager.default.fileExists(atPath: u.path) { NSWorkspace.shared.activateFileViewerSelecting([u]) } else { _ = NSWorkspace.shared.open(u.deletingLastPathComponent()) } }
 
     func backUpSave(_ g: Game) {
