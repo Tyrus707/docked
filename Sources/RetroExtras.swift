@@ -145,7 +145,7 @@ enum RetroLook: String, CaseIterable, Identifiable {
         case .off: return []
         case .crt: return ["crt/crt-lottes.slangp", "crt/crt-geom.slangp", "crt/zfast-crt.slangp", "crt/crt-easymode.slangp"]
         case .lcd: return ["handheld/lcd-grid-v2.slangp", "handheld/lcd3x.slangp", "handheld/lcd-grid.slangp"]
-        case .sharp: return ["interpolation/sharp-bilinear-simple.slangp", "interpolation/sharp-bilinear.slangp", "pixel-art-scaling/sharp-bilinear-simple.slangp"]
+        case .sharp: return ["pixel-art-scaling/sharp-bilinear-simple.slangp", "pixel-art-scaling/sharp-bilinear.slangp", "interpolation/sharp-bilinear-simple.slangp"]
         }
     }
 }
