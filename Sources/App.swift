@@ -200,7 +200,7 @@ final class Model: ObservableObject {
     }
     func clearArt(_ g: Game) { try? FileManager.default.removeItem(at: Cover.custom(g)); Artwork.removeMade(g.titleID); forgetArt(g) }
     func hasArt(_ g: Game) -> Bool { FileManager.default.fileExists(atPath: Cover.custom(g).path) }
-    func forgetArt(_ g: Game) { dropArt(g); reload() }
+    func forgetArt(_ g: Game) { dropArt(g) }   // a new cover changes no game: no rescan
     func dropArt(_ g: Game) { icons[g.id] = nil; washes[g.id] = nil; covers.removeObject(forKey: g.id as NSString); coverReady() }
     // Only the art of games whose place matches: the rest of a big library keeps what it has drawn
     func dropArt(where hit: (String) -> Bool) {
