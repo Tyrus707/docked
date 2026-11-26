@@ -32,7 +32,6 @@ struct Inspector: View {
                     VStack(alignment: .leading, spacing: 9) {
                         fact("Played", playTimeText(e.seconds)); if e.plays > 0 { fact("Times played", "\(e.plays)") }; fact("Last played", e.lastPlayed == nil ? "Never" : lastPlayedText(e.lastPlayed).replacingOccurrences(of: "Played ", with: "").firstCapital); if e.added > .distantPast { fact("Added", e.added.formatted(date: .abbreviated, time: .omitted)) }
                         fact("Size", game.missing ? "Not available" : model.size(game).map { byteText($0) } ?? "Measuring…"); if let r = game.rom { fact("Plays in", RetroArch.core(console(r.console) ?? consoles[0]) == nil ? "RetroArch, set up when you first play" : "RetroArch") }
-                        if let r = game.rom, let p = Cheevos.of(r) { fact("Achievements", Cheevos.text(p)) }
                         fact("In", (drive(of: game.url.path).map { "\($0.name), " } ?? "") + FileManager.default.displayName(atPath: game.url.deletingLastPathComponent().path)); if !e.collections.isEmpty { fact("Collections", e.collections.joined(separator: ", ")) }
                         if game.rom == nil, let c = model.compat[game.titleID.uppercased()] { fact("Runs", c.label + (c.fps.isEmpty ? "" : ", \(c.fps)") + (c.issues > 0 ? ", \(c.issues) open report\(c.issues == 1 ? "" : "s")" : "")) }
                         if e.kept { fact("Build", "Kept") }
@@ -41,6 +40,7 @@ struct Inspector: View {
                         if let i = game.rom?.info { if let d = i.developer { fact("Made by", d) }; if let p = i.publisher, p != i.developer { fact("Published by", p) }; if let g = i.genre { fact("Genre", g) } }
                         else if let m = e.meta { if let d = m.developer { fact("Made by", d) }; if let p = m.publisher, p != m.developer { fact("Published by", p) }; if let g = m.genre { fact("Genre", g) } }
                     }.padding(12).background(style.tile, in: RoundedRectangle(cornerRadius: 10))
+                    if let r = game.rom, Cheevos.consoleIDs[r.console] != nil { CheevoCard(rom: r).id(r.id) }
                     if let i = game.rom?.info { GameAbout(info: i) }
                     if game.rom == nil, FileManager.default.fileExists(atPath: GameNotes.file(game.titleID).path) {
                         let notes = model.notes(game)

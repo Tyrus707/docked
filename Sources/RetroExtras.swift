@@ -69,7 +69,7 @@ enum Cheevos {
     }
 
     // ---- progress, shown on the game page and in Couch Mode (needs the player's Web API key) ----
-    struct Progress: Codable, Equatable { var title: String, console: Int, earned: Int, hardcore: Int, total: Int }
+    struct Progress: Codable, Equatable { var title: String, console: Int, earned: Int, hardcore: Int, total: Int; var id: Int? = nil }   // id: RetroAchievements' game number, for the full list
     static var cache: URL { RetroArch.support.appendingPathComponent("achievements.json") }
     static var progress: [String: Progress] = load()   // by console id + matched title
     static var checked = Date.distantPast
@@ -89,7 +89,7 @@ enum Cheevos {
         var m: [String: Progress] = [:]
         for g in list {
             guard let t = g["Title"] as? String, !t.hasPrefix("~"), let cid = int(g["ConsoleID"]), let total = int(g["MaxPossible"]), total > 0 else { continue }
-            m["\(cid):\(key(t))"] = Progress(title: t, console: cid, earned: int(g["NumAwarded"]) ?? 0, hardcore: int(g["NumAwardedHardcore"]) ?? 0, total: total)
+            m["\(cid):\(key(t))"] = Progress(title: t, console: cid, earned: int(g["NumAwarded"]) ?? 0, hardcore: int(g["NumAwardedHardcore"]) ?? 0, total: total, id: int(g["GameID"]))
         }
         progress = m; checked = Date()
         if let d = try? JSONEncoder().encode(m) { try? d.write(to: cache, options: .atomic) }
@@ -109,21 +109,73 @@ enum Cheevos {
         return s.replacingOccurrences(of: " ", with: "")
     }
     static func text(_ p: Progress) -> String { "\(p.earned) of \(p.total)" + (p.hardcore > 0 && p.hardcore < p.earned ? ", \(p.hardcore) hardcore" : p.hardcore > 0 ? ", hardcore" : "") }
-    private static func int(_ v: Any?) -> Int? { (v as? Int) ?? (v as? String).flatMap(Int.init) ?? (v as? Double).map(Int.init) }
+    static func int(_ v: Any?) -> Int? { (v as? Int) ?? (v as? String).flatMap(Int.init) ?? (v as? Double).map(Int.init) }
     private static func form(_ d: [String: String]) -> String {
         var ok = CharacterSet.alphanumerics; ok.insert(charactersIn: "-._~")
         return d.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: ok) ?? "")" }.joined(separator: "&")
     }
     private static func fetchJSON(_ r: URLRequest) throws -> [String: Any] {
+        guard let j = try fetchAny(r) as? [String: Any] else { throw RetroError("RetroAchievements sent an answer Docked couldn't read.") }
+        return j
+    }
+    // The Web API, with the player's key: some answers are lists, some are records
+    static func api(_ name: String, _ q: [String: String]) throws -> Any {
+        guard let u = user, let k = secret("webkey") else { throw RetroError("Add your Web API key to see achievements in Docked.") }
+        var c = URLComponents(string: "\(host)/API/\(name).php")!
+        c.queryItems = [URLQueryItem(name: "u", value: u), URLQueryItem(name: "y", value: k)] + q.map { URLQueryItem(name: $0.key, value: $0.value) }
+        var r = URLRequest(url: c.url!); r.timeoutInterval = 30; r.setValue("Docked/\(dockedVersion)", forHTTPHeaderField: "User-Agent")
+        return try fetchAny(r)
+    }
+    static func fetchAny(_ r: URLRequest) throws -> Any {
         let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil
         let s = URLSession(configuration: c); defer { s.finishTasksAndInvalidate() }
         let done = DispatchSemaphore(value: 0); var data: Data?, err: Error?
         s.dataTask(with: r) { d, _, e in data = d; err = e; done.signal() }.resume(); done.wait()
         if let err { throw RetroError("RetroAchievements couldn't be reached. \(err.localizedDescription)") }
-        guard let data, data.count < 8 << 20, let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw RetroError("RetroAchievements sent an answer Docked couldn't read.") }
+        guard let data, data.count < 8 << 20, let j = try? JSONSerialization.jsonObject(with: data) else { throw RetroError("RetroAchievements sent an answer Docked couldn't read.") }
         return j
     }
 }
+// ---- what the Achievements views show (Achievements.swift) ----
+struct Cheevo: Codable, Identifiable, Hashable {
+    let id: Int
+    let title, about, badge: String
+    let points, order: Int
+    let earned: Date?
+    let hardcore: Bool
+}
+struct CheevoSet: Codable {
+    let id: Int
+    let title: String
+    var list: [Cheevo]
+    var fetched: Date
+    var earned: [Cheevo] { list.filter { $0.earned != nil }.sorted { $0.earned! > $1.earned! } }
+    var points: Int { list.reduce(0) { $0 + $1.points } }
+    var earnedPoints: Int { list.reduce(0) { $0 + ($1.earned != nil ? $1.points : 0) } }
+    // Unlocked first, newest first; then the rest in the set's own order
+    var ordered: [Cheevo] { earned + list.filter { $0.earned == nil }.sorted { $0.order == $1.order ? $0.id < $1.id : $0.order < $1.order } }
+}
+struct CheevoUnlock: Codable, Identifiable, Hashable {
+    let id: Int
+    let title, about, badge, game: String
+    let gameID, points: Int
+    let date: Date, hardcore: Bool
+}
+struct CheevoAccount: Codable {
+    let user: String
+    let pic, since, presence: String?
+    let hardcore, softcore, retro: Int
+    var recent: [CheevoUnlock]
+    var fetched: Date
+}
+struct CheevoListing: Codable { let id, count, points: Int }   // a game RetroAchievements has a set for
+
+// RetroAchievements writes its times as UTC, "2026-11-26 21:04:11"
+func raDate(_ s: String) -> Date? { raFormat.date(from: s) }
+private let raFormat: DateFormatter = { let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd HH:mm:ss"; return f }()
+extension JSONDecoder { static var ra: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .secondsSince1970; return d } }
+extension JSONEncoder { static var ra: JSONEncoder { let e = JSONEncoder(); e.dateEncodingStrategy = .secondsSince1970; return e } }
+
 private var dockedVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0" }
 
 // ---- retro looks: libretro's slang shaders, for each console, with a choice for each game ----
