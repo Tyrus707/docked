@@ -95,7 +95,7 @@ extension Model {
     func couchArt(_ g: Game) -> NSImage? {
         if let a = couchArts[g.id] { return a }
         guard couchTried.insert("art" + g.id).inserted else { return nil }
-        let snap = g.rom.map { CouchArt.snap($0) } ?? CouchArt.banner(g.titleID), places = [snap, Cover.custom(g), g.rom.flatMap { RetroArch.art($0) }, g.url.appendingPathComponent("Contents/Resources/AppIcon.icns")].compactMap { $0 }
+        let snap = g.rom.map { CouchArt.snap($0) } ?? CouchArt.banner(g.titleID), places = [snap, Cover.custom(g), Artwork.appIcon(g.titleID), g.rom.flatMap { RetroArch.art($0) }, g.url.appendingPathComponent("Contents/Resources/AppIcon.icns")].compactMap { $0 }
         Cover.work.addOperation {
             let a = places.lazy.compactMap { CouchArt.load($0) }.first
             DispatchQueue.main.async {

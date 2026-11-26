@@ -4,14 +4,14 @@ struct SettingsSheet: View {
     @EnvironmentObject var model: Model
     @EnvironmentObject var builder: Builder
     @Environment(\.dismiss) var dismiss
-    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", tools = "Setup" }
+    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", friends = "Friends", tools = "Setup" }
     @State private var tab = Tab.general
     private let phoneGames = xcodeGames()
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
-            Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
+            Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
             HStack { Button("How to Use Docked") { model.leaveSettings { model.showHelp = true } }; Button("Release Notes") { model.leaveSettings { model.showReleaseNotes = true } }; Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button) }
         }.padding(24).frame(width: 520).background(AllowQuit()).background(Backdrop())
     }
@@ -170,5 +170,38 @@ struct RetroSettings: View {
                 switch r { case .success: key = ""; model.objectWillChange.send(); model.refreshCheevos(force: true); case .failure(let e): note = e.localizedDescription }
             }
         }
+    }
+}
+
+struct FriendsSettings: View {
+    @State private var ready = Friends.ready
+    @State private var airDrop = UserDefaults.standard.string(forKey: "friends.airDrop") ?? ""
+    @State private var share: URL?   // a copy made once, for AirDrop, Messages or Mail
+    @State private var note: String?
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            line("Friends circle", ready ? "Connected through \(Friends.meetingPoint ?? "your meeting point"). To add friends, open a game's Friends screen (Friends menu, or click both sticks) and swap codes." : "Play local wireless games with friends over the internet. Add the friends pass you were sent: AirDrop and Messages save it to Downloads.") {
+                Button(ready ? "Replace Pass…" : "Add Friends Pass…") { pick() }
+                if ready, let u = share { ShareLink("Send to a Friend…", item: u) }
+            }
+            if let note { Text(note).font(.caption).foregroundStyle(.red) }
+            line("In each game", "Turn on Play with friends in a game's Game Settings, then start its local wireless mode. Games converted before this version need Convert Again.") { EmptyView() }
+            line("For smooth play", "Ethernet plays best. On Wi-Fi, let Docked pause AirDrop while you play. A slower Mac slows both players, so set its Upscaling to Standard. Keep Connection smoothing off for fighting and racing games.") { EmptyView() }
+            line("Pause AirDrop on Wi-Fi", "Keeps Wi-Fi on your network during friends games. Asks for your password each time.") {
+                Picker("Pause AirDrop on Wi-Fi", selection: $airDrop) { Text("Ask").tag(""); Text("Always").tag("pause"); Text("Never").tag("leave") }.labelsHidden().fixedSize()
+                    .onChange(of: airDrop) { v in if v.isEmpty { UserDefaults.standard.removeObject(forKey: "friends.airDrop") } else { UserDefaults.standard.set(v, forKey: "friends.airDrop") } }
+            }
+            line("Start your own circle", "Run Friends/meeting/setup_meeting.py once with a Cloudflare token. It sets up a free meeting point and saves your pass here. Share the pass only with friends you trust.") {
+                Button("How…") { NSWorkspace.shared.open(URL(string: "https://github.com/Tyrus707/docked/blob/main/Friends/README.md")!) }
+            }
+            Text("Friends you play with can see your internet address, as in any direct online game.").font(.caption).foregroundStyle(.secondary)
+        }.onAppear { Friends.adoptOlder(); ready = Friends.ready; share = Friends.shareable() }
+    }
+    func pick() {
+        let p = NSOpenPanel(); p.canChooseDirectories = false; p.allowsMultipleSelection = false; p.message = "Choose the friends pass (friends.cfg) you were sent."; p.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first   // where AirDrop and Messages put it
+        guard p.runModal() == .OK, let u = p.url else { return }
+        do { try Friends.use(u); note = nil } catch { note = error.localizedDescription }
+        ready = Friends.ready; share = Friends.shareable()
     }
 }
