@@ -175,6 +175,7 @@ struct RetroSettings: View {
 
 struct FriendsSettings: View {
     @State private var ready = Friends.ready
+    @State private var airDrop = UserDefaults.standard.string(forKey: "friends.airDrop") ?? ""
     @State private var share: URL?   // a copy made once, for AirDrop, Messages or Mail
     @State private var note: String?
     func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
@@ -186,7 +187,11 @@ struct FriendsSettings: View {
             }
             if let note { Text(note).font(.caption).foregroundStyle(.red) }
             line("In each game", "Open a game's Game Settings and switch on Play with friends, then use the game's own local wireless play. A game converted before this version of Docked needs Convert Again first.") { EmptyView() }
-            line("For smooth play", "Use Ethernet if you can, or sit near your router: Mac Wi-Fi pauses for a moment now and then to look for AirDrop devices, which shows as slowdown in fighting and racing games. Both Macs need to hold full speed, so on a slower Mac set Upscaling to Standard. If a game still feels slow, set its Connection smoothing to Off.") { EmptyView() }
+            line("For smooth play", "Use Ethernet if you can. On Wi-Fi, Docked offers to pause AirDrop while you play, because it makes Mac Wi-Fi step away many times a second, which fighting and racing games feel as lag. Both Macs need to hold full speed, so on a slower Mac set Upscaling to Standard. Connection smoothing is off by default, so nothing is held back; raise it only for relaxed games like Animal Crossing.") { EmptyView() }
+            line("Pause AirDrop on Wi-Fi", "While a friends game runs, so Wi-Fi stays on your network. Needs your password each time.") {
+                Picker("Pause AirDrop on Wi-Fi", selection: $airDrop) { Text("Ask").tag(""); Text("Always").tag("pause"); Text("Never").tag("leave") }.labelsHidden().fixedSize()
+                    .onChange(of: airDrop) { v in if v.isEmpty { UserDefaults.standard.removeObject(forKey: "friends.airDrop") } else { UserDefaults.standard.set(v, forKey: "friends.airDrop") } }
+            }
             line("Start your own circle", "Run Friends/meeting/setup_meeting.py once with a Cloudflare token. It puts a free meeting point on your own account and saves your pass here. Send the pass only to friends you trust.") {
                 Button("How…") { NSWorkspace.shared.open(URL(string: "https://github.com/Tyrus707/docked/blob/main/Friends/README.md")!) }
             }

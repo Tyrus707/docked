@@ -64,6 +64,17 @@ enum Friends {
         return !wired
     }
 
+    // AirDrop, Handoff and Sidecar share the Wi-Fi radio through awdl0, which leaves the network channel for a few ms many times a second: in a lockstep game that is lag.
+    // With one admin prompt, awdl0 stays down while the game runs (macOS brings it back on its own, so it is put down again every 2 s) and comes back when the game closes.
+    static func pauseAirDrop(whilePID pid: Int32) {
+        guard pid > 0 else { return }
+        let sh = "/sbin/ifconfig awdl0 down; (while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 2; /sbin/ifconfig awdl0 down; done; /sbin/ifconfig awdl0 up) >/dev/null 2>&1 &"
+        let script = "do shell script \"\(sh)\" with administrator privileges with prompt \"Docked will pause AirDrop's Wi-Fi scanning while you play with friends, so the game doesn't lag. AirDrop comes back when the game closes.\""
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript"); p.arguments = ["-e", script]
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try? p.run()
+    }
+
     // Games converted before Play with friends have no friends link in them: their settings list has no DM_FRIENDS
     static func supported(_ app: URL) -> Bool {
         guard let d = try? Data(contentsOf: app.appendingPathComponent("Contents/Resources/dm/launcher.json")) else { return false }
