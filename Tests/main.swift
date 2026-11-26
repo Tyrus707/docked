@@ -770,6 +770,12 @@ do {
 check(convertWait(.now, onPower: false, lowPower: true, hour: 12, idle: 0) == nil && convertWait(.plugged, onPower: false, lowPower: false, hour: 2, idle: 9999) == "Waiting for the power adapter" && convertWait(.plugged, onPower: true, lowPower: true, hour: 2, idle: 0) != nil && convertWait(.plugged, onPower: true, lowPower: false, hour: 12, idle: 0) == nil, "plugged in")
 check(convertWait(.overnight, onPower: true, lowPower: false, hour: 15, idle: 60) == "Waiting for tonight" && convertWait(.overnight, onPower: true, lowPower: false, hour: 23, idle: 0) == nil && convertWait(.overnight, onPower: true, lowPower: false, hour: 6, idle: 0) == nil && convertWait(.overnight, onPower: true, lowPower: false, hour: 15, idle: 1200) == nil, "overnight, or while nobody is using the Mac")
 
+// docked:// links
+check(DockedLink.parse(URL(string: "docked://play?id=0100000000010000")!) == .play(id: "0100000000010000", name: nil) && DockedLink.parse(URL(string: "DOCKED://Resume")!) == .resume && DockedLink.parse(URL(string: "docked://play")!) == nil && DockedLink.parse(URL(string: "https://play?id=1")!) == nil && DockedLink.parse(URL(string: "docked://nope")!) == nil, "links read")
+let lg = [Game(url: URL(fileURLWithPath: "/a.app"), name: "Pokémon Legends", titleID: "0100AAAA00000000"), Game(url: URL(fileURLWithPath: "/b.app"), name: "Mario Kart 8 Deluxe", titleID: "0100BBBB00000000"), Game(url: URL(fileURLWithPath: "/c.app"), name: "Mario", titleID: "0100CCCC00000000")]
+check(gameFor(id: "0100bbbb00000000", name: nil, in: lg)?.name == "Mario Kart 8 Deluxe" && gameFor(id: nil, name: "mario", in: lg)?.name == "Mario" && gameFor(id: nil, name: "kart deluxe", in: lg)?.name == "Mario Kart 8 Deluxe" && gameFor(id: nil, name: "pokemon", in: lg)?.name == "Pokémon Legends" && gameFor(id: nil, name: "zelda", in: lg) == nil, "the game a link means")
+check(DockedLink.play("0100BBBB00000000") == "docked://play?id=0100BBBB00000000", "a game's link")
+
 // library health
 do {
     let nowhere = URL(fileURLWithPath: "/nope/Gone.app")

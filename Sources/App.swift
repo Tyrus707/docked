@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import CoreSpotlight
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var builder: Builder?
@@ -29,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var body: some Scene {
         Window("Docked", id: "main") {
             ContentView().environmentObject(model).environmentObject(model.builder).frame(minWidth: 720, minHeight: 480).onAppear { model.windowAppeared() }
+                .onOpenURL { model.open($0) }.onContinueUserActivity(CSSearchableItemActionType) { model.openSpotlight($0) }
         }
         .defaultSize(width: 1000, height: 660)
         .commands {
@@ -405,6 +407,8 @@ final class Model: ObservableObject {
         tell((l.count == 1 ? "The original of " : "\(l.count) originals, including ") + names + (l.count == 1 ? ", was copied but couldn't be removed, so it still takes space. You can delete it yourself." : ", were copied but couldn't be removed, so they still take space. You can delete them yourself."), good: false)
     }
     @Published var quick = UserDefaults.standard.bool(forKey: "skipPipeline") { didSet { UserDefaults.standard.set(quick, forKey: "skipPipeline") } }
+    @Published var spotlight = UserDefaults.standard.object(forKey: "spotlight") as? Bool ?? true { didSet { UserDefaults.standard.set(spotlight, forKey: "spotlight"); refreshSpotlight() } }
+    var spotlightSig: String?   // what Spotlight was last given, so an unchanged library isn't indexed again
     @Published var convertWhen = ConvertWhen(rawValue: UserDefaults.standard.string(forKey: "convertWhen") ?? "") ?? .now { didSet { UserDefaults.standard.set(convertWhen.rawValue, forKey: "convertWhen"); startNext() } }
     @Published var convertWaiting: String?   // why the queue waits for Convert When, said in the tray
     private var powerStop: Job?   // the game stopped because the power adapter went: first in line again

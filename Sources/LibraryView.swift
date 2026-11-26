@@ -305,6 +305,7 @@ struct GameActions: View {
         }
         else { Button("Rename…") { model.retitling = game }; if let r = game.rom { Button(r.info == nil ? "Find Cover and Details…" : "Find Details Again…") { model.find(r.id, byHand: true) }.disabled(model.finding.contains(r.id)) } }
         Button("Choose Cover…") { model.pickArt(game) }; if model.hasArt(game) { Button("Use Original Cover") { model.clearArt(game) } }
+        Button("Copy Link for Shortcuts") { model.copyLink(game) }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([game.away.map { URL(fileURLWithPath: $0) } ?? game.url]) }.disabled(game.missing && game.away == nil)
         if !game.missing {
             Divider()
