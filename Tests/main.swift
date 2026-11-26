@@ -758,15 +758,14 @@ do {
     check(d.root.lastPathComponent == "0100ABC000010000" && !d.hasSave && d.list().isEmpty, "no save yet")
     check((try! d.backUp()) == nil, "nothing to back up")
     _ = mk("nx/0100ABC000010000/save/0/file.bin", "one"); _ = mk("nx/0100ABC000010000/save_device/d.bin", "dev"); _ = mk("nx/0100ABC000010000/save.sync", "base x")
-    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
-    check(fm.fileExists(atPath: b.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b.appendingPathComponent("save.sync").path), "backup holds the save parts only")
-    let b2 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b2 != b, "same second, new folder")
-    check(d.list().count == 2 && d.list().allSatisfy { $0.bytes == 6 }, "backups listed")
+    let b0 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
+    check(fm.fileExists(atPath: b0.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b0.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b0.appendingPathComponent("save.sync").path), "backup holds the save parts only")
+    let b1 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b1 == b0 && d.list().count == 1 && d.list().allSatisfy { $0.bytes == 6 }, "an unchanged save makes no second copy")
+    for i in 0..<5 { try! Data("v\(i)".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02); _ = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_001_000 + Double(i)), label: "Docked before convert") }
+    check(d.list().count == GameData.kept && (try? String(contentsOf: d.list()[0].url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "v4", "a game keeps only its newest 3 copies")
+    try! Data("one".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02)
+    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_002_000))!
     check(GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before convert"), date: Date(), bytes: 0).reason == "before conversion" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before engine update"), date: Date(), bytes: 0).reason == "before engine update" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked"), date: Date(), bytes: 0).reason == "manual backup", "backups say why they were made")
-    for i in 0..<10 { _ = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_001_000 + Double(i)), label: "Docked before update") }
-    d.pruneAutomatic()
-    check(d.list().filter { $0.name.contains(" Docked before ") }.count == GameData.automaticKept && d.list().count == GameData.automaticKept + 2, "Docked's own copies are kept to a few; the player's stay")
-    for b in d.list() where b.name.contains(" Docked before ") { try! fm.removeItem(at: b.url) }
     let carried = tmp.appendingPathComponent("carried")
     let out1 = try! d.export(into: carried, named: "My Game")!
     check(out1.lastPathComponent.contains("My Game") && fm.fileExists(atPath: out1.appendingPathComponent("save/0/file.bin").path), "a save can be copied out")
@@ -776,7 +775,7 @@ do {
     try! Data("two".utf8).write(to: d.save.appendingPathComponent("0/file.bin"))
     try! d.restore(b)
     check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "one", "backup restored")
-    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" }, "the save it replaced is kept")
+    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" } && d.list().count <= GameData.kept, "the save it replaced is kept, still within 3 copies")
     let loose = mk("elsewhere/mysave/0/file.bin", "three").deletingLastPathComponent().deletingLastPathComponent()
     try! d.restore(loose); check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "three" && fm.fileExists(atPath: d.root.appendingPathComponent("save_device").path), "a bare save folder becomes the save")
     try? fm.createDirectory(at: tmp.appendingPathComponent("emptyfolder"), withIntermediateDirectories: true)

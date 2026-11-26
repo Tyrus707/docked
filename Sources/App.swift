@@ -989,7 +989,6 @@ final class Model: ObservableObject {
     private func arrive(_ o: Arrive.Offer) {
         let n = NSAlert(); n.messageText = Arrive.title(o); n.informativeText = Arrive.text(o); if case .update = o { n.addButton(withTitle: "Update and Reopen") } else { n.addButton(withTitle: "Move and Reopen") }; n.addButton(withTitle: "Not Now")
         guard n.runModal() == .alertFirstButtonReturn else { UserDefaults.standard.set(appVersion, forKey: "stayedPut"); return }
-        snapshotSaves("before update")
         updating = true
         // The older one may be open, and converting: it asks before it stops
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").filter { $0.processIdentifier != getpid() }; others.forEach { $0.activate(options: []); $0.terminate() }
@@ -1002,7 +1001,6 @@ final class Model: ObservableObject {
     func installUpdate(_ v: String) {
         guard !updating else { return }
         guard !builder.running, moving == nil, !removing, !installing, !engineBusy, !checkingGame else { tell("Docked can update once it has finished its current job.", good: false); return }
-        snapshotSaves("before update")
         updating = true
         Update.fetch(v) { r in
             switch r {
@@ -1044,7 +1042,6 @@ final class Model: ObservableObject {
         guard !engineBusy, let signed = engineSigned else { return }
         let (m, s) = signed
         guard engineFree else { tell("Docked can update its engine once it has finished its current job.", good: false); return }
-        snapshotSaves("before engine update")
         engineBusy = true; let day = engine?.when.map(engineDay)
         DispatchQueue.global(qos: .userInitiated).async {
             let r = Result { try Engine.prepare(manifest: m, sig: s) }
