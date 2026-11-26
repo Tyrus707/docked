@@ -778,7 +778,7 @@ do {
     _ = mk("nx/0100ABC000010000/save/0/file.bin", "one"); _ = mk("nx/0100ABC000010000/save_device/d.bin", "dev"); _ = mk("nx/0100ABC000010000/save.sync", "base x")
     let b0 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
     check(fm.fileExists(atPath: b0.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b0.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b0.appendingPathComponent("save.sync").path), "backup holds the save parts only")
-    let b1 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b1 == b0 && d.list().count == 1 && d.list().allSatisfy { $0.bytes == 6 }, "an unchanged save makes no second copy")
+    let b1 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b1.standardizedFileURL.path == b0.standardizedFileURL.path && d.list().count == 1 && d.list().allSatisfy { $0.bytes == 6 }, "an unchanged save makes no second copy")
     for i in 0..<5 { try! Data("v\(i)".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02); _ = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_001_000 + Double(i)), label: "Docked before convert") }
     check(d.list().count == GameData.kept && (try? String(contentsOf: d.list()[0].url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "v4", "a game keeps only its newest 3 copies")
     try! Data("one".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02)

@@ -21,7 +21,8 @@ func freeSpace(at u: URL) -> Int64 {
     var d = u
     while !FileManager.default.fileExists(atPath: d.path), d.pathComponents.count > 1 { d.deleteLastPathComponent() }
     let v = try? d.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
-    return v?.volumeAvailableCapacityForImportantUsage ?? Int64(v?.volumeAvailableCapacity ?? 0)   // some external drives only report the plain figure
+    if let i = v?.volumeAvailableCapacityForImportantUsage, i > 0 { return i }
+    return Int64(v?.volumeAvailableCapacity ?? 0)   // some drives and disk images report 0 or nothing for the first figure, so use the plain one
 }
 
 struct SpaceEstimate: Equatable {
