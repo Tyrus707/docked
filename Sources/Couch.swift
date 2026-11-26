@@ -242,16 +242,15 @@ struct CouchView: View {
                         ScrollView(.vertical, showsIndicators: false) {
                             LazyVStack(alignment: .leading, spacing: 24 * k) {
                                 ForEach(Array(shelves.enumerated()), id: \.element.id) { n, s in
-                                    row(s, n, spot.index(s.id, s.games.map(\.id)), n == spot.shelf, n == spot.shelf ? k : k * 0.76).id(s.id)
+                                    row(s, n, spot.index(s.id, s.games.map(\.id)), n == spot.shelf, k).id(s.id)
                                 }
                             }
                             .padding(.horizontal, 80 * k).padding(.top, 16 * k).padding(.bottom, 230 * k)
                         }
-                        .mask(LinearGradient(colors: [.clear, .black, .black], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.06)))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .opacity(model.couchIdle ? 0 : 1)
-                        .onAppear { if let focus { withAnimation(still ? nil : .easeOut(duration: 0.3)) { p.scrollTo(focus, anchor: .center) } } }
-                        .whenChanged(focus ?? "") { if let focus { withAnimation(still ? nil : .easeOut(duration: 0.35)) { p.scrollTo(focus, anchor: .center) } } }
+                        .onAppear { if let focus { p.scrollTo(focus, anchor: .center) } }
+                        .whenChanged(focus ?? "") { if let focus { p.scrollTo(focus, anchor: .center) } }
                     }
                     hints(game, k).frame(height: 40 * k).opacity(model.couchIdle ? 0 : 1)
                 }
@@ -275,8 +274,6 @@ struct CouchView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
-        .animation(still ? .easeOut(duration: 0.15) : .easeInOut(duration: 0.45), value: game?.id)
-        .animation(still ? nil : .easeInOut(duration: 0.3), value: spot.shelf)
         .animation(.easeInOut(duration: 1.2), value: model.couchIdle)
         .animation(.easeOut(duration: 0.2), value: model.message)
         .onContinuousHover { _ in if model.couchIdle { model.couchPoke() } }
@@ -303,7 +300,7 @@ struct CouchView: View {
                         }
                     }
                 }
-                .whenChanged(on) { if shelves.indices.contains(on) { withAnimation(still ? nil : .easeOut(duration: 0.3)) { p.scrollTo(shelves[on].id, anchor: .center) } } }
+                .whenChanged(on) { if shelves.indices.contains(on) { p.scrollTo(shelves[on].id, anchor: .center) } }
             }
             TimelineView(.everyMinute) { t in Text(t.date, style: .time).font(.system(size: 22 * k, weight: .medium)).monospacedDigit().foregroundStyle(style.soft) }.padding(.leading, 18 * k)
         }
@@ -328,13 +325,11 @@ struct CouchView: View {
                 }
                 .padding(.horizontal, -56 * k)
                 .onAppear { if shelf.games.indices.contains(i) { p.scrollTo(shelf.games[i].id, anchor: UnitPoint(x: 0.12, y: 0.5)) } }
-                .whenChanged(i) { if active, shelf.games.indices.contains(i) { withAnimation(still ? nil : .easeOut(duration: 0.28)) { p.scrollTo(shelf.games[i].id, anchor: UnitPoint(x: 0.12, y: 0.5)) } } }
+                .whenChanged(i) { if active, shelf.games.indices.contains(i) { p.scrollTo(shelf.games[i].id, anchor: UnitPoint(x: 0.12, y: 0.5)) } }
             }
         }
         .padding(.leading, active ? 12 * k : 0)
         .background { if active { LinearGradient(colors: [style.accent.opacity(0.14), .clear], startPoint: .leading, endPoint: .center).clipShape(RoundedRectangle(cornerRadius: 14 * k, style: .continuous)) } }
-        .opacity(active ? 1 : 0.72)
-        .animation(still ? nil : .easeOut(duration: 0.22), value: active)
     }
 
     func scrollCue(_ k: CGFloat) -> some View {
@@ -456,23 +451,16 @@ struct CouchCover: View {
     @EnvironmentObject var model: Model
     let game: Game, on: Bool, k: CGFloat
     @Environment(\.accessibilityReduceMotion) private var still
-    @State private var shine: CGFloat = -1.4
     var body: some View {
         let w = 196 * k, h = w / Cover.shape, r = RoundedRectangle(cornerRadius: 12 * k, style: .continuous)
-        Image(nsImage: model.cover(game) ?? model.icon(game)).resizable().aspectRatio(contentMode: .fill).frame(width: w, height: h).clipShape(r)
-            .overlay {   // a streak of light across the cover as it is chosen
-                LinearGradient(colors: [.clear, .white.opacity(0.28), .clear], startPoint: .leading, endPoint: .trailing).frame(width: w * 0.45).rotationEffect(.degrees(18)).offset(x: shine * w).blendMode(.plusLighter).clipShape(r).allowsHitTesting(false)
-            }
+        Image(nsImage: model.cover(game) ?? model.icon(game)).resizable().aspectRatio(contentMode: .fill).frame(width: w, height: h).background(Rectangle().fill(style.bottom)).clipShape(r)
             .overlay { if game.missing { ZStack { Color.black.opacity(0.58); Label(game.away != nil ? "Offloaded" : "Not connected", systemImage: game.away != nil ? "icloud" : "externaldrive.badge.xmark").font(.system(size: 15 * k, weight: .semibold)).foregroundStyle(.white).multilineTextAlignment(.center).padding(8 * k) }.clipShape(r) } }
             .overlay(alignment: .topTrailing) { if model.library.entry(game.titleID).favorite { Image(systemName: "heart.fill").font(.system(size: 15 * k)).foregroundStyle(style.accent).padding(7 * k).background(.black.opacity(0.45), in: Circle()).padding(8 * k) } }
             .overlay(alignment: .topLeading) { if model.isRunning(game) { Circle().fill(style.ok).frame(width: 12 * k, height: 12 * k).padding(10 * k) } }
             .overlay { r.strokeBorder(on ? style.accent : .white.opacity(0.08), lineWidth: on ? 4 * k : 1) }
             .shadow(color: on ? style.accent.opacity(0.5) : .black.opacity(0.35), radius: on ? 26 * k : 10 * k, y: on ? 0 : 6 * k)
-            .scaleEffect(on ? 1.12 : 0.95).offset(y: on ? -8 * k : 0).opacity(on ? 1 : 0.7).zIndex(on ? 1 : 0)
-            .animation(still ? .easeOut(duration: 0.12) : .spring(response: 0.3, dampingFraction: 0.7), value: on)
-            .onAppear { if on { sweep() } }
-            .whenChanged(on) { if on { sweep() } }
+            .scaleEffect(on ? 1.06 : 1).offset(y: on ? -6 * k : 0).zIndex(on ? 1 : 0)
+            .animation(still ? .easeOut(duration: 0.12) : .easeOut(duration: 0.16), value: on)
             .accessibilityElement().accessibilityLabel(game.name).accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
     }
-    private func sweep() { guard !still else { return }; shine = -1.4; withAnimation(.easeOut(duration: 0.75).delay(0.08)) { shine = 1.4 } }
 }
