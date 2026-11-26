@@ -73,7 +73,7 @@ struct Sidebar: View {
         let on = model.section == s, n = s == .home ? nil : model.count(s)
         return Button { withAnimation(still ? nil : .easeOut(duration: 0.18)) { model.section = s } } label: {
             HStack(spacing: 9) {
-                Image(systemName: on && s == .favorites ? "heart.fill" : s.symbol).frame(width: 18).foregroundStyle(s.machine?.color ?? (on ? style.accent : style.soft))
+                Group { if case let .console(id) = s { ConsoleIcon(id: id) } else { Image(systemName: on && s == .favorites ? "heart.fill" : s.symbol) } }.frame(width: 18).foregroundStyle(s.machine?.color ?? (on ? style.accent : style.soft))
                 Text(s.title).foregroundStyle(style.text).lineLimit(1)
                 Spacer()
                 if let n { Text("\(n)").font(.caption).monospacedDigit().foregroundStyle(style.soft) }
