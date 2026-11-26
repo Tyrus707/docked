@@ -111,3 +111,9 @@ final class Navigator {
         for (b, m) in [(g.buttonA, Move.accept), (g.buttonB, .back), (g.buttonY, .favorite), (g.buttonMenu, .play), (g.rightShoulder, .nextSection), (g.leftShoulder, .previousSection)] { b.pressedChangedHandler = { [weak self] _, _, down in if down { self?.press(m) } } }
     }
 }
+
+// A Couch Mode decade row's name: 1990 is "Best of the 90s", 2010 is "Best of the 2010s". Nothing before 1970, where too few games would share a row.
+func couchDecadeName(_ decade: Int) -> String? {
+    guard decade >= 1970, decade % 10 == 0, decade <= 2090 else { return nil }
+    return decade < 2000 ? "Best of the \(decade % 100)s" : "Best of the \(decade)s"
+}

@@ -449,6 +449,7 @@ let followed = gemSpot.resolved(afterFav)
 check(followed.shelfID == "favorites" && followed.index("favorites", afterFav[1].games) == 0 && followed.game == "x", "couch: a game follows its shelf into Favorites")
 check(couchStep(gemSpot, .right, rows: afterFav).game == "x", "couch: a move after a shelf appears keeps that game")
 check(followed.resolved(beforeFav).shelfID == "gems" && followed.resolved(beforeFav).game == "x", "couch: a game survives its shelf going away")
+check(couchDecadeName(1990) == "Best of the 90s" && couchDecadeName(1980) == "Best of the 80s" && couchDecadeName(2000) == "Best of the 2000s" && couchDecadeName(2010) == "Best of the 2010s" && couchDecadeName(1960) == nil && couchDecadeName(1995) == nil, "couch: decade rows are named plainly")
 // ---- updates ----
 let uk = Curve25519.Signing.PrivateKey(), upub = uk.publicKey.rawRepresentation.base64EncodedString(), ud = tmp.appendingPathComponent("upd"), ub = ud.appendingPathComponent("Backups")
 func sh(_ a: [String]) { let p = Process(); p.executableURL = URL(fileURLWithPath: a[0]); p.arguments = Array(a.dropFirst()); p.standardError = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; try! p.run(); p.waitUntilExit() }
