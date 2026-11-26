@@ -70,8 +70,7 @@ struct QueueBar: View {
                     Spacer()
                     if model.queue.paused { Button(builder.running ? "Continue After This" : "Continue") { model.resumeQueue() } } else if builder.running { Button("Pause After This") { model.queue.paused = true } }
                 }
-                let s = spaceText(need: spaceForQueue(model.queue.waiting), free: freeSpace())
-                Text(s.text).font(.caption).foregroundStyle(s.short ? style.warn : Color.secondary)
+                SpaceCheck(estimate: SpaceEstimate(need: spaceForQueue(model.queue.waiting), free: freeSpace(), destinationFree: nil, destinationNeed: nil), compact: true)
                 if open {
                     ScrollView {
                         VStack(spacing: 4) {

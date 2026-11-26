@@ -1385,11 +1385,9 @@ extension View { @ViewBuilder func fromBottom() -> some View { if #available(mac
 struct SetupView: View {
     @EnvironmentObject var model: Model
     @Environment(\.dismiss) var dismiss
-    @State private var copied: String?
     private let tick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
     private var first: URL? { model.waitingSwitch.first }   // the Switch game that brought this up, if one did
     private var keysFound: Bool { findKeys(model.keys) != nil }
-    private var room: SpaceEstimate { spaceEstimate(bytes: 0) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1405,39 +1403,15 @@ struct SetupView: View {
                 Text("Setup").font(.title2.weight(.semibold))
                 Text("These are needed once. Where there's a command, copy it, paste it into Terminal and press Return.").foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(model.checks) { c in
-                    HStack(alignment: .firstTextBaseline) {
-                        Image(systemName: c.ok ? "checkmark.circle.fill" : "circle").foregroundStyle(c.ok ? style.ok : Color.secondary)
-                            .accessibilityLabel(c.ok ? "Done" : "Not done")
-                        VStack(alignment: .leading) { Text(c.title); Text(c.detail).font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                        if !c.ok, c.installs {
-                            if model.installing { ProgressView().controlSize(.small) }
-                            Button(model.installing ? "Installing…" : "Install") { model.install() }.disabled(model.installing)
-                        }
-                        if !c.ok, !c.fix.isEmpty {
-                            Button(copied == c.id ? "Copied" : "Copy Command") {
-                                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.fix, forType: .string); copied = c.id
-                            }
-                        }
-                    }
-                }
-                if first != nil {
-                    HStack(alignment: .firstTextBaseline) {
-                        Image(systemName: keysFound ? "checkmark.circle.fill" : "circle").foregroundStyle(keysFound ? style.ok : Color.secondary).accessibilityLabel(keysFound ? "Done" : "Not done")
-                        VStack(alignment: .leading) { Text("Your prod.keys file"); Text(keysFound ? "Found. Docked only remembers where it is." : "Copied from your own Switch. Not needed for .nup files or dump folders.").font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                        Button(keysFound ? "Change…" : "Choose…") { _ = model.pickKeys() }
-                    }
-                }
-            }.padding(first == nil ? 0 : 12).background(first == nil ? Color.clear : style.tile, in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Setup Check", systemImage: "checkmark.seal").font(.callout.weight(.semibold)).foregroundStyle(style.text)
-                SpaceCheck(estimate: room, compact: true)
-                Text(model.waitingSwitch.isEmpty ? "Converting needs about 10 GB of work space, plus twice the size of each game." : "\(model.waitingSwitch.count) \(model.waitingSwitch.count == 1 ? "game is" : "games are") waiting. Each needs about twice its size plus 10 GB of work space.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            SetupChecklist(note: model.waitingSwitch.isEmpty ? "Converting needs about 10 GB of work space, plus twice the size of each game." : "\(model.waitingSwitch.count) \(model.waitingSwitch.count == 1 ? "game is" : "games are") waiting. Each needs about twice its size plus 10 GB of work space.")
+            if first != nil {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: keysFound ? "checkmark.circle.fill" : "circle").foregroundStyle(keysFound ? style.ok : Color.secondary).accessibilityLabel(keysFound ? "Done" : "Not done")
+                    VStack(alignment: .leading) { Text("Your prod.keys file"); Text(keysFound ? "Found. Docked only remembers where it is." : "Copied from your own Switch. Not needed for .nup files or dump folders.").font(.caption).foregroundStyle(.secondary) }
+                    Spacer()
+                    Button(keysFound ? "Change…" : "Choose…") { _ = model.pickKeys() }
+                }.padding(12).background(style.tile, in: RoundedRectangle(cornerRadius: 10))
             }
-            if let p = model.installProblem { Label(p, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout) }
             if first != nil { Label("Your game is kept here. Once everything is ready, Docked picks up where you left off, so you can close this and keep playing.", systemImage: "clock").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 if model.checking { ProgressView().controlSize(.small) }

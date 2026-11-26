@@ -10,10 +10,6 @@ func spaceForQueue(_ jobs: [Job]) -> Int64 {
     }
     return worst
 }
-func spaceText(need: Int64, free: Int64) -> (text: String, short: Bool) {
-    free >= need ? ("Needs about \(byteText(need)) while converting. You have \(byteText(free)).", false)
-        : ("Needs about \(byteText(need)) while converting, but you have \(byteText(free)). Free up about \(byteText(need - free)).", true)
-}
 
 func byteText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 

@@ -28,7 +28,7 @@ enum Update {
         if let e = fm.enumerator(at: new, includingPropertiesForKeys: [.isSymbolicLinkKey]) { for case let f as URL in e where (try? f.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true { throw UpdateError("The update holds something it should not. Nothing was changed.") } }
         try run("/usr/bin/codesign", ["--verify", "--strict", new.path])
         // The conversion tools are 110 MB and rarely change, so an update leaves them out and they are carried over. They are checked against the fingerprint the app already held.
-        let oldInfo = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")) as? [String: Any] ?? [:], tools = app.appendingPathComponent("Contents/Resources/tools.tar.xz"), to = c.appendingPathComponent("Resources/tools.tar.xz")
+        let oldInfo = appInfo(app) as? [String: Any] ?? [:], tools = app.appendingPathComponent("Contents/Resources/tools.tar.xz"), to = c.appendingPathComponent("Resources/tools.tar.xz")
         if !fm.fileExists(atPath: to.path), fm.fileExists(atPath: tools.path), let want = oldInfo["DSPayloadSHA256"] as? String {
             if clonefile(tools.path, to.path, 0) != 0 { try fm.copyItem(at: tools, to: to) }
             guard sha256(to) == want else { throw UpdateError("Docked's own tools look damaged. Download the full version from the Docked page. Nothing was changed.") }

@@ -7,7 +7,6 @@ struct GuideView: View {
     @Environment(\.accessibilityReduceMotion) private var still
     @State private var step = GuideStep.welcome
     @State private var dropping = false
-    @State private var copied = false
     private let tick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
     var steps: [GuideStep] { cannotConvert() == nil ? GuideStep.allCases : [.welcome, .games] }
     func go(_ by: Int) { if let i = steps.firstIndex(of: step), steps.indices.contains(i + by) { withAnimation(still ? nil : .easeOut(duration: 0.18)) { step = steps[i + by] } } }
@@ -45,35 +44,9 @@ struct GuideView: View {
     @ViewBuilder var tools: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Converting uses Apple's free developer tools. Docked checks each step and moves on by itself.").foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
-            let now = nextCheck(model.checks)
-            ForEach(model.checks) { c in
-                HStack(spacing: 10) { Image(systemName: c.ok ? "checkmark.circle.fill" : c.id == now?.id ? "arrow.right.circle.fill" : "circle").foregroundStyle(c.ok ? style.ok : c.id == now?.id ? style.accent : style.line).accessibilityLabel(c.ok ? "Done" : "Not done"); Text(c.title).foregroundStyle(c.ok || c.id == now?.id ? style.text : style.soft); Spacer(); if c.ok { Text(c.detail).font(.caption).foregroundStyle(style.soft) } }
-            }
-            if let now { VStack(alignment: .leading, spacing: 8) { action(now) }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(style.tile, in: RoundedRectangle(cornerRadius: 10)) }
-            else if model.checks.isEmpty { HStack { ProgressView().controlSize(.small); Text("Checking your Mac…").foregroundStyle(style.soft) } }
-            else { Label("Your Mac is ready.", systemImage: "checkmark.seal.fill").foregroundStyle(style.ok) }
-            SpaceCheck(estimate: room, compact: true)
-            Text("A game also needs about twice its own size while it converts.").font(.caption).foregroundStyle(style.soft)
-            if let p = model.installProblem { Text(p).font(.callout).foregroundStyle(style.danger).fixedSize(horizontal: false, vertical: true) }
+            SetupChecklist()
         }
     }
-    @ViewBuilder func action(_ c: Check) -> some View {
-        if c.installs {
-            Text("Docked carries its conversion tools. Putting them in place takes about a minute and 2.5 GB.").font(.callout).foregroundStyle(style.text)
-            if model.installing { HStack { ProgressView().controlSize(.small); Text("Installing…") } } else { Button("Install Conversion Tools") { model.install() } }
-        } else if c.title.hasPrefix("Xcode") {
-            Text("Download \(c.title) from Apple and move it to Applications. You need a free Apple account. It's large, so this takes a while. \(c.detail == "Not installed" ? "" : c.detail + ".")").font(.callout).foregroundStyle(style.text).fixedSize(horizontal: false, vertical: true)
-            Button("Open Apple's Download Page") { NSWorkspace.shared.open(URL(string: "https://developer.apple.com/download/all/?q=Xcode%20\(requiredXcode)")!) }
-        } else if c.title == "Apple's Metal compiler" {
-            Text("A free download from Apple that Docked can start for you.").font(.callout).foregroundStyle(style.text)
-            if model.fetching { HStack { ProgressView().controlSize(.small); Text("Downloading from Apple…") } } else { Button("Download It") { model.fetchMetal() } }
-        } else if !c.fix.isEmpty {
-            Text(c.fix.hasPrefix("sudo") ? "Apple asks you to accept its licence yourself. Paste this in Terminal, press Return, type your Mac's password, then follow what it says." : "\(c.detail). Paste this in Terminal and press Return.").font(.callout).foregroundStyle(style.text).fixedSize(horizontal: false, vertical: true)
-            Text(c.fix).font(.caption.monospaced()).textSelection(.enabled).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
-            Button(copied ? "Copied. Paste It in Terminal" : "Copy and Open Terminal") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.fix, forType: .string); copied = true; NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")); DispatchQueue.main.asyncAfter(deadline: .now() + 6) { copied = false } }
-        } else { Text(c.detail).font(.callout).foregroundStyle(style.text) }
-    }
-    private var room: SpaceEstimate { spaceEstimate(bytes: 0) }
     var found: String? { findKeys(model.keys) }
     var keysOK: Bool { found.map { readKeys($0).usable } ?? false }
     @ViewBuilder var keys: some View {
