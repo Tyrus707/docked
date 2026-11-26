@@ -67,6 +67,8 @@ final class Model: ObservableObject {
     @Published var section = Section.home
     @Published var search = ""
     @Published var sort = SortBy(rawValue: UserDefaults.standard.string(forKey: "sort") ?? "") ?? .recent { didSet { UserDefaults.standard.set(sort.rawValue, forKey: "sort") } }
+    @Published var group = GroupBy(rawValue: UserDefaults.standard.string(forKey: "group") ?? "") ?? .auto { didSet { UserDefaults.standard.set(group.rawValue, forKey: "group") } }
+    @Published var compact = UserDefaults.standard.bool(forKey: "compact") { didSet { UserDefaults.standard.set(compact, forKey: "compact") } }
     @Published var collecting: Game?
     @Published var renaming: String?
     @Published var runningIDs = Set<String>()
@@ -82,6 +84,9 @@ final class Model: ObservableObject {
     @Published var askLookUp = false
     @Published var picking: Picking?
     @Published var finding = Set<String>()
+    @Published var scoring = Set<String>()   // games whose scores and details are being looked up, by title ID
+    // Converted Switch games get their details when they are done; nil follows "Find covers and details"
+    @Published var metaConverted = UserDefaults.standard.object(forKey: "metaConverted") as? Bool { didSet { UserDefaults.standard.set(metaConverted, forKey: "metaConverted") } }
     var waitingLookUp: [String] = [], picks: [Picking] = []
 
     // Games for other consoles, and converted games, chosen or dropped: looked through off the main thread, then brought in (Library.swift).
@@ -454,7 +459,7 @@ final class Model: ObservableObject {
     }
 
     private func finished() {
-        icons = [:]; covers = [:]; sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID }; let job = queue.current
+        icons = [:]; covers = [:]; sizes = [:]; converting = false; if builder.stage == "Done" { arrived = builder.titleID; if let t = builder.titleID { metaArrived(t) } }; let job = queue.current
         switch builder.stage {
         case "Done":
             if let id = builder.titleID, !buildSources.isEmpty { var s = sources; s[id] = buildSources; sources = s }
@@ -718,10 +723,19 @@ final class Model: ObservableObject {
     @Published var editing: SmartCollection?
     @Published var tuning: Game?   // the game whose Game Settings sheet is open
     var rows: [(id: String, games: [String])] {
-        if section != .home || !search.isEmpty { return [("grid", shown(section == .home ? .all : section, by: sort).map(\.id))] }
+        if section != .home || !search.isEmpty { return ((jumpBack(columns).isEmpty ? [] : [(Self.jumpRow, jumpBack(columns))]) + gridGroups).map { (id: $0.0, games: $0.1.map(\.id)) } }
         var r: [(String, [String])] = [("recent", shown(.all, by: .recent).prefix(5).map(\.id)), ("Favorites", shown(.favorites).map(\.id))]
         for c in consolesShown { r.append((c.name, shown(.console(c.id)).map(\.id))) }; for c in library.collections { r.append((c, shown(.collection(c)).map(\.id))) }
         return r.map { (id: $0.0, games: $0.1) }
+    }
+    // The open section as it is drawn: its games in runs (one untitled run when not grouped), and a short row of the ones played lately above a long console's list.
+    static let jumpRow = "Jump Back In"
+    var gridList: [Game] { shown(section == .home ? .all : section, by: sort) }
+    var gridGroups: [(String, [Game])] { library.groups(gridList, by: group, sort: sort).map { ($0.title.isEmpty ? "grid" : $0.title, $0.games) } }
+    func jumpBack(_ n: Int) -> [Game] {
+        guard search.isEmpty, case .console = section, sort != .recent else { return [] }
+        let l = gridList; guard l.count >= GroupBy.enough else { return [] }
+        return Array(library.show(l, in: .all, by: .recent).prefix { library.entry($0.titleID).lastPlayed != nil }.prefix(max(n, 1)))   // one line of the grid, so it moves like one
     }
     var sections: [Section] { [.home, .all, .favorites] + consolesShown.map { .console($0.id) } + [.status(.playing), .status(.finished), .status(.aside), .status(.none)] + library.collections.map { .collection($0) } + library.smart.map { .smart($0) } }
     // ---- Couch Mode (Couch.swift) ----
@@ -839,6 +853,7 @@ final class Model: ObservableObject {
     // Once, when the window first appears. A failed look says nothing: being offline is not a problem worth a message.
     func windowAppeared() {
         guard !launched else { return }; launched = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
         for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification] { NSWorkspace.shared.notificationCenter.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in self?.icons = [:]; self?.covers = [:]; self?.reload(); if x.name == NSWorkspace.didMountNotification { self?.lookInWatched(force: true) } } }
