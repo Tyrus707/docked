@@ -1,0 +1,46 @@
+import Foundation
+
+// Play with friends: a converted game's Local Wireless reaches the friends in the player's circle, over the internet (Friends/engine-patches).
+// Docked only keeps the circle's pass, friends.cfg (the meeting point's address and the circle's shared key), where every converted game looks for it.
+// The player turns it on per game, in that game's settings (DM_FRIENDS); friends are added by code on the game's own Friends screen.
+enum Friends {
+    static var folder: URL { URL(fileURLWithPath: ProcessInfo.processInfo.environment["DOCKED_FRIENDS"] ?? NSHomeDirectory() + "/Library/Application Support/Docked/Friends") }
+    static var pass: URL { folder.appendingPathComponent("friends.cfg") }
+    // where the first meeting point setup (before Docked had friends) saved its pass
+    static var older: URL { folder.deletingLastPathComponent().appendingPathComponent("Friends Meeting/friends.cfg") }
+    static var ready: Bool { read(pass) != nil }
+    static var meetingPoint: String? { read(pass).flatMap { URL(string: $0.meet)?.host } }
+
+    struct Pass: Equatable { let meet: String; let circle: Data }
+    static func read(_ u: URL) -> Pass? {
+        guard let a = try? u.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]), a.isRegularFile == true, (a.fileSize ?? 0) < 4096,
+              let t = try? String(contentsOf: u, encoding: .utf8) else { return nil }
+        return parse(t)
+    }
+    static func parse(_ t: String) -> Pass? {
+        var meet: String?, circle: Data?
+        for l in t.split(whereSeparator: \.isNewline) {
+            let s = l.trimmingCharacters(in: .whitespaces)
+            if s.hasPrefix("meet=") { meet = String(s.dropFirst(5)) } else if s.hasPrefix("circle=") { circle = Data(base64Encoded: String(s.dropFirst(7))) }
+        }
+        guard let m = meet, let u = URL(string: m), u.scheme == "wss", let h = u.host, !h.isEmpty, let c = circle, c.count == 32 else { return nil }
+        return Pass(meet: m, circle: c)
+    }
+    // Takes a pass the player was given (or made), readable by this player only. The one in use stays until the new one is in place.
+    static func use(_ from: URL) throws {
+        guard read(from) != nil else { throw RetroError("That isn't a friends pass. Ask whoever set up your circle for their friends.cfg file.") }
+        let fm = FileManager.default
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let d = try Data(contentsOf: from), t = folder.appendingPathComponent("friends.cfg.new")
+        try? fm.removeItem(at: t)
+        guard fm.createFile(atPath: t.path, contents: d, attributes: [.posixPermissions: 0o600]) else { throw RetroError("The friends pass couldn't be saved.") }
+        if fm.fileExists(atPath: pass.path) { _ = try fm.replaceItemAt(pass, withItemAt: t) } else { try fm.moveItem(at: t, to: pass) }
+    }
+    // A pass the earlier setup made is taken as it is, once
+    static func adoptOlder() { if !ready, read(older) != nil { try? use(older) } }
+    // Games converted before Play with friends have no friends link in them: their settings list has no DM_FRIENDS
+    static func supported(_ app: URL) -> Bool {
+        guard let d = try? Data(contentsOf: app.appendingPathComponent("Contents/Resources/dm/launcher.json")) else { return false }
+        return d.range(of: Data("\"DM_FRIENDS\"".utf8)) != nil
+    }
+}

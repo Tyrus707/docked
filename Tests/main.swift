@@ -809,4 +809,19 @@ do {
     try? fm.removeItem(at: base)
 }
 
+// Play with friends: the pass Docked keeps, and which games have the friends link
+do {
+    let key = Data(repeating: 7, count: 32).base64EncodedString()
+    check(Friends.parse("meet=wss://docked-meeting.example.workers.dev/meet\ncircle=\(key)\n") == Friends.Pass(meet: "wss://docked-meeting.example.workers.dev/meet", circle: Data(repeating: 7, count: 32)), "a friends pass is read")
+    check(Friends.parse("meet=https://example.com/meet\ncircle=\(key)\n") == nil, "a pass must use a secure WebSocket")
+    check(Friends.parse("meet=wss://example.com/meet\ncircle=c2hvcnQ=\n") == nil, "a pass needs a 32-byte circle key")
+    check(Friends.parse("circle=\(key)\n") == nil, "a pass needs a meeting point")
+    let fm = FileManager.default, base = fm.temporaryDirectory.appendingPathComponent("friends-\(UUID().uuidString)"), dm = base.appendingPathComponent("New.app/Contents/Resources/dm")
+    try? fm.createDirectory(at: dm, withIntermediateDirectories: true)
+    try? Data(#"{"schema":1,"settings":[{"env":"DM_FRIENDS","kind":"toggle"}]}"#.utf8).write(to: dm.appendingPathComponent("launcher.json"))
+    check(Friends.supported(base.appendingPathComponent("New.app")), "a game converted with friends offers it")
+    check(!Friends.supported(base.appendingPathComponent("Old.app")), "an older game does not")
+    try? fm.removeItem(at: base)
+}
+
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
