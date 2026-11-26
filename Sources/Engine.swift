@@ -65,7 +65,9 @@ enum Engine {
 
     // ---- is there a newer one ----
     enum Answer: Equatable { case newest, available(EngineInfo), needsApp(String), unknown }
-    static func answer(_ manifest: Data?, _ sig: Data?, active: Installed?, app: String = appVersion, key: String = Update.publicKey) -> Answer {
+    // published: false when GitHub says there is no engine release at all (404), so the engine Docked came with is the newest there is.
+    static func answer(_ manifest: Data?, _ sig: Data?, active: Installed?, published: Bool = true, app: String = appVersion, key: String = Update.publicKey) -> Answer {
+        if !published, active != nil { return .newest }
         guard let manifest, let sig = sig.flatMap({ Data(base64Encoded: String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) }),
               let i = read(manifest, sig, key: key), let when = i.when else { return .unknown }
         if let a = active, i.commit == a.commit || when <= a.date { return .newest }
@@ -75,18 +77,19 @@ enum Engine {
     // Asks for the engine's version file only; nothing is sent but the request. Answers on the main thread, with the signed bytes and their signature.
     static func check(_ done: @escaping (Answer, Data?, Data?) -> Void) {
         DispatchQueue.global(qos: .utility).async {
-            let m = small("engine.json"), s = m == nil ? nil : small("engine.json.sig"), a = answer(m, s, active: active)
+            let (m, code) = small("engine.json"), s = m == nil ? nil : small("engine.json.sig").0, a = answer(m, s, active: active, published: code != 404)
             let sig = s.flatMap { Data(base64Encoded: String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) }
             DispatchQueue.main.async { done(a, m, sig) }
         }
     }
     private static func session() -> URLSession { let c = URLSessionConfiguration.ephemeral; c.httpCookieStorage = nil; c.timeoutIntervalForRequest = 30; c.timeoutIntervalForResource = 1800; return URLSession(configuration: c) }
-    private static func small(_ name: String) -> Data? {
-        guard let u = URL(string: base + name) else { return nil }
+    // The file, and GitHub's answer code (0 when nothing came back at all).
+    private static func small(_ name: String) -> (Data?, Int) {
+        guard let u = URL(string: base + name) else { return (nil, 0) }
         var r = URLRequest(url: u, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20); r.setValue("Docked", forHTTPHeaderField: "User-Agent")
-        let s = session(), done = DispatchSemaphore(value: 0); var out: Data?
-        s.dataTask(with: r) { d, p, _ in if (p as? HTTPURLResponse)?.statusCode == 200, p?.url?.scheme == "https", let d, d.count < 64_000 { out = d }; done.signal() }.resume()
-        done.wait(); s.finishTasksAndInvalidate(); return out
+        let s = session(), done = DispatchSemaphore(value: 0); var out: Data?, code = 0
+        s.dataTask(with: r) { d, p, _ in code = (p as? HTTPURLResponse)?.statusCode ?? 0; if code == 200, p?.url?.scheme == "https", let d, d.count < 64_000 { out = d }; done.signal() }.resume()
+        done.wait(); s.finishTasksAndInvalidate(); return (out, code)
     }
     // One pack, to a file in dir. Waits: only ever called off the main thread.
     static func download(_ p: EngineInfo.Pack, to dir: URL) -> URL? {
