@@ -1,7 +1,7 @@
-From bdaa86831137b2286e3341e584162706e3fcfd1b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
 Date: Tue, 24 Nov 2026 04:05:57 -0500
-Subject: [PATCH 1/6] Friends link: local wireless between listed friends only
+Subject: [PATCH 1/8] Friends link: local wireless between listed friends only
 
 ---
  .gitignore                     |   2 +
@@ -24,7 +24,7 @@ Subject: [PATCH 1/6] Friends link: local wireless between listed friends only
  create mode 100644 dm/host/tests/t_friends_net.c
 
 diff --git a/.gitignore b/.gitignore
-index e482f65..6c1c104 100644
+index e482f65a..6c1c1046 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -11,3 +11,5 @@ dm/games/*/cb_extent.tsv
@@ -34,21 +34,21 @@ index e482f65..6c1c104 100644
 +dm/host/gen/
 +dm/host/dmhost*
 diff --git a/dm/host/Makefile b/dm/host/Makefile
-index 38c5c6d..f6d4333 100644
+index e6a1b31e..cc6cc81a 100644
 --- a/dm/host/Makefile
 +++ b/dm/host/Makefile
 @@ -24,7 +24,7 @@ ifeq ($(filter -j%,$(MAKEFLAGS)),)
  MAKEFLAGS += -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
  endif
  # Service-layer takeover hle_*.c files are included by wildcard: adding a file does not touch this line (avoids merge conflicts)
--SRC=main.c loader.c hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
-+SRC=main.c loader.c friends_link.c hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
+-SRC=main.c loader.c hle.c crash.c probe.c thread.c save_sync.c save_sync_apple.m memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
++SRC=main.c loader.c friends_link.c hle.c crash.c probe.c thread.c save_sync.c save_sync_apple.m memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
  # NVN null device + nn::vi + the Vulkan layer (dm/gfx/)
  # Sources under dm/gfx, dm/gfx/nvn, dm/gfx/tex, dm/gfx/vk and dm/gfx/gl are included by wildcard (tests/ and metal/ do not go into the host): adding a file does not touch this line
  GFX=$(sort $(wildcard ../gfx/*.c ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S ../gfx/tex/*.c ../gfx/tex/*.m ../gfx/vk/*.m ../gfx/gl/*.m))
 diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
 new file mode 100644
-index 0000000..3e90235
+index 00000000..3e902358
 --- /dev/null
 +++ b/dm/host/friends_link.c
 @@ -0,0 +1,308 @@
@@ -362,7 +362,7 @@ index 0000000..3e90235
 +fl_stats fl_get_stats(friends_link *f) { fl_stats s = {0}; if (!f) return s; LOCK; s = f->st; pthread_mutex_unlock(&f->m); return s; }
 diff --git a/dm/host/friends_link.h b/dm/host/friends_link.h
 new file mode 100644
-index 0000000..caaf96e
+index 00000000..caaf96e7
 --- /dev/null
 +++ b/dm/host/friends_link.h
 @@ -0,0 +1,63 @@
@@ -431,7 +431,7 @@ index 0000000..caaf96e
 +fl_stats fl_get_stats(friends_link *);
 diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
 new file mode 100644
-index 0000000..2dd5a6b
+index 00000000..2dd5a6bb
 --- /dev/null
 +++ b/dm/host/hle_friends_link.c
 @@ -0,0 +1,70 @@
@@ -506,7 +506,7 @@ index 0000000..2dd5a6b
 +LDN("_ZN2nn3ldn6RejectENS0_11Ipv4AddressE", h_ldn_Reject, uint32_t a) { USE(fl_kick(g_fl, a), RES_FAIL); }
 +LDN("_ZN2nn3ldn32SetWirelessControllerRestrictionENS0_29WirelessControllerRestrictionE", h_ldn_Restrict, int v) { (void)v; return dm_friends_on() ? RES_OK : RES_FAIL; }
 diff --git a/dm/host/hle_net.c b/dm/host/hle_net.c
-index 305d842..18019b9 100644
+index 305d8429..18019b91 100644
 --- a/dm/host/hle_net.c
 +++ b/dm/host/hle_net.c
 @@ -113,7 +113,7 @@ static int sk_addr_read(const void *a, unsigned n, uint32_t *addr, uint16_t *por
@@ -591,7 +591,7 @@ index 305d842..18019b9 100644
      r = (long)n;
  done:
 diff --git a/dm/host/hle_net.h b/dm/host/hle_net.h
-index 2a29d39..4a6c253 100644
+index 2a29d398..4a6c253e 100644
 --- a/dm/host/hle_net.h
 +++ b/dm/host/hle_net.h
 @@ -1,5 +1,6 @@
@@ -613,7 +613,7 @@ index 2a29d39..4a6c253 100644
 +int dm_friends_send(uint16_t sport, uint32_t dst, uint16_t dport, const void *data, size_t size);
 +void dm_sk_deliver(uint32_t src, uint16_t sport, uint32_t dst, uint16_t dport, const void *data, size_t size);
 diff --git a/dm/host/hle_offline.c b/dm/host/hle_offline.c
-index c3621bb..984765f 100644
+index d5da34e9..b5bfa80b 100644
 --- a/dm/host/hle_offline.c
 +++ b/dm/host/hle_offline.c
 @@ -4,7 +4,6 @@
@@ -661,10 +661,10 @@ index c3621bb..984765f 100644
 +// ---------- ldn: hle_friends_link.c ----------
  
  // ---------- bluetooth: BLE (Pokémon Violet 3.0.1 at boot, likely its Pokémon GO Plus + support). InitializeBle connects to bt and btm:u (an SDK abort without them); the host has no radio:
- // events never fire, scans find nothing, so the GATT calls after a connect are never reached ----------
+ // events never fire, scans find nothing, connects and disconnects fail, and GATT notification paths register with no paired device, so post-connect GATT calls are never reached ----------
 diff --git a/dm/host/tests/t_friends_link.c b/dm/host/tests/t_friends_link.c
 new file mode 100644
-index 0000000..02efd1e
+index 00000000..02efd1ef
 --- /dev/null
 +++ b/dm/host/tests/t_friends_link.c
 @@ -0,0 +1,85 @@
@@ -755,7 +755,7 @@ index 0000000..02efd1e
 +}
 diff --git a/dm/host/tests/t_friends_net.c b/dm/host/tests/t_friends_net.c
 new file mode 100644
-index 0000000..16c0dfd
+index 00000000..16c0dfd4
 --- /dev/null
 +++ b/dm/host/tests/t_friends_net.c
 @@ -0,0 +1,43 @@
@@ -803,7 +803,7 @@ index 0000000..16c0dfd
 +    if (child) { if (bad) printf("child: %d failed\n", bad); fflush(stdout); _exit(bad != 0); } int st; wait(&st); bad += WEXITSTATUS(st) != 0; printf("friends sockets: %d passed, %d failed\n", ok, bad); return bad != 0;
 +}
 diff --git a/dm/host/tests/t_net_eventfd.c b/dm/host/tests/t_net_eventfd.c
-index f0ba531..62c5837 100644
+index f0ba531d..62c58372 100644
 --- a/dm/host/tests/t_net_eventfd.c
 +++ b/dm/host/tests/t_net_eventfd.c
 @@ -6,6 +6,8 @@ __thread _Atomic int dm_host_work;
@@ -816,7 +816,7 @@ index f0ba531..62c5837 100644
  void dm_guest_cond_wait_ns(pthread_cond_t *c, pthread_mutex_t *m, int64_t ns) { struct timespec ts = {ns / 1000000000, ns % 1000000000}; pthread_cond_timedwait_relative_np(c, m, &ts); }
  uint64_t guest_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec; }
 diff --git a/dm/host/tests/t_net_loopback.c b/dm/host/tests/t_net_loopback.c
-index f3f8e86..1f286b0 100644
+index f3f8e86f..1f286b0d 100644
 --- a/dm/host/tests/t_net_loopback.c
 +++ b/dm/host/tests/t_net_loopback.c
 @@ -5,6 +5,8 @@ __thread _Atomic int dm_host_work;
@@ -828,6 +828,3 @@ index f3f8e86..1f286b0 100644
  void dm_guest_sleep_ns(int64_t ns) { struct timespec ts = {ns / 1000000000, ns % 1000000000}; nanosleep(&ts, NULL); }
  void dm_guest_cond_wait_ns(pthread_cond_t *c, pthread_mutex_t *m, int64_t ns) { struct timespec ts = {ns / 1000000000, ns % 1000000000}; pthread_cond_timedwait_relative_np(c, m, &ts); }
  uint64_t guest_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec; }
--- 
-2.43.0
-
