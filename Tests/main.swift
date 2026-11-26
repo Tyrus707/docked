@@ -355,6 +355,12 @@ let slf = tmp.appendingPathComponent("sl/library.json"); smartLib.save(slf); che
 let gr: [(id: String, games: [String])] = [("grid", (0..<11).map(String.init))]; func c(_ i: Int) -> Cursor { Cursor(row: "grid", game: "\(i)") }
 for (from, mv, to) in [(0, Move.right, 1), (0, .left, 0), (10, .right, 10), (1, .down, 5), (5, .up, 1), (2, .up, 2), (7, .down, 10), (9, .down, 9), (4, .left, 3)] { check(step(c(from), mv, rows: gr, columns: 4) == c(to), "grid \(from) \(mv)") }
 let hr: [(id: String, games: [String])] = [("recent", ["a", "b", "c"]), ("Favorites", []), ("Switch", ["a", "b"])]; check(step(nil, .down, rows: hr, columns: nil) == Cursor(row: "recent", game: "a") && step(Cursor(row: "recent", game: "c"), .down, rows: hr, columns: nil) == Cursor(row: "Switch", game: "b") && step(Cursor(row: "Switch", game: "a"), .up, rows: hr, columns: nil) == Cursor(row: "recent", game: "a"), "rows, past an empty one"); check(step(Cursor(row: "gone", game: "z"), .left, rows: hr, columns: nil) == Cursor(row: "recent", game: "a") && step(nil, .left, rows: [], columns: 4) == nil, "lost, or nothing there")
+let cc = [3, 0, 2]; var spot = CouchSpot()
+spot = couchStep(spot, .right, counts: cc); spot = couchStep(spot, .right, counts: cc); spot = couchStep(spot, .right, counts: cc); check(spot.shelf == 0 && spot.index(3) == 2, "couch: right stops at the end")
+spot = couchStep(spot, .down, counts: cc); check(spot.shelf == 2 && spot.index(2) == 0, "couch: down skips an empty shelf")
+spot = couchStep(spot, .down, counts: cc); check(spot.shelf == 2, "couch: down stops at the last shelf")
+spot = couchStep(spot, .nextSection, counts: cc); check(spot.shelf == 0 && spot.index(3) == 2, "couch: shoulder goes round and the shelf keeps its place")
+check(couchStep(CouchSpot(), .left, counts: []) == CouchSpot() && CouchSpot(shelf: 0, at: [0: 9]).index(4) == 3, "couch: nothing there, or fewer games than before")
 // ---- updates ----
 let uk = Curve25519.Signing.PrivateKey(), upub = uk.publicKey.rawRepresentation.base64EncodedString(), ud = tmp.appendingPathComponent("upd"), ub = ud.appendingPathComponent("Backups")
 func sh(_ a: [String]) { let p = Process(); p.executableURL = URL(fileURLWithPath: a[0]); p.arguments = Array(a.dropFirst()); p.standardError = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; try! p.run(); p.waitUntilExit() }
