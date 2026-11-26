@@ -18,7 +18,7 @@ One library, from NES to Switch. Free, open source, quick to open.</p>
 
 ## Why you'll like it
 
-**Your Switch games feel at home.** Docked turns each game into its own Mac app, so you launch it from the Dock like anything else. It sorts out updates and DLC, tells you if something's missing, and keeps your saves. No emulator window, no fiddling.
+**Your Switch games feel at home.** Docked turns each game into its own Mac app — native, not emulated — so games run beautifully and look even better. Launch it from the Dock like anything else. It sorts out updates and DLC, tells you if something's missing, and keeps your saves. No emulator window, no fiddling.
 
 **Everything you already own, on one shelf.** NES, SNES, Game Boy, N64, GameCube, Wii, PlayStation, PS2, PSP, Dreamcast, Saturn and more. Drag a game in and Docked works out what it is. RetroArch installs itself the first time — you never have to open it.
 
