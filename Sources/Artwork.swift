@@ -105,7 +105,7 @@ enum Artwork {
 
 // A game's file was deleted, rather than being on a drive that isn't connected or in a folder that has moved:
 // the folder it was in is still there, and it isn't.
-func deletedFile(_ path: String, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> Bool {
-    if let d = drive(of: path), !d.connected { return false }
+func deletedFile(_ path: String, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }, ids: DriveIDs = .shared) -> Bool {
+    if let d = drive(of: path, ids: ids), !d.connected { return false }
     return !exists(path) && exists((path as NSString).deletingLastPathComponent)
 }

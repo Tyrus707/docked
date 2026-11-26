@@ -53,6 +53,6 @@ func placeGame(_ app: URL, in dir: URL, discard: (URL) throws -> Void = { try Fi
         if old { try discard(to) }
         try fm.moveItem(at: part, to: to)
     } catch { try? fm.removeItem(at: part); throw error }
-    try? fm.removeItem(at: app)   // the copy is complete and in place
+    LeftBehind.remove(app)   // the copy is complete and in place
     return to
 }
