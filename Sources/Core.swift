@@ -176,43 +176,49 @@ func buildArguments(_ input: BuildInput, keys: String?, quick: Bool = false, pho
     return a
 }
 
-// The user's "how much of my Mac" choice, as workers the engine already understands.
-// Full speed leaves the engine's own default (every core) alone. Lower settings leave
-// at least one core for the desktop and never change what the engine produces.
-func conversionWorkers(_ effort: Int, cores: Int = ProcessInfo.processInfo.activeProcessorCount) -> Int {
-    let n = max(1, cores), want = min(100, max(10, effort))
-    guard want < 100 else { return n }
-    return max(1, min(n - 1, Int(round(Double(n) * Double(want) / 100))))
+// How hard converting may work the Mac. Full speed leaves the engine's own defaults alone.
+// Balanced and Background cap the engine's workers; Background also runs it at low priority.
+// None of them change what the engine produces.
+enum Speed: String, Codable, CaseIterable {
+    case full, balanced, background
+    var label: String {
+        switch self { case .full: return "Full Speed"; case .balanced: return "Balanced"; case .background: return "Background" }
+    }
+    var note: String {
+        switch self {
+        case .full: return "Uses all of your Mac. The fastest way to convert."
+        case .balanced: return "Uses about half of your Mac, so you can play while it works."
+        case .background: return "Works quietly at low priority. Slowest, and the lightest on your Mac."
+        }
+    }
+    init(effort: Int) { self = effort >= 100 ? .full : effort >= 50 ? .balanced : .background }   // the percentage of 1.8.1
 }
 
-// Only worker-count switches. The prewarm thread count is deliberately not here: it
-// can change how archive files are grouped, even though the finished game still works.
-func conversionEnvironment(_ base: [String: String], effort: Int, cores: Int = ProcessInfo.processInfo.activeProcessorCount) -> [String: String] {
+func conversionWorkers(_ speed: Speed, cores: Int = ProcessInfo.processInfo.activeProcessorCount) -> Int {
+    let n = max(1, cores)
+    switch speed { case .full: return n; case .balanced: return max(1, n / 2); case .background: return max(1, n / 4) }
+}
+
+// Worker counts only. PYTHON_CPU_COUNT caps every step that sizes itself from the core
+// count (the code rewrite's processes, the shader steps), so the per-module rewrite
+// workers stay the engine's own choice. The prewarm thread count is deliberately not here:
+// it can change how archive files are grouped, even though the finished game still works.
+func conversionEnvironment(_ base: [String: String], speed: Speed, cores: Int = ProcessInfo.processInfo.activeProcessorCount) -> [String: String] {
     var e = base
-    guard effort < 100 else { return e }
-    let workers = String(conversionWorkers(effort, cores: cores))
+    guard speed != .full else { return e }
+    let workers = String(conversionWorkers(speed, cores: cores))
     e["J"] = workers
     e["DMSH_PROCS"] = workers
-    e["DM_REWRITE_J"] = workers
+    e["PYTHON_CPU_COUNT"] = workers
     return e
 }
 
-func conversionEffortNote(_ effort: Int) -> String {
-    switch min(100, max(10, effort)) {
-    case 100: return "Full speed. The finished game is unchanged."
-    case 75...99: return "Almost full speed, with a little left for games."
-    case 50...74: return "Around half speed, with room to play while it works."
-    case 25...49: return "Slower, leaving more of your Mac for games."
-    default: return "Slowest, leaving most of your Mac free."
-    }
-}
-
-func engineEnvironment(effort: Int = 100) -> [String: String] {
+func engineEnvironment(speed: Speed = .full) -> [String: String] {
     var e = ProcessInfo.processInfo.environment
     e["DEVELOPER_DIR"] = Paths.xcode
     e["PATH"] = (Paths.unpacked ? Paths.tools.path + "/bin:" : Paths.root.path + "/venv/bin:") + "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     e["LANG"] = "en_US.UTF-8"
-    return conversionEnvironment(e, effort: effort)
+    return conversionEnvironment(e, speed: speed)
 }
 
 // Needs about twice the game plus 10 GB while building.
