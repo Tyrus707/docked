@@ -2,12 +2,8 @@ import SwiftUI
 import AVFoundation
 
 // Couch Mode: the library full screen, for a controller and a TV. One shelf at a time, the chosen game's art filling the room.
-// It is a window of its own over the library window, so nothing in the library changes; leaving it puts everything back.
-
-final class CouchWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
+// It is drawn over the library in the same window, which goes properly full screen (a Space of its own) while it is open,
+// so sheets and questions still appear on top of it. Leaving puts the window back as it was.
 
 struct CouchShelf { var id: String, name: String, games: [Game] }
 
@@ -25,54 +21,39 @@ extension Model {
         let l = shelves ?? couchShelves; guard l.indices.contains(couchSpot.shelf) else { return nil }
         let g = l[couchSpot.shelf].games; return g.isEmpty ? nil : g[couchSpot.index(g.count)]
     }
-    // Anything that needs the library window (a sheet, a question) puts Couch Mode aside until it is answered.
+    // A sheet or question on the window is answered first; Couch Mode waits under it.
     var couchCovered: Bool { sheetUp || missingGame != nil || askLookUp || asking != nil || askingMode != nil || collecting != nil || retitling != nil || renaming != nil }
+    private var libraryWindow: NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first { $0.canBecomeMain && $0.isVisible } }
 
     func toggleCouch() { if couch { leaveCouch() } else { enterCouch() } }
 
     func enterCouch() {
-        guard !couch, !games.isEmpty, !couchCovered, let screen = (NSApp.keyWindow ?? NSApp.mainWindow)?.screen ?? NSScreen.main else { return }
+        guard !couch, !games.isEmpty, !couchCovered, let w = libraryWindow else { return }
         couchSaved = search; search = ""   // the shelves show everything
         if couchSpot.shelf >= couchShelves.count { couchSpot = CouchSpot() }
         couch = true
-        let w = CouchWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false; w.backgroundColor = NSColor(style.bottom); w.hasShadow = false; w.title = "Couch Mode"
-        w.contentView = NSHostingView(rootView: CouchView().environmentObject(self))
-        w.setFrame(screen.frame, display: false); w.alphaValue = 0
-        couchWindow = w; couchFront()
-        NSAnimationContext.runAnimationGroup { c in c.duration = 0.35; w.animator().alphaValue = 1 }
+        w.makeFirstResponder(nil)   // out of the search field, so the arrows move around the shelves
+        w.toolbar?.isVisible = false
+        couchMadeFull = !w.styleMask.contains(.fullScreen)
+        if couchMadeFull { w.collectionBehavior.insert(.fullScreenPrimary); w.toggleFullScreen(nil) }
         if couchSounds { couchSound.start() }; chime(.open)
-        couchWatch = objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.couchCheck() } }
+        NSCursor.setHiddenUntilMouseMoves(true)
         couchPoke(); themeUpdate()
     }
 
     func leaveCouch() {
         guard couch else { return }
-        couch = false; couchWatch = nil; couchTimer?.invalidate(); couchTimer = nil; couchIdle = false
+        couch = false; couchTimer?.invalidate(); couchTimer = nil; couchIdle = false
         chime(.back); DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in if self?.couch == false { self?.couchSound.stop() } }
-        NSApp.presentationOptions = []
         if let s = couchSaved { search = s }; couchSaved = nil
-        let main = NSApp.windows.first { $0.canBecomeMain && !($0 is CouchWindow) }
-        main?.makeKeyAndOrderFront(nil)
-        if let w = couchWindow {
-            couchWindow = nil
-            NSAnimationContext.runAnimationGroup({ c in c.duration = 0.25; w.animator().alphaValue = 0 }) { w.orderOut(nil); w.contentView = nil }
-        }
+        if let w = libraryWindow { w.toolbar?.isVisible = true; if couchMadeFull, w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) } }
+        couchMadeFull = false
+        couchArts = [:]; couchArtOrder = []   // the big pictures are let go
         themeUpdate()
     }
 
-    private func couchFront() {
-        guard let w = couchWindow, !NSApp.isHidden else { return }
-        w.makeKeyAndOrderFront(nil); NSApp.presentationOptions = [.autoHideDock, .autoHideMenuBar]; NSCursor.setHiddenUntilMouseMoves(true)
-    }
-    // Steps aside for a sheet or question on the library window, and comes back when it is gone
-    func couchCheck() {
-        guard couch, let w = couchWindow else { return }
-        if couchCovered, w.isVisible { w.orderOut(nil); NSApp.presentationOptions = []; NSApp.windows.first { $0.canBecomeMain && !($0 is CouchWindow) }?.makeKeyAndOrderFront(nil) }
-        else if !couchCovered, !w.isVisible, !NSApp.isHidden { couchFront() }
-    }
-    // Back from a game: the same cover, in front again
-    func couchBack() { couchCheck(); couchFront(); couchPoke(); themeUpdate() }
+    // Back from a game: the same cover, still full screen
+    func couchBack() { couchPoke(); themeUpdate() }
 
     // After a while with nothing pressed, the words and buttons fade and only the art and the game's name stay.
     func couchPoke() {
@@ -91,7 +72,7 @@ extension Model {
     func couchMove(_ m: Move, pad: Bool) {
         if pad != padUsed { padUsed = pad }
         let wasIdle = couchIdle; couchPoke()
-        guard let w = couchWindow, w.isVisible, !couchCovered else { return }
+        guard !couchCovered else { return }
         if message != nil { if m == .accept || m == .back || m == .play { message = nil; chime(.back) }; return }
         if wasIdle, m != .back { return }   // the first press only wakes it
         let shelves = couchShelves
@@ -106,6 +87,48 @@ extension Model {
         case .back: leaveCouch()
         case .home: break
         }
+    }
+
+    // ---- the big picture behind the chosen game ----
+    // The best art already on this Mac, at a size worth showing across a TV: an in-game picture for an older game,
+    // else its box art, a picture the player chose, or a Switch game's own icon. Loaded in the background, a few kept.
+    func couchArt(_ g: Game) -> NSImage? {
+        if let a = couchArts[g.id] { return a }
+        guard couchTried.insert("art" + g.id).inserted else { return nil }
+        let snap = g.rom.map { CouchArt.snap($0) }, places = [snap, Cover.custom(g), g.rom.flatMap { RetroArch.art($0) }, g.url.appendingPathComponent("Contents/Resources/AppIcon.icns")].compactMap { $0 }
+        Cover.queue.async {
+            let a = places.lazy.compactMap { CouchArt.load($0) }.first
+            DispatchQueue.main.async {
+                self.couchTried.remove("art" + g.id)
+                guard self.couch, let a else { return }
+                self.couchArts[g.id] = a; self.couchArtOrder.append(g.id)
+                if self.couchArtOrder.count > 12 { self.couchArts[self.couchArtOrder.removeFirst()] = nil }
+                self.couchArtTick += 1
+            }
+        }
+        if let r = g.rom, lookUp == true, let info = r.info, !FileManager.default.fileExists(atPath: CouchArt.snap(r).path), couchTried.insert("snap" + g.id).inserted {
+            Lookup.queue.async { if CouchArt.fetchSnap(r, names: [info.title, URL(fileURLWithPath: r.path).deletingPathExtension().lastPathComponent]) { DispatchQueue.main.async { self.couchArts[g.id] = nil; if self.couch { _ = self.couchArt(g) } } } }
+        }
+        return nil
+    }
+}
+
+enum CouchArt {
+    static func snap(_ r: Rom) -> URL { Lookup.home.appendingPathComponent("Snaps/" + r.id.replacingOccurrences(of: ":", with: "-") + ".png") }
+    // At most 1920 pixels across, so a big picture costs little memory
+    static func load(_ u: URL) -> NSImage? {
+        guard FileManager.default.fileExists(atPath: u.path), let src = CGImageSourceCreateWithURL(u as CFURL, nil) else { return nil }
+        let n = CGImageSourceGetCount(src), best = (0..<n).max { a, b in ((CGImageSourceCopyPropertiesAtIndex(src, a, nil) as? [CFString: Any])?[kCGImagePropertyPixelWidth] as? Int ?? 0) < ((CGImageSourceCopyPropertiesAtIndex(src, b, nil) as? [CFString: Any])?[kCGImagePropertyPixelWidth] as? Int ?? 0) } ?? 0
+        let o = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 1920, kCGImageSourceCreateThumbnailWithTransform: true] as [CFString: Any] as CFDictionary
+        guard let c = CGImageSourceCreateThumbnailAtIndex(src, best, o) else { return nil }
+        return NSImage(cgImage: c, size: NSSize(width: c.width, height: c.height))
+    }
+    // An in-game picture from libretro's collection, at the same fixed commit as the covers. Only when the player allowed lookups.
+    static func fetchSnap(_ r: Rom, names: [String]) -> Bool {
+        guard let c = console(r.console), let commit = Lookup.covers[c.folder] else { return false }
+        let repo = c.folder.replacingOccurrences(of: " ", with: "_")
+        for n in names { if let d = try? Lookup.get(Lookup.url("libretro-thumbnails/\(repo)/\(commit)/Named_Snaps/\(Lookup.thumbnail(n)).png"), limit: 8 << 20), Lookup.keep(d, at: snap(r)) { return true } }
+        return false
     }
 }
 
@@ -147,7 +170,6 @@ struct CouchView: View {
     @EnvironmentObject var model: Model
     @Environment(\.accessibilityReduceMotion) private var still
     @Namespace private var tabs
-    @State private var shown = false
 
     var body: some View {
         let shelves = model.couchShelves, spot = model.couchSpot
@@ -156,21 +178,24 @@ struct CouchView: View {
         let game = shelf.flatMap { $0.games.isEmpty ? nil : $0.games[i] }
         GeometryReader { geo in
             let k = min(max(geo.size.height / 1080, 0.6), 2)   // sized for a 1080-line TV, read from across the room
+            let cover = 196 * k, rowHeight = cover / Cover.shape + 120 * k   // fixed, so nothing below the title ever moves
             ZStack(alignment: .topLeading) {
                 style.bottom
-                if let game { CouchBackdrop(game: game).id(game.id).transition(.opacity) }
-                LinearGradient(colors: [style.bottom.opacity(0.94), style.bottom.opacity(0.5), .clear], startPoint: .leading, endPoint: UnitPoint(x: 0.8, y: 0.5))
-                LinearGradient(colors: [.clear, style.bottom.opacity(0.75), style.bottom], startPoint: UnitPoint(x: 0.5, y: 0.3), endPoint: .bottom)
+                if let game { CouchBackdrop(game: game, size: geo.size).id(game.id).transition(.opacity) }
                 VStack(alignment: .leading, spacing: 0) {
-                    rail(shelves, spot.shelf, k).opacity(model.couchIdle ? 0 : 1)
-                    Spacer(minLength: 20 * k)
-                    if let game { CouchInfo(game: game, k: k).id("i" + game.id).transition(still ? .opacity : .opacity.combined(with: .offset(x: -24 * k))).frame(maxWidth: geo.size.width * 0.58, alignment: .leading) }
-                    Spacer().frame(height: 28 * k)
-                    if let shelf { row(shelf, spot.shelf, i, k).id(shelf.id).transition(still ? .opacity : .opacity.combined(with: .offset(y: 40 * k))).opacity(model.couchIdle ? 0 : 1) }
-                    else { Text("Add games to your library to see them here.").font(.system(size: 28 * k)).foregroundStyle(style.soft) }
-                    hints(game, k).opacity(model.couchIdle ? 0 : 1)
+                    rail(shelves, spot.shelf, k).frame(height: 50 * k).opacity(model.couchIdle ? 0 : 1)
+                    ZStack(alignment: .bottomLeading) {   // the title and details sit on a fixed line, whatever their length
+                        if let game { CouchInfo(game: game, k: k).id("i" + game.id).transition(still ? .opacity : .opacity.combined(with: .offset(x: -24 * k))).frame(maxWidth: geo.size.width * 0.55, alignment: .leading) }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading).padding(.bottom, 16 * k)
+                    ZStack(alignment: .topLeading) {
+                        if let shelf { row(shelf, spot.shelf, i, k).id(shelf.id).transition(still ? .opacity : .opacity.combined(with: .offset(y: 40 * k))) }
+                        else { Text("Add games to your library to see them here.").font(.system(size: 28 * k)).foregroundStyle(style.soft) }
+                    }
+                    .frame(height: rowHeight, alignment: .topLeading).opacity(model.couchIdle ? 0 : 1)
+                    hints(game, k).frame(height: 40 * k).opacity(model.couchIdle ? 0 : 1)
                 }
-                .padding(.horizontal, 80 * k).padding(.top, 54 * k).padding(.bottom, 48 * k)
+                .padding(.horizontal, 80 * k).padding(.top, 54 * k).padding(.bottom, 40 * k)
                 if let m = model.message { message(m, k) }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -179,10 +204,7 @@ struct CouchView: View {
         .animation(still ? nil : .spring(response: 0.42, dampingFraction: 0.86), value: spot.shelf)
         .animation(.easeInOut(duration: 1.2), value: model.couchIdle)
         .animation(.easeOut(duration: 0.2), value: model.message)
-        .scaleEffect(shown || still ? 1 : 1.04).opacity(shown ? 1 : 0)
-        .onAppear { withAnimation(.easeOut(duration: 0.55)) { shown = true } }
         .onContinuousHover { _ in if model.couchIdle { model.couchPoke() } }
-        .preferredColorScheme(model.palette.dark ? .dark : .light)
         .ignoresSafeArea()
     }
 
@@ -214,7 +236,7 @@ struct CouchView: View {
             Text(shelf.name.uppercased() + "  ·  \(i + 1) of \(shelf.games.count)").font(.system(size: 17 * k, weight: .semibold)).tracking(2.5 * k).foregroundStyle(style.soft).monospacedDigit()
             ScrollViewReader { p in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 26 * k) {
+                    LazyHStack(alignment: .top, spacing: 26 * k) {
                         ForEach(Array(shelf.games.enumerated()), id: \.element.id) { j, g in
                             CouchCover(game: g, on: j == i, k: k).id(g.id)
                                 .onTapGesture { if j == i { model.couchMove(.accept, pad: false) } else { model.couchFocus(n, j) } }
@@ -256,17 +278,34 @@ struct CouchView: View {
     }
 }
 
-// The chosen game's own colours, blurred wide behind everything, drifting very slowly
+// Behind everything: the game's own art. A wide picture (an in-game shot) fills the room; a cover or icon stands large on the right
+// over a blur of its own colours. Both drift very slowly, and fade into the theme where the words are.
 struct CouchBackdrop: View {
     @EnvironmentObject var model: Model
-    let game: Game
+    let game: Game, size: CGSize
     @Environment(\.accessibilityReduceMotion) private var still
     @State private var drift = false
     var body: some View {
-        GeometryReader { g in
-            Image(nsImage: model.wash(game)).resizable().aspectRatio(contentMode: .fill).frame(width: g.size.width, height: g.size.height)
-                .scaleEffect(drift ? 1.14 : 1.02, anchor: .topTrailing).clipped().opacity(style.dark ? 0.9 : 0.7)
+        let _ = model.couchArtTick
+        let art = model.couchArt(game), wide = art.map { $0.size.width >= $0.size.height * 1.2 } ?? false, k = min(max(size.height / 1080, 0.6), 2)
+        ZStack(alignment: .trailing) {
+            Image(nsImage: wide ? art! : model.wash(game)).resizable().aspectRatio(contentMode: .fill).frame(width: size.width, height: size.height).clipped()
+                .blur(radius: wide ? 0 : 6).opacity(wide ? 1 : (style.dark ? 0.85 : 0.65))
+                .scaleEffect(drift ? 1.1 : 1.0, anchor: .topTrailing)
+            if let art, !wide {
+                let h = size.height * 0.62, w = min(h * art.size.width / max(art.size.height, 1), size.width * 0.42)
+                Image(nsImage: art).resizable().interpolation(.high).aspectRatio(contentMode: .fit).frame(width: w, height: h)
+                    .clipShape(RoundedRectangle(cornerRadius: 22 * k, style: .continuous))
+                    .shadow(color: .black.opacity(0.5), radius: 40 * k, y: 18 * k)
+                    .rotation3DEffect(.degrees(drift ? -6 : -2), axis: (x: 0, y: 1, z: 0), perspective: 0.6)
+                    .padding(.trailing, size.width * 0.07).offset(y: -size.height * 0.1)
+                    .transition(.opacity)
+            }
+            LinearGradient(colors: [style.bottom.opacity(0.96), style.bottom.opacity(0.6), .clear], startPoint: .leading, endPoint: UnitPoint(x: 0.7, y: 0.5))
+            LinearGradient(colors: [.clear, style.bottom.opacity(0.7), style.bottom], startPoint: UnitPoint(x: 0.5, y: 0.35), endPoint: .bottom)
         }
+        .frame(width: size.width, height: size.height)
+        .animation(.easeOut(duration: 0.5), value: art != nil)
         .onAppear { if !still { withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true } } }
         .accessibilityHidden(true)
     }
