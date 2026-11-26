@@ -40,7 +40,7 @@ struct SettingsSheet: View {
     @ViewBuilder var converting: some View {
         VStack(spacing: 14) {
             line("Keys file", findKeys(model.keys).map { ($0 as NSString).lastPathComponent } ?? "Not chosen. Needed for .nsp, .xci, .nsz and .xcz games.") { Button(findKeys(model.keys) == nil ? "Choose…" : "Change…") { _ = model.pickKeys() } }
-            if model.organized { line("New games go to", "The Switch folder in your library. Change it under Library.") { Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([model.consoleFolder("switch")]) } } }
+            if model.organized { line("New games go to", "Their console's folder in your library, automatically. Choose a folder of your own only if you want to.") { HStack { Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([model.consoleFolder("switch")]) }; Button("Choose…") { if let u = model.pickFolder(model.destination) { model.destination = u; model.organized = false } } } } }
             else { line("New games go to", model.destination.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) { Button("Change…") { if let u = model.pickFolder(model.destination) { model.destination = u } } } }
             flip("Find details when a game is done", "Critic score, popularity, year and genre from Wikidata and Wikipedia, which see only the game's name.", .init(get: { model.lookUp == true && model.metaConverted ?? true }, set: { model.metaConverted = $0; if $0, model.lookUp != true { model.lookUp = true } }))
             line("When a game is done", "You can change this for each game.") { Picker("When a game is done", selection: $model.after) { ForEach(After.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }

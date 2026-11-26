@@ -135,7 +135,7 @@ extension SettingsSheet {
     @ViewBuilder var library: some View {
         VStack(spacing: 14) {
             line("Library folder", short(model.libraryFolder) + (drive(of: model.libraryFolder.path).map { $0.connected ? ", on \($0.name)" : ". \($0.name) isn't connected." } ?? "")) { Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([model.libraryFolder]) }; Button("Change…") { model.pickLibraryFolder() } }
-            flip("Keep the library organized", "A folder for each console. New Switch games go in the Switch folder.", $model.organized)
+            flip("Keep the library organized", "New games go into their console's folder on their own, without asking. Turn this off to choose a folder yourself.", $model.organized)
             line("Name game files by", "Games for other consoles. Files that belong together keep their names.") { Picker("Name game files by", selection: $model.naming) { ForEach(Naming.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize().disabled(!model.organized) }
             line("Games from other folders", model.addMode?.detail ?? "Docked asks each time.") { Picker("Games from other folders", selection: $model.addMode) { Text("Ask Each Time").tag(AddMode?.none); Divider(); ForEach(AddMode.allCases, id: \.self) { Text($0.label).tag(AddMode?.some($0)) } }.labelsHidden().fixedSize() }
             line("Organize", "Puts games in Docked's folders where they belong, after showing you the list.") { Button("Organize…") { model.planTidy() }.disabled(!model.organized) }

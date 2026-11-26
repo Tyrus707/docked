@@ -625,7 +625,8 @@ final class Model: ObservableObject {
         if let u = pickFolder(g.url.deletingLastPathComponent()) { move(g.url, to: u) }
     }
 
-    // A game already converted is replaced where it is; a new one goes where the last one was saved.
+    // A game already converted is replaced where it is; a new one is sorted into its console folder,
+    // or into the player's chosen folder when automatic organizing is off.
     private func setReviewPlace() {
         let own = existing.map { $0.url.deletingLastPathComponent() } ?? (organized ? consoleFolder(review.family.map(consoleOf) ?? "switch") : destination)
         reviewPlace = placeProblem(own) == nil ? own : Paths.games

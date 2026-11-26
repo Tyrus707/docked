@@ -8,7 +8,7 @@ struct ReviewView: View {
     @State private var more = false
     @Environment(\.accessibilityReduceMotion) private var still
     var space: (text: String, short: Bool) { spaceText(need: spaceNeeded(model.review.parts.reduce(0) { $0 + $1.bytes }), free: freeSpace()) }
-    var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? "Saves to " + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil, model.effort < 100 ? "\(model.effort)% of your Mac" : nil].compactMap { $0 }).joined(separator: ", ") }
+    var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? (model.organized && model.existing == nil ? "Sorts into " : "Saves to ") + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil, model.effort < 100 ? "\(model.effort)% of your Mac" : nil].compactMap { $0 }).joined(separator: ", ") }
     func note(_ t: String, _ s: String, _ warn: Bool) -> some View { Label(t, systemImage: s).foregroundStyle(warn ? style.warn : Color.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
 
     // Only a copy in Docked's own folder, or in the chosen folder, is replaced.
@@ -57,7 +57,9 @@ struct ReviewView: View {
             Button { withAnimation(still ? nil : .easeOut(duration: 0.15)) { more.toggle() } } label: { HStack(spacing: 6) { Image(systemName: "chevron.right").font(.caption.weight(.bold)).rotationEffect(.degrees(more ? 90 : 0)); Text("More options"); Spacer(); if !more { Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1) } }.contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityValue(more ? "Open" : "Closed")
             if more {
                 VStack(alignment: .leading, spacing: 10) {
-                    if model.target == .mac { HStack {
+                    if model.target == .mac, model.organized, model.existing == nil {
+                        Text("This game goes into its console's folder in your library automatically. Turn off \"Keep the library organized\" to choose a folder yourself.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    } else if model.target == .mac { HStack {
                         Text("Save game to")
                         Label(FileManager.default.displayName(atPath: model.reviewPlace.path), systemImage: "folder").help(model.reviewPlace.path)
                         if model.reviewPlace.path == Paths.games.path { Text("in Docked").foregroundStyle(.secondary) }
