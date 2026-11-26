@@ -297,7 +297,10 @@ struct GameActions: View {
             Button("New Collection…") { model.collecting = game }
         }
         Divider()
-        if game.rom == nil, model.lookUp == true { Button(e.meta == nil ? "Find Details" : "Find Details Again") { model.findMeta(game, force: true) }.disabled(model.scoring.contains(game.titleID.uppercased())) }
+        if game.rom == nil {
+            if model.lookUp == true { Button(e.meta == nil ? "Find Details" : "Find Details Again") { model.findMeta(game, force: true) }.disabled(model.scoring.contains(game.titleID.uppercased()) || model.choosingMeta.contains(game.titleID.uppercased())) }
+            Button("Edit Metadata…") { model.openMetaEditor(game) }.disabled(model.choosingMeta.contains(game.titleID.uppercased()))
+        }
         if game.rom == nil {
             Button("Add Update or DLC…") { model.addTo(game) }.disabled(e.kept); Button("Move to Folder…") { model.moveGame(game) }
             Toggle("Keep This Build", isOn: .init(get: { e.kept }, set: { on in model.edit(game) { $0.kept = on } }))
