@@ -294,8 +294,8 @@ struct CouchView: View {
                         .padding(.leading, m).padding(.top, 150 * k)
                 }
                 shelfStack(shelves, spot, geo.size, k).opacity(idle ? 0 : 1)
-                LinearGradient(colors: [.clear, style.bottom.opacity(0.92)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 190 * k).frame(maxHeight: .infinity, alignment: .bottom).allowsHitTesting(false).opacity(idle ? 0 : 1)
+                LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: style.bottom.opacity(0.97), location: 0.7)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 240 * k).frame(maxHeight: .infinity, alignment: .bottom).allowsHitTesting(false).opacity(idle ? 0 : 1)
                 topBar(sel?.shelf, shelves.count, spot.shelf, k).padding(.horizontal, m).padding(.top, 44 * k).opacity(idle ? 0 : 1)
                 hints(sel?.game, k).padding(.horizontal, m).padding(.bottom, 40 * k)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).opacity(idle ? 0 : 1)
@@ -544,12 +544,12 @@ struct CouchBackdrop: View {
                 Image(nsImage: model.wash(g)).resizable().aspectRatio(contentMode: .fill).frame(width: size.width, height: size.height).clipped()
                     .opacity(style.dark ? 0.75 : 0.55)
                 if let art {
-                    let h = size.height * 0.58, w = min(h * art.size.width / max(art.size.height, 1), size.width * 0.36)
+                    let h = size.height * 0.46, w = min(h * art.size.width / max(art.size.height, 1), size.width * 0.34)   // clear of the shelves below
                     Image(nsImage: art).resizable().interpolation(.high).aspectRatio(contentMode: .fit).frame(width: w, height: h)
                         .clipShape(RoundedRectangle(cornerRadius: 22 * k, style: .continuous))
                         .shadow(color: .black.opacity(0.5), radius: 36 * k, y: 18 * k)
                         .rotation3DEffect(.degrees(-7), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
-                        .padding(.trailing, size.width * 0.08).offset(y: -size.height * 0.12)
+                        .padding(.trailing, size.width * 0.08).offset(y: -size.height * 0.18)
                         .modifier(CouchSettle())
                 }
             }
