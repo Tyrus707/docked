@@ -26,10 +26,13 @@ struct Inspector: View {
                         Menu { GameActions(game: game, deleting: $deleting) } label: { Image(systemName: "ellipsis").frame(width: 18, height: 24) }.menuStyle(.button).buttonStyle(.bordered).menuIndicator(.hidden).fixedSize().controlSize(.large).help("More").accessibilityLabel("More")
                     }
                     Stars(rating: e.rating) { n in model.edit(game) { $0.rating = $0.rating == n ? 0 : n } }
+                    if let r = game.rom { Picker("Retro look", selection: .init(get: { Shaders.own(r)?.rawValue ?? "" }, set: { v in Shaders.setOwn(RetroLook(rawValue: v), for: r); model.objectWillChange.send() })) {
+                        Text("Like other \(consoleName(r.console)) games (\(Shaders.look(console: r.console).label))").tag(""); Divider(); ForEach(RetroLook.allCases) { Text($0.label).tag($0.rawValue) } }.help("A filter over the picture, for this game only") }
                     Picker("Progress", selection: .init(get: { e.status }, set: { v in model.edit(game) { $0.status = v } })) { ForEach(Entry.Status.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     VStack(alignment: .leading, spacing: 9) {
                         fact("Played", playTimeText(e.seconds)); if e.plays > 0 { fact("Times played", "\(e.plays)") }; fact("Last played", e.lastPlayed == nil ? "Never" : lastPlayedText(e.lastPlayed).replacingOccurrences(of: "Played ", with: "").firstCapital); if e.added > .distantPast { fact("Added", e.added.formatted(date: .abbreviated, time: .omitted)) }
                         fact("Size", game.missing ? "Not available" : model.size(game).map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Measuring…"); if let r = game.rom { fact("Plays in", RetroArch.core(console(r.console) ?? consoles[0]) == nil ? "RetroArch, set up when you first play" : "RetroArch") }
+                        if let r = game.rom, let p = Cheevos.of(r) { fact("Achievements", Cheevos.text(p)) }
                         fact("In", (drive(of: game.url.path).map { "\($0.name), " } ?? "") + FileManager.default.displayName(atPath: game.url.deletingLastPathComponent().path)); if !e.collections.isEmpty { fact("Collections", e.collections.joined(separator: ", ")) }
                         if let c = e.meta?.critic { fact("Critic score", "\(c) out of 100") }; if let v = e.meta?.views { fact("Popularity", readersText(v)) }
                         if let i = game.rom?.info { if let d = i.developer { fact("Made by", d) }; if let p = i.publisher, p != i.developer { fact("Published by", p) }; if let g = i.genre { fact("Genre", g) } }
