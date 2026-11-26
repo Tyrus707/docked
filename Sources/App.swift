@@ -764,7 +764,7 @@ final class Model: ObservableObject {
             if idle, !builder.running { switch verdict(job) { case let .no(why): reviewNote = why; return false; case .wait where existing.map(isOpen) == true: reviewNote = "Save and quit \(existing!.name) first."; return false; default: break } }
             if target == .phone, !phoneSet { reviewNote = "Finish the iPhone steps first."; return false }
             guard queue.add(job) else { reviewNote = "\(job.title) is already in the queue."; return false }
-            if idle { queue.paused = false }; Notify.ask()
+            if idle { queue.paused = false }
             builder.error = builder.running ? builder.error : nil
             review.parts = []; startNext(); return true
         } catch { reviewNote = error.localizedDescription; return false }
@@ -791,7 +791,7 @@ final class Model: ObservableObject {
             do {
                 let input = try resolveInput(j.urls, family: j.family)
                 buildPlace = j.placeURL; buildSources = j.sources
-                builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, speed: j.speed, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone
+                builder.start(BuildInput(path: input.path, key: input.key, title: j.title, needsKeys: input.needsKeys, bytes: input.bytes), keys: findKeys(keys), quick: j.quick, speed: j.speed, phone: j.phone && !j.xcode ? phoneStart(input.key) : nil, xcode: j.xcode ? xcodeStart(input.key) : nil); converting = builder.running && !j.phone; Notify.ask()
                 if builder.running { return }
                 queue.failed(builder.error ?? "The conversion engine did not start.")
             } catch { queue.problems.append(Problem(title: j.title, reason: error.localizedDescription)); queue.done() }
