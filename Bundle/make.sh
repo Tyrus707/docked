@@ -10,6 +10,8 @@ awk '$1=="tool"{print $2, $3}' "$HERE/../ENGINE_PIN" | while read -r f h; do [ "
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT; P="$W/tools"; mkdir -p "$P/bin" "$P/lib"
 # The engine exactly as committed (not the working copy, which builds write into).
 mkdir "$P/engine"; git -C "$HOME/Docked/engine" archive "$PIN" | tar -xf - -C "$P/engine"; rm -rf "$P/engine/docs/images" "$P/engine/.github"
+# Play with friends (Friends/engine-patches): part of every game Docked converts, off until the player turns it on in that game's settings
+"$HERE/../Friends/apply.sh" "$P/engine"
 # Python: a pinned, standalone build that runs on macOS 11 and later (see python-standalone/SOURCE.txt), with the packages already installed and reviewed here
 PY="$HOME/Docked/python-standalone/cpython-3.14.10+20261124-aarch64-apple-darwin-install_only_stripped.tar.gz"
 [ "$(shasum -a 256 "$PY" | cut -c1-64)" = 81fca81fcc8a715288fd12286b66bbdaaf4a0db6818bc91826ddbcffae2ac2cf ] || { echo "Python is not the reviewed file"; exit 1; }

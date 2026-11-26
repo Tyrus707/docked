@@ -5,6 +5,7 @@ Docked itself is under the [MIT licence](LICENSE). Its download carries the part
 | Part | Version | Licence | Source |
 |---|---|---|---|
 | nxnative (the conversion engine, and its own [third-party parts](https://github.com/seedds/nxnative/blob/01439b0fe923929d275e2fd4337cbdf08b54fcfd/dm/third_party/README.md)) | 01439b0fe923 | MIT | https://github.com/seedds/nxnative |
+| Play with friends (Friends/engine-patches, Friends/meeting) | | MIT, as Docked; LDN layouts after switchbrew/libnx (ISC) and nxnative PR #846 (MIT) | https://github.com/seedds/nxnative/pull/846 |
 | Python (python-build-standalone, with OpenSSL, SQLite, libffi, zlib and others) | 3.14.10+20261124 | PSF; OpenSSL is Apache-2.0, and each other part keeps its own licence (listed in that release) | https://github.com/astral-sh/python-build-standalone |
 | SPIRV-Cross (prebuilt, part of nxnative) | as pinned by nxnative | Apache-2.0 (text in the engine's `dm/gfx/tools/spirv_cross_bin`) | https://github.com/KhronosGroup/SPIRV-Cross |
 | glslang | 16.6.0 | BSD, MIT, Apache-2.0, GPL-3.0-or-later | https://github.com/KhronosGroup/glslang |

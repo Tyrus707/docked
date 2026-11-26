@@ -1,0 +1,1509 @@
+From f335d7834fe53f6a72d4b962569a12d5760a24b4 Mon Sep 17 00:00:00 2001
+From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 12:53:11 -0500
+Subject: [PATCH 4/6] Friends over the internet: codes, meeting point,
+ encryption, friends screen
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dm/host/Makefile                    |   4 +-
+ dm/host/friends_crypto.c            |  83 ++++++++
+ dm/host/friends_crypto.h            |  26 +++
+ dm/host/friends_internet.h          |  18 ++
+ dm/host/friends_internet.m          | 208 ++++++++++++++++++
+ dm/host/friends_link.c              |  38 ++--
+ dm/host/friends_link.h              |   5 +-
+ dm/host/friends_path.c              | 314 ++++++++++++++++++++++++++++
+ dm/host/friends_path.h              |  26 +++
+ dm/host/friends_screen.h            |  11 +
+ dm/host/friends_screen.m            | 152 ++++++++++++++
+ dm/host/front_mac.m                 |   2 +
+ dm/host/hle_account.c               |   2 +-
+ dm/host/hle_friends_link.c          |  26 ++-
+ dm/host/hle_hid.c                   |   2 +
+ dm/host/tests/fi_player.m           |  24 +++
+ dm/host/tests/t_friends_internet.py |  96 +++++++++
+ dm/host/tests/t_friends_path.c      |  81 +++++++
+ dm/host/tests/t_friends_screen.m    |  22 ++
+ dm/host/tests/turn_server.py        |  64 ++++++
+ 20 files changed, 1181 insertions(+), 23 deletions(-)
+ create mode 100644 dm/host/friends_crypto.c
+ create mode 100644 dm/host/friends_crypto.h
+ create mode 100644 dm/host/friends_internet.h
+ create mode 100644 dm/host/friends_internet.m
+ create mode 100644 dm/host/friends_path.c
+ create mode 100644 dm/host/friends_path.h
+ create mode 100644 dm/host/friends_screen.h
+ create mode 100644 dm/host/friends_screen.m
+ create mode 100644 dm/host/tests/fi_player.m
+ create mode 100644 dm/host/tests/t_friends_internet.py
+ create mode 100644 dm/host/tests/t_friends_path.c
+ create mode 100644 dm/host/tests/t_friends_screen.m
+ create mode 100644 dm/host/tests/turn_server.py
+
+diff --git a/dm/host/Makefile b/dm/host/Makefile
+index f6d4333..a36f16f 100644
+--- a/dm/host/Makefile
++++ b/dm/host/Makefile
+@@ -24,7 +24,7 @@ ifeq ($(filter -j%,$(MAKEFLAGS)),)
+ MAKEFLAGS += -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+ endif
+ # Service-layer takeover hle_*.c files are included by wildcard: adding a file does not touch this line (avoids merge conflicts)
+-SRC=main.c loader.c friends_link.c hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
++SRC=main.c loader.c friends_link.c friends_crypto.c friends_path.c friends_internet.m friends_screen.m hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m audio_input.c audio_input_mac.m audio_input_dualsense_mac.m dualsense_mic_mac.c pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S
+ # NVN null device + nn::vi + the Vulkan layer (dm/gfx/)
+ # Sources under dm/gfx, dm/gfx/nvn, dm/gfx/tex, dm/gfx/vk and dm/gfx/gl are included by wildcard (tests/ and metal/ do not go into the host): adding a file does not touch this line
+ GFX=$(sort $(wildcard ../gfx/*.c ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S ../gfx/tex/*.c ../gfx/tex/*.m ../gfx/vk/*.m ../gfx/gl/*.m))
+@@ -76,7 +76,7 @@ FORCE:
+ # lists the headers its source read (-MMD; -MP: a removed header is no error), so an edit rebuilds the objects that include it and the link; the Makefile (CFLAGS, these lines)
+ # rebuilds them all. The generated headers come first (order-only: the dependency files name them for the sources that read them). The NSP script builds gen/<id>/dmhost and takes it
+ HOST_CFLAGS = $(CFLAGS) -I../gfx/nvn/include -I$(dir $(MSL_H)) -I../third_party/vulkan-headers/include -I$(dir $(GAME_H)) -I$(VPX) -I$(DAV1D)/include -I../third_party/stb_vorbis -fobjc-arc
+-HOST_FRAMEWORKS = -framework Cocoa -framework WebKit -framework UserNotifications -framework QuartzCore -framework Metal -framework MetalFX -framework GameController -framework CoreBluetooth -framework IOBluetooth -framework CoreHaptics -framework IOKit -framework IOUSBHost -framework AudioToolbox -framework CoreAudio -framework AVFAudio -framework CoreFoundation -framework CoreGraphics -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework ImageIO -framework UniformTypeIdentifiers
++HOST_FRAMEWORKS = -framework Cocoa -framework Security -framework WebKit -framework UserNotifications -framework QuartzCore -framework Metal -framework MetalFX -framework GameController -framework CoreBluetooth -framework IOBluetooth -framework CoreHaptics -framework IOKit -framework IOUSBHost -framework AudioToolbox -framework CoreAudio -framework AVFAudio -framework CoreFoundation -framework CoreGraphics -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework ImageIO -framework UniformTypeIdentifiers
+ HOST_SRC = $(SRC) $(GFX)
+ ifneq ($(filter ../%,$(filter-out ../gfx/%,$(HOST_SRC))),)
+ $(error host sources outside dm/host and dm/gfx need an object rule: $(filter ../%,$(filter-out ../gfx/%,$(HOST_SRC))))
+diff --git a/dm/host/friends_crypto.c b/dm/host/friends_crypto.c
+new file mode 100644
+index 0000000..ee4557e
+--- /dev/null
++++ b/dm/host/friends_crypto.c
+@@ -0,0 +1,83 @@
++#include "friends_crypto.h"
++#include <CommonCrypto/CommonCrypto.h>
++#include <string.h>
++#include <ctype.h>
++static SecKeyRef import_key(const uint8_t *d, size_t n, CFStringRef cls) {
++    CFDataRef c = CFDataCreate(NULL, d, (CFIndex)n); int bits = 256; CFNumberRef b = CFNumberCreate(NULL, kCFNumberIntType, &bits);
++    const void *k[] = {kSecAttrKeyType, kSecAttrKeyClass, kSecAttrKeySizeInBits}, *v[] = {kSecAttrKeyTypeECSECPrimeRandom, cls, b};
++    CFDictionaryRef a = CFDictionaryCreate(NULL, k, v, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
++    SecKeyRef r = SecKeyCreateWithData(c, a, NULL); CFRelease(a); CFRelease(b); CFRelease(c); return r;
++}
++SecKeyRef fc_new_key(void) {
++    int bits = 256; CFNumberRef b = CFNumberCreate(NULL, kCFNumberIntType, &bits); const void *k[] = {kSecAttrKeyType, kSecAttrKeySizeInBits}, *v[] = {kSecAttrKeyTypeECSECPrimeRandom, b};
++    CFDictionaryRef a = CFDictionaryCreate(NULL, k, v, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks); SecKeyRef r = SecKeyCreateRandomKey(a, NULL); CFRelease(a); CFRelease(b); return r;
++}
++static int copy_out(CFDataRef d, uint8_t *o, size_t n) { int ok = d && (size_t)CFDataGetLength(d) == n; if (ok) memcpy(o, CFDataGetBytePtr(d), n); if (d) CFRelease(d); return ok ? 0 : -1; }
++int fc_export(SecKeyRef p, uint8_t o[97]) { return p ? copy_out(SecKeyCopyExternalRepresentation(p, NULL), o, 97) : -1; }
++SecKeyRef fc_import(const uint8_t in[97]) { return import_key(in, 97, kSecAttrKeyClassPrivate); }
++int fc_public(SecKeyRef p, uint8_t o[FC_KEY]) { SecKeyRef u = p ? SecKeyCopyPublicKey(p) : NULL; if (!u) return -1; int r = copy_out(SecKeyCopyExternalRepresentation(u, NULL), o, FC_KEY); CFRelease(u); return r; }
++// A signature travels as two plain 32-byte numbers; Security.framework speaks the same two numbers in DER
++static int der_to_raw(const uint8_t *d, size_t n, uint8_t o[FC_SIG]) {
++    if (n < 8 || n > 72 || d[0] != 0x30 || d[1] != n - 2) return -1; size_t i = 2; memset(o, 0, FC_SIG);
++    for (int k = 0; k < 2; k++) { if (i + 2 > n || d[i] != 2) return -1; size_t l = d[i + 1]; i += 2; if (!l || l > 33 || i + l > n) return -1; const uint8_t *v = d + i; i += l; if (l == 33) { if (*v) return -1; v++; l--; } memcpy(o + 32 * k + 32 - l, v, l); }
++    return i == n ? 0 : -1;
++}
++static size_t raw_to_der(const uint8_t s[FC_SIG], uint8_t o[72]) {
++    size_t n = 2; for (int k = 0; k < 2; k++) { const uint8_t *v = s + 32 * k; size_t l = 32; while (l > 1 && !*v) { v++; l--; } int pad = *v >> 7; o[n++] = 2; o[n++] = (uint8_t)(l + (size_t)pad); if (pad) o[n++] = 0; memcpy(o + n, v, l); n += l; }
++    o[0] = 0x30; o[1] = (uint8_t)(n - 2); return n;
++}
++int fc_sign(SecKeyRef p, const void *d, size_t n, uint8_t s[FC_SIG]) {
++    CFDataRef c = CFDataCreate(NULL, d, (CFIndex)n), r = p ? SecKeyCreateSignature(p, kSecKeyAlgorithmECDSASignatureMessageX962SHA256, c, NULL) : NULL; CFRelease(c);
++    int bad = !r || der_to_raw(CFDataGetBytePtr(r), (size_t)CFDataGetLength(r), s); if (r) CFRelease(r); return bad ? -1 : 0;
++}
++int fc_verify(const uint8_t pub[FC_KEY], const void *d, size_t n, const uint8_t sig[FC_SIG]) {
++    SecKeyRef k = pub[0] == 4 ? import_key(pub, FC_KEY, kSecAttrKeyClassPublic) : NULL; if (!k) return 0; uint8_t der[72]; size_t dn = raw_to_der(sig, der);
++    CFDataRef c = CFDataCreate(NULL, d, (CFIndex)n), s = CFDataCreate(NULL, der, (CFIndex)dn); int ok = SecKeyVerifySignature(k, kSecKeyAlgorithmECDSASignatureMessageX962SHA256, c, s, NULL); CFRelease(c); CFRelease(s); CFRelease(k); return ok;
++}
++static const char ALPHABET[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
++void fc_code(const uint8_t pub[FC_KEY], char o[FC_CODE + 1]) {
++    uint8_t h[32]; CC_SHA256_CTX c; CC_SHA256_Init(&c); CC_SHA256_Update(&c, "docked-friend-code-v1", 21); CC_SHA256_Update(&c, pub, FC_KEY); CC_SHA256_Final(h, &c);
++    uint32_t acc = 0; int n = 0, k = 0; for (int i = 0; i < 10; i++) { acc = acc << 8 | h[i]; n += 8; while (n >= 5) { n -= 5; o[k++] = ALPHABET[acc >> n & 31]; } acc &= (1u << n) - 1; } o[k] = 0;
++}
++int fc_clean_code(const char *t, char o[FC_CODE + 1]) {
++    int k = 0; for (; *t; t++) { char c = (char)toupper((unsigned char)*t); if (c == '-' || isspace((unsigned char)c)) continue; if (c == 'O') c = '0'; if (c == 'I' || c == 'L') c = '1';
++        if (k == FC_CODE || !strchr(ALPHABET, c)) return 0; o[k++] = c; }
++    o[k] = 0; return k == FC_CODE;
++}
++int fc_eq(const void *a, const void *b, size_t n) { const volatile uint8_t *x = a, *y = b; uint8_t v = 0; for (size_t i = 0; i < n; i++) v |= x[i] ^ y[i]; return !v; }
++void fc_hmac256(const void *k, size_t kn, const void *d, size_t n, uint8_t o[32]) { CCHmac(kCCHmacAlgSHA256, k, kn, d, n, o); }
++enum { SAID = 13 + FC_CODE * 2 + FC_KEY + FC_NONCE };
++static void said(const char *from, const char *to, const fc_hi *h, uint8_t o[SAID]) { memcpy(o, "docked-hi-v1|", 13); memcpy(o + 13, from, FC_CODE); memcpy(o + 13 + FC_CODE, to, FC_CODE); memcpy(o + 13 + 2 * FC_CODE, h->eph, FC_KEY); memcpy(o + 13 + 2 * FC_CODE + FC_KEY, h->nonce, FC_NONCE); }
++int fc_make_hi(SecKeyRef id, SecKeyRef eph, const char *to, fc_hi *o) {
++    char me[FC_CODE + 1]; uint8_t b[SAID]; if (strlen(to) != FC_CODE || fc_public(id, o->key) || fc_public(eph, o->eph)) return -1;
++    arc4random_buf(o->nonce, FC_NONCE); fc_code(o->key, me); said(me, to, o, b); return fc_sign(id, b, sizeof b, o->sig);
++}
++int fc_check_hi(const fc_hi *h, const char *from, const char *to) {
++    char c[FC_CODE + 1]; uint8_t b[SAID]; if (strlen(from) != FC_CODE || strlen(to) != FC_CODE) return 0; fc_code(h->key, c); if (strcmp(c, from)) return 0; said(from, to, h, b); return fc_verify(h->key, b, sizeof b, h->sig);
++}
++int fc_session(SecKeyRef eph, const fc_hi *mine, const fc_hi *theirs, fc_keys *o) {
++    uint8_t secret[32], salt[32], prk[32]; memset(o, 0, sizeof *o); if (theirs->eph[0] != 4 || fc_eq(mine->key, theirs->key, FC_KEY) || fc_eq(mine->eph, theirs->eph, FC_KEY)) return -1;
++    SecKeyRef pub = import_key(theirs->eph, FC_KEY, kSecAttrKeyClassPublic); if (!pub) return -1;
++    CFDictionaryRef none = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
++    int bad = copy_out(SecKeyCopyKeyExchangeResult(eph, kSecKeyAlgorithmECDHKeyExchangeStandard, pub, none, NULL), secret, 32); CFRelease(none); CFRelease(pub); if (bad) return -1;
++    int first = memcmp(mine->key, theirs->key, FC_KEY) < 0; const fc_hi *a = first ? mine : theirs, *b = first ? theirs : mine;
++    CC_SHA256_CTX c; CC_SHA256_Init(&c); CC_SHA256_Update(&c, "docked-session-v1", 17); CC_SHA256_Update(&c, a, offsetof(fc_hi, sig)); CC_SHA256_Update(&c, b, offsetof(fc_hi, sig)); CC_SHA256_Final(salt, &c);
++    fc_hmac256(salt, 32, secret, 32, prk);
++    fc_way *w[4] = {first ? &o->out : &o->in, first ? &o->in : &o->out, first ? &o->note_out : &o->note_in, first ? &o->note_in : &o->note_out};
++    for (uint8_t i = 0; i < 4; i++) { uint8_t t[32]; for (uint8_t k = 0; k < 3; k++) { uint8_t info[] = {'w', i, k, 1}; fc_hmac256(prk, 32, info, sizeof info, t); if (k == 0) memcpy(w[i]->enc, t, 32); else if (k == 1) memcpy(w[i]->mac, t, 32); else memcpy(&w[i]->sid, t, 4); } }
++    uint8_t info[] = {'l', 0, 0, 1}; fc_hmac256(prk, 32, info, sizeof info, o->link); memset_s(secret, 32, 0, 32); memset_s(prk, 32, 0, 32); return 0;
++}
++static void ctr(const uint8_t key[32], const uint8_t head[FC_HEAD], const void *in, size_t n, uint8_t *out) {   // the counter never repeats under one key, so neither does the stream
++    uint8_t iv[16] = {0}; memcpy(iv, head + 8, 8); CCCryptorRef c; size_t m = 0;
++    if (CCCryptorCreateWithMode(kCCEncrypt, kCCModeCTR, kCCAlgorithmAES, ccNoPadding, iv, key, 32, NULL, 0, 0, kCCModeOptionCTR_BE, &c) != kCCSuccess) { memset(out, 0, n); return; }
++    if (CCCryptorUpdate(c, in, n, out, n, &m) != kCCSuccess) memset(out, 0, n); CCCryptorRelease(c);
++}
++void fc_seal(const fc_way *w, uint8_t type, uint64_t counter, const void *d, size_t n, uint8_t *o) {
++    o[0] = 'D'; o[1] = 'I'; o[2] = type; o[3] = 1; memcpy(o + 4, &w->sid, 4); memcpy(o + 8, &counter, 8); if (n) ctr(w->enc, o, d, n, o + FC_HEAD);
++    uint8_t t[32]; fc_hmac256(w->mac, 32, o, FC_HEAD + n, t); memcpy(o + FC_HEAD + n, t, FC_TAG);
++}
++int fc_open(const fc_way *w, const uint8_t *b, size_t n, uint8_t *o, uint64_t *counter) {
++    if (n < FC_HEAD + FC_TAG || b[0] != 'D' || b[1] != 'I' || b[3] != 1 || memcmp(b + 4, &w->sid, 4)) return -1;
++    uint8_t t[32]; size_t m = n - FC_HEAD - FC_TAG; fc_hmac256(w->mac, 32, b, FC_HEAD + m, t); if (!fc_eq(t, b + FC_HEAD + m, FC_TAG)) return -1;
++    memcpy(counter, b + 8, 8); if (m) ctr(w->enc, b, b + FC_HEAD, m, o); return (int)m;
++}
+diff --git a/dm/host/friends_crypto.h b/dm/host/friends_crypto.h
+new file mode 100644
+index 0000000..dc7f0a0
+--- /dev/null
++++ b/dm/host/friends_crypto.h
+@@ -0,0 +1,26 @@
++// Keys for friends over the internet. Apple's own implementations throughout (Security.framework, CommonCrypto): P-256 identity signatures, P-256 key agreement with fresh keys
++// every session, HKDF-SHA256, AES-256-CTR then HMAC-SHA256.
++#pragma once
++#include <stddef.h>
++#include <stdint.h>
++#include <Security/Security.h>
++enum { FC_KEY = 65, FC_SIG = 64, FC_CODE = 16, FC_NONCE = 16, FC_TAG = 16, FC_HEAD = 16 };
++SecKeyRef fc_new_key(void);
++int fc_export(SecKeyRef priv, uint8_t out[97]);
++SecKeyRef fc_import(const uint8_t in[97]);
++int fc_public(SecKeyRef priv, uint8_t out[FC_KEY]);
++int fc_sign(SecKeyRef priv, const void *d, size_t n, uint8_t sig[FC_SIG]);
++int fc_verify(const uint8_t pub[FC_KEY], const void *d, size_t n, const uint8_t sig[FC_SIG]);   // 1 when true
++void fc_code(const uint8_t pub[FC_KEY], char out[FC_CODE + 1]);
++int fc_clean_code(const char *typed, char out[FC_CODE + 1]);   // 1 when a code: any case, spaces and dashes ignored, O I L read as 0 1 1
++int fc_eq(const void *a, const void *b, size_t n);
++// The "hi" each side sends at the start of a session: a fresh key, signed by the identity its friend code names
++typedef struct { uint8_t key[FC_KEY], eph[FC_KEY], nonce[FC_NONCE], sig[FC_SIG]; } fc_hi;
++int fc_make_hi(SecKeyRef identity, SecKeyRef eph, const char *to, fc_hi *o);
++int fc_check_hi(const fc_hi *h, const char *from, const char *to);   // 1 when it is really from that code, to this one
++typedef struct { uint8_t enc[32], mac[32]; uint32_t sid; } fc_way;
++typedef struct { fc_way out, in, note_out, note_in; uint8_t link[32]; } fc_keys;
++int fc_session(SecKeyRef my_eph, const fc_hi *mine, const fc_hi *theirs, fc_keys *o);
++void fc_seal(const fc_way *w, uint8_t type, uint64_t counter, const void *d, size_t n, uint8_t *out);   // out: FC_HEAD + n + FC_TAG
++int fc_open(const fc_way *w, const uint8_t *b, size_t n, uint8_t *out, uint64_t *counter);               // the length, or -1
++void fc_hmac256(const void *key, size_t kn, const void *d, size_t n, uint8_t out[32]);
+diff --git a/dm/host/friends_internet.h b/dm/host/friends_internet.h
+new file mode 100644
+index 0000000..f81cc2a
+--- /dev/null
++++ b/dm/host/friends_internet.h
+@@ -0,0 +1,18 @@
++// Friends over the internet: the player's code, the friends list, the meeting point, and a session with each friend while Local Wireless is open.
++#pragma once
++#include "friends_link.h"
++enum { FI_FRIENDS = 32, FI_REQUESTS = 20, FI_NAME = 100 };
++typedef struct { char code[17], name[FI_NAME]; int on, ready, up, relay, asked; double rtt; } fi_friend;   // asked: they have not added this player yet
++typedef struct { char code[17], name[FI_NAME]; } fi_request;
++typedef struct { int online, open, nfriends, nrequests; char code[17], name[FI_NAME], note[160]; fi_friend friends[FI_FRIENDS]; fi_request requests[FI_REQUESTS]; } fi_view;
++int fi_start(const char *config, const char *folder, int loopback);   // 0: running; -1: not set up (see fi_snapshot's note)
++int fi_running(void);
++void fi_stop(void);
++void fi_snapshot(fi_view *);
++unsigned fi_changes(void);                                            // moves when there is something new to show
++int fi_add(const char *typed, char *why, size_t n);                   // 0, or -1 with the reason in plain words
++void fi_accept(const char *code), fi_decline(const char *code), fi_remove(const char *code);
++int fi_rename(const char *name);
++void fi_open(friends_link *);                                         // Local Wireless opened
++void fi_close(void);                                                  // and closed: call before fl_stop
++int fi_send(void *, int slot, const void *, size_t);
+diff --git a/dm/host/friends_internet.m b/dm/host/friends_internet.m
+new file mode 100644
+index 0000000..243aab2
+--- /dev/null
++++ b/dm/host/friends_internet.m
+@@ -0,0 +1,208 @@
++#import <Foundation/Foundation.h>
++#include "friends_internet.h"
++#include "friends_path.h"
++#include <fcntl.h>
++#include <pthread.h>
++#include <stdatomic.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++void dm_friends_log(const char *what);   // hle_friends_link.c: the game's log (never names, codes or addresses)
++@interface DFFriend : NSObject { @public NSString *code, *name; BOOL asked, on, ready, paired, sentCands; int slot; SecKeyRef eph; fc_hi hi, theirs; fc_keys keys; uint64_t noteOut, noteIn, began, pairedAt, hiAt, tokensAt, namedAt; double tokens; NSData *late, *key; uint64_t lateAt; } @end
++@implementation DFFriend
++- (instancetype)init { if ((self = [super init])) { slot = -1; tokens = 4; } return self; }
++- (void)wipe { if (eph) CFRelease(eph); eph = NULL; paired = NO; memset_s(&hi, sizeof hi, 0, sizeof hi); memset_s(&theirs, sizeof theirs, 0, sizeof theirs); memset_s(&keys, sizeof keys, 0, sizeof keys); noteOut = noteIn = 0; late = nil; }
++- (void)dealloc { [self wipe]; }
++@end
++
++static dispatch_queue_t Q; static char QK; static _Atomic unsigned g_changes; static _Atomic int g_running;
++static NSURL *g_url; static NSString *g_host, *g_folder, *g_name = @"", *g_note = @""; static uint8_t g_circle[32]; static SecKeyRef g_id; static uint8_t g_pub[65]; static char g_code[17];
++static NSMutableArray<DFFriend *> *g_friends; static NSMutableArray<NSDictionary *> *g_requests; static NSMutableOrderedSet<NSString *> *g_blocked; static int g_loop;
++static NSURLSession *g_session; static NSURLSessionWebSocketTask *g_ws; static BOOL g_in, g_relay_there, g_turn_asked; static int g_tries; static uint64_t g_turn_at, g_heard; static dispatch_source_t g_tick;
++static friends_link *g_link; static friends_path *g_path; static pthread_rwlock_t g_path_l = PTHREAD_RWLOCK_INITIALIZER;
++static uint64_t ms(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000; }
++static void changed(void) { atomic_fetch_add(&g_changes, 1); }
++static void on_q(dispatch_block_t b) { if (dispatch_get_specific(&QK)) b(); else dispatch_sync(Q, b); }
++static NSString *b64(const void *d, size_t n) { return [[NSData dataWithBytes:d length:n] base64EncodedStringWithOptions:0]; }
++static NSData *un64(id s, size_t want) { if (![s isKindOfClass:NSString.class]) return nil; NSData *d = [[NSData alloc] initWithBase64EncodedString:s options:0]; return d && (!want || d.length == want) ? d : nil; }
++static NSString *clean(id s) {   // what another player calls themself: short, one line, nothing that rearranges text on screen
++    if (![s isKindOfClass:NSString.class] || [s length] > 400) return @"";
++    NSMutableString *o = [NSMutableString string]; NSMutableCharacterSet *bad = [NSMutableCharacterSet controlCharacterSet]; [bad formUnionWithCharacterSet:NSCharacterSet.illegalCharacterSet]; [bad formUnionWithCharacterSet:NSCharacterSet.newlineCharacterSet]; [bad addCharactersInRange:NSMakeRange(0x200B, 5)]; [bad addCharactersInRange:NSMakeRange(0x2028, 7)]; [bad addCharactersInRange:NSMakeRange(0x2060, 16)];
++    __block int n = 0; [(NSString *)s enumerateSubstringsInRange:NSMakeRange(0, [s length]) options:NSStringEnumerationByComposedCharacterSequences usingBlock:^(NSString *c, NSRange r, NSRange e, BOOL *stop) { (void)r; (void)e; if ([c rangeOfCharacterFromSet:bad].location != NSNotFound) return; if (n >= 24 || strlen(o.UTF8String) + strlen(c.UTF8String) >= FI_NAME) { *stop = YES; return; } [o appendString:c]; n++; }];
++    return [o stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
++}
++static DFFriend *friend_of(NSString *c) { for (DFFriend *f in g_friends) if ([f->code isEqualToString:c]) return f; return nil; }
++static BOOL is_code(id c) { char o[17]; return [c isKindOfClass:NSString.class] && [c length] == 16 && fc_clean_code([c UTF8String], o) && !strcmp(o, [c UTF8String]); }
++
++// ---- kept on this Mac, readable by this player only ----
++static BOOL write_private(NSString *path, NSData *d, BOOL fresh) {
++    NSString *t = [path stringByAppendingFormat:@".%08x", arc4random()]; int fd = open(t.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600); if (fd < 0) return NO;
++    BOOL ok = write(fd, d.bytes, d.length) == (ssize_t)d.length && !fsync(fd); ok = !close(fd) && ok;
++    if (ok) ok = fresh ? !link(t.fileSystemRepresentation, path.fileSystemRepresentation) : !rename(t.fileSystemRepresentation, path.fileSystemRepresentation);
++    if (!ok || fresh) unlink(t.fileSystemRepresentation); return ok;
++}
++static NSData *read_private(NSString *path, size_t max, BOOL *there) {
++    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW); *there = fd >= 0 || errno != ENOENT; if (fd < 0) return nil; struct stat s; NSMutableData *d = nil;
++    if (!fstat(fd, &s) && S_ISREG(s.st_mode) && s.st_uid == getuid() && !(s.st_mode & 077) && s.st_size > 0 && (size_t)s.st_size <= max) { d = [NSMutableData dataWithLength:(NSUInteger)s.st_size]; if (read(fd, d.mutableBytes, d.length) != (ssize_t)d.length) d = nil; }
++    close(fd); return d;
++}
++static void save(void) {
++    NSMutableArray *l = [NSMutableArray array]; for (DFFriend *f in g_friends) [l addObject:@{@"code": f->code, @"name": f->name, @"asked": f->asked ? @YES : @NO, @"key": f->key ? [f->key base64EncodedStringWithOptions:0] : @""}];
++    NSData *d = [NSJSONSerialization dataWithJSONObject:@{@"v": @1, @"name": g_name, @"friends": l, @"blocked": g_blocked.array} options:NSJSONWritingPrettyPrinted error:nil];
++    if (!d || !write_private([g_folder stringByAppendingPathComponent:@"friends.json"], d, NO)) g_note = @"The friends list could not be saved. Check that the disk has space."; changed();
++}
++static BOOL load(void) {
++    struct stat s; if (mkdir(g_folder.fileSystemRepresentation, 0700) && errno != EEXIST) { [NSFileManager.defaultManager createDirectoryAtPath:g_folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:nil]; }
++    if (lstat(g_folder.fileSystemRepresentation, &s) || !S_ISDIR(s.st_mode) || s.st_uid != getuid()) { g_note = @"The friends folder is not available."; return NO; } if (s.st_mode & 077) chmod(g_folder.fileSystemRepresentation, 0700);
++    NSString *k = [g_folder stringByAppendingPathComponent:@"identity"]; BOOL there; NSData *d = read_private(k, 97, &there);
++    if (!there) { SecKeyRef n = fc_new_key(); uint8_t raw[97]; if (n && !fc_export(n, raw)) write_private(k, [NSData dataWithBytes:raw length:97], YES); if (n) CFRelease(n); memset_s(raw, sizeof raw, 0, sizeof raw); d = read_private(k, 97, &there); }   // never over an existing one: the code is the key
++    if (d.length == 97) g_id = fc_import(d.bytes); if (!g_id || fc_public(g_id, g_pub)) { g_note = @"Your friend code file is damaged or readable by others. Nothing was changed."; return NO; } fc_code(g_pub, g_code);
++    d = read_private([g_folder stringByAppendingPathComponent:@"friends.json"], 65536, &there); NSDictionary *j = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
++    if (there && ![j isKindOfClass:NSDictionary.class]) { g_note = @"The friends list could not be read. Nothing was changed."; return NO; }
++    g_name = clean(j[@"name"]); if ([j[@"friends"] isKindOfClass:NSArray.class]) for (NSDictionary *x in j[@"friends"]) if ([x isKindOfClass:NSDictionary.class] && is_code(x[@"code"]) && g_friends.count < FI_FRIENDS && !friend_of(x[@"code"]) && strcmp([x[@"code"] UTF8String], g_code)) { DFFriend *f = [DFFriend new]; f->code = x[@"code"]; f->name = clean(x[@"name"]); f->asked = [x[@"asked"] isKindOfClass:NSNumber.class] && [x[@"asked"] boolValue]; f->key = un64(x[@"key"], 65); [g_friends addObject:f]; }
++    if ([j[@"blocked"] isKindOfClass:NSArray.class]) for (id c in j[@"blocked"]) if (is_code(c) && g_blocked.count < 200) [g_blocked addObject:c];
++    return YES;
++}
++
++// ---- the meeting point ----
++static void connect_meeting(void);
++static void say(NSDictionary *m) { if (!g_ws) return; NSData *d = [NSJSONSerialization dataWithJSONObject:m options:0 error:nil]; NSURLSessionWebSocketTask *ws = g_ws; [ws sendMessage:[[NSURLSessionWebSocketMessage alloc] initWithString:[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]] completionHandler:^(NSError *e) { if (e) dispatch_async(Q, ^{ if (ws == g_ws) [ws cancel]; }); }]; }
++static void watch(void) { if (!g_in) return; NSMutableArray *a = [NSMutableArray array]; for (DFFriend *f in g_friends) [a addObject:f->code]; say(@{@"t": @"watch", @"ids": a}); }
++static void lost(NSURLSessionWebSocketTask *ws) {
++    if (ws != g_ws) return; NSInteger why = ws.closeCode; [ws cancel]; g_ws = nil; g_in = NO; g_turn_asked = NO; for (DFFriend *f in g_friends) f->on = NO;   // sessions already running carry on without it
++    if (!g_running) return; if (why == 4001) { g_note = @"Your friend code is in use by another copy of the game."; g_tries = 6; } else if (why == 1008 && g_tries > 2) g_note = @"The meeting point refused this copy. It may need a newer patch."; changed();
++    int wait = g_tries < 5 ? 1 << g_tries : 30; g_tries++; dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((wait + arc4random_uniform(1000) / 1000.0) * NSEC_PER_SEC)), Q, ^{ if (g_running && !g_ws) connect_meeting(); });
++}
++static void drop(DFFriend *f) { if (f->slot >= 0) { fp_drop(g_path, f->slot); fl_slot(g_link, f->slot, NULL); } f->slot = -1; [f wipe]; }
++static int up(DFFriend *f) { return f->slot >= 0 && f->paired && fp_get(g_path, f->slot).up; }
++// A session is over only when nothing genuine has come for 10 s, or the friend said goodbye. No note passed by the meeting point ends one: a short stall in the network must not be a way in.
++static BOOL live(DFFriend *f) { return f->slot >= 0 && f->paired && fp_get(g_path, f->slot).quiet_ms < 10000; }
++static void note_to(DFFriend *f, NSDictionary *d) { NSData *j = [NSJSONSerialization dataWithJSONObject:d options:0 error:nil]; say(@{@"t": @"send", @"to": f->code, @"body": [[NSString alloc] initWithData:j encoding:NSUTF8StringEncoding]}); }
++static void send_hi(DFFriend *f) { f->hiAt = ms(); note_to(f, @{@"k": @"hi", @"key": b64(f->hi.key, 65), @"eph": b64(f->hi.eph, 65), @"n": b64(f->hi.nonce, 16), @"sig": b64(f->hi.sig, 64)}); }
++static BOOL begin(DFFriend *f) {   // a new session: fresh keys, then both say hi
++    if (!g_path || !g_in || !f->on || !f->ready) return NO;
++    if (f->slot < 0) { int used = 0; for (DFFriend *x in g_friends) if (x->slot >= 0) used |= 1 << x->slot; for (int i = 0; i < FP_SLOTS && f->slot < 0; i++) if (!(used >> i & 1)) f->slot = i; if (f->slot < 0) return NO; }
++    else { fp_drop(g_path, f->slot); fl_slot(g_link, f->slot, NULL); }
++    [f wipe]; f->eph = fc_new_key(); if (!f->eph || fc_make_hi(g_id, f->eph, f->code.UTF8String, &f->hi)) { drop(f); return NO; } f->began = ms(); send_hi(f); return YES;
++}
++static void send_cands(DFFriend *f) {
++    if (!f->paired) return; fp_cand c[FP_CANDS]; memset(c, 0, sizeof c); int n = fp_candidates(g_path, c); uint8_t b[2 + FP_CANDS * 20 + FI_NAME], o[sizeof b + FC_HEAD + FC_TAG]; size_t l = 0; b[l++] = 1; b[l++] = (uint8_t)n;
++    for (int i = 0; i < n; i++) { b[l++] = c[i].kind; b[l++] = c[i].fam; b[l++] = (uint8_t)(c[i].port >> 8); b[l++] = (uint8_t)c[i].port; memcpy(b + l, c[i].addr, 16); l += 16; }
++    size_t nl = strlen(g_name.UTF8String); memcpy(b + l, g_name.UTF8String, nl); l += nl; fc_seal(&f->keys.note_out, 9, ++f->noteOut, b, l, o); note_to(f, @{@"k": @"c", @"d": b64(o, l + FC_HEAD + FC_TAG)});
++}
++static void pair_up(DFFriend *f, const fc_hi *h) {
++    if (fc_session(f->eph, &f->hi, h, &f->keys)) { drop(f); return; } f->theirs = *h; f->paired = YES; f->pairedAt = ms(); f->noteOut = f->noteIn = 0;
++    fp_session(g_path, f->slot, &f->keys); fl_slot(g_link, f->slot, f->keys.link); send_cands(f); changed();
++}
++static void on_hi(DFFriend *f, NSDictionary *d) {
++    if (!g_path) return; NSData *k = un64(d[@"key"], 65), *e = un64(d[@"eph"], 65), *n = un64(d[@"n"], 16), *s = un64(d[@"sig"], 64); if (!k || !e || !n || !s) return;
++    fc_hi h; memset(&h, 0, sizeof h); memcpy(h.key, k.bytes, 65); memcpy(h.eph, e.bytes, 65); memcpy(h.nonce, n.bytes, 16); memcpy(h.sig, s.bytes, 64);
++    if (f->paired && !memcmp(h.eph, f->theirs.eph, 65) && !memcmp(h.nonce, f->theirs.nonce, 16)) return;                                           // the same one again
++    if (live(f)) { f->late = [NSData dataWithBytes:&h length:sizeof h]; f->lateAt = ms(); return; }        // never lets an old one, sent again, break a running match
++    uint64_t now = ms(); f->tokens = MIN(4, f->tokens + (now - f->tokensAt) / 3000.0); f->tokensAt = now; if (f->tokens < 1) return; f->tokens -= 1;   // a few at once while both start, then slowly
++    if (f->key && !fc_eq(f->key.bytes, h.key, 65)) return;   // the same key as ever, not just the same code
++    if (!fc_check_hi(&h, f->code.UTF8String, g_code)) return; if (!f->key) { f->key = [NSData dataWithBytes:h.key length:65]; save(); }
++    if (!f->eph || f->paired) { if (!begin(f)) return; } pair_up(f, &h);
++}
++static void on_cands(DFFriend *f, NSDictionary *d) {
++    NSData *s = un64(d[@"d"], 0); if (!s || s.length > 600 || !f->paired) return; uint8_t b[700]; uint64_t c; int n = fc_open(&f->keys.note_in, s.bytes, s.length, b, &c); if (n < 2 || c <= f->noteIn || b[0] != 1 || b[1] > FP_CANDS || n < 2 + b[1] * 20) return; f->noteIn = c;
++    fp_cand k[FP_CANDS]; memset(k, 0, sizeof k); size_t l = 2; for (int i = 0; i < b[1]; i++) { k[i].kind = b[l]; k[i].fam = b[l + 1]; k[i].port = (uint16_t)(b[l + 2] << 8 | b[l + 3]); memcpy(k[i].addr, b + l + 4, 16); l += 20; }
++    fp_remote(g_path, f->slot, k, b[1]); NSString *nm = clean([[NSString alloc] initWithBytes:b + l length:(NSUInteger)n - l encoding:NSUTF8StringEncoding]); if (nm.length && ![nm isEqualToString:f->name] && (!f->namedAt || ms() - f->namedAt > 60000)) { f->namedAt = ms(); f->name = nm; save(); }
++}
++static void on_message(NSURLSessionWebSocketTask *ws, NSString *text) {
++    id m = text.length <= 8192 ? [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil] : nil; if (![m isKindOfClass:NSDictionary.class] || ![m[@"t"] isKindOfClass:NSString.class]) { [ws cancel]; return; }
++    NSString *t = m[@"t"]; g_heard = ms();
++    if ([t isEqual:@"hello"] && !g_in) {
++        NSData *n = un64(m[@"nonce"], 32); if (!n) { [ws cancel]; return; } NSMutableData *said = [[[NSString stringWithFormat:@"docked-meet-v1|%@|", g_host] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy]; [said appendData:n]; [said appendBytes:g_pub length:65];
++        uint8_t sig[64], mac[32]; if (fc_sign(g_id, said.bytes, said.length, sig)) { [ws cancel]; return; } fc_hmac256(g_circle, 32, said.bytes, said.length, mac); say(@{@"t": @"auth", @"key": b64(g_pub, 65), @"sig": b64(sig, 64), @"mac": b64(mac, 32)});
++    } else if ([t isEqual:@"ready"] && !g_in) {
++        g_in = YES; g_tries = 0; g_note = @""; g_relay_there = [m[@"relay"] isEqual:@YES]; [g_requests removeAllObjects]; watch(); say(@{@"t": @"state", @"ready": (g_path ? @YES : @NO)}); for (DFFriend *f in g_friends) if (f->asked) say(@{@"t": @"request", @"to": f->code, @"name": g_name}); changed();
++    } else if (!g_in) return;
++    else if ([t isEqual:@"peer"]) {
++        DFFriend *f = is_code(m[@"id"]) ? friend_of(m[@"id"]) : nil; if (!f) return; f->on = [m[@"on"] isEqual:@YES]; f->ready = f->on && [m[@"ready"] isEqual:@YES]; if (f->on && f->asked) { f->asked = NO; save(); } if (f->ready && !live(f)) begin(f); changed();
++    } else if ([t isEqual:@"from"]) {
++        DFFriend *f = is_code(m[@"id"]) ? friend_of(m[@"id"]) : nil; if (!f || ![m[@"body"] isKindOfClass:NSString.class]) return; id d = [NSJSONSerialization JSONObjectWithData:[m[@"body"] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil]; if (![d isKindOfClass:NSDictionary.class]) return; if ([d[@"k"] isEqual:@"hi"]) on_hi(f, d); else if ([d[@"k"] isEqual:@"c"]) on_cands(f, d);
++    } else if ([t isEqual:@"request"]) {
++        NSString *c = m[@"from"]; if (!is_code(c) || !strcmp(c.UTF8String, g_code)) return; DFFriend *f = friend_of(c); if (f || [g_blocked containsObject:c]) { say(@{@"t": @"answered", @"from": c}); return; }   // already added here: being added there too is all it takes
++        for (NSUInteger i = 0; i < g_requests.count; i++) if ([g_requests[i][@"code"] isEqual:c]) { [g_requests removeObjectAtIndex:i]; break; } if (g_requests.count < FI_REQUESTS) [g_requests addObject:@{@"code": c, @"name": clean(m[@"name"])}]; changed();
++    } else if ([t isEqual:@"turn"]) {
++        NSDictionary *s = m[@"servers"]; g_turn_asked = NO; if ([s isKindOfClass:NSDictionary.class] && [s[@"username"] isKindOfClass:NSString.class] && [s[@"credential"] isKindOfClass:NSString.class] && g_path) { fp_relay(g_path, [s[@"username"] UTF8String], [s[@"credential"] UTF8String]); dm_friends_log("no direct way to a friend, asking for the relay"); }
++    } else if ([t isEqual:@"slow"]) { g_note = @"Too many requests. Try again in an hour."; changed(); }
++}
++static void listen_to(NSURLSessionWebSocketTask *ws) {
++    [ws receiveMessageWithCompletionHandler:^(NSURLSessionWebSocketMessage *m, NSError *e) { dispatch_async(Q, ^{ if (ws != g_ws) return; if (e || m.type != NSURLSessionWebSocketMessageTypeString) { lost(ws); return; } on_message(ws, m.string); if (ws == g_ws) listen_to(ws); }); }];
++}
++@interface DFNoRedirect : NSObject <NSURLSessionTaskDelegate> @end
++@implementation DFNoRedirect
++- (void)URLSession:(NSURLSession *)s task:(NSURLSessionTask *)t willPerformHTTPRedirection:(NSHTTPURLResponse *)r newRequest:(NSURLRequest *)q completionHandler:(void (^)(NSURLRequest *))h { (void)s; (void)t; (void)r; (void)q; h(nil); }
++@end
++static void connect_meeting(void) {
++    NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:g_url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:15]; [r setValue:@"DockedFriends/1" forHTTPHeaderField:@"User-Agent"]; g_ws = [g_session webSocketTaskWithRequest:r]; g_ws.maximumMessageSize = 16384; g_heard = ms(); g_in = NO; [g_ws resume]; listen_to(g_ws);
++}
++static void every_second(void) {
++    uint64_t now = ms(); if (g_ws && now - g_heard > 70000) { lost(g_ws); } else if (g_ws && g_in && now - g_heard > 25000) { static uint64_t last; if (now - last > 20000) { last = now; say(@{@"t": @"ping"}); } } else if (g_ws && !g_in && now - g_heard > 20000) lost(g_ws);
++    if (!g_path) return; BOOL stuck = NO;
++    for (DFFriend *f in g_friends) {
++        if (f->late && now - f->lateAt > 25000) f->late = nil; if (live(f)) continue;
++        if (f->late) { fc_hi h; memcpy(&h, f->late.bytes, sizeof h); f->late = nil; if (fc_check_hi(&h, f->code.UTF8String, g_code) && (!f->key || fc_eq(f->key.bytes, h.key, 65))) { if (begin(f)) pair_up(f, &h); continue; } }
++        if (f->slot >= 0 && !f->ready && (!f->paired || now - f->pairedAt > 12000)) { drop(f); changed(); continue; }
++        if (!f->ready) continue;
++        if (f->slot < 0) { begin(f); continue; }
++        if (!f->paired && now - f->hiAt > 4000) send_hi(f);
++        if (f->paired && now - f->pairedAt > 2500) stuck = YES;
++        if (f->paired && now - f->pairedAt > 20000 && strcmp(g_code, f->code.UTF8String) < 0) begin(f);   // one side starts over
++    }
++    if (stuck && g_in && g_relay_there && !g_turn_asked && (!g_turn_at || now - g_turn_at > 600000)) { g_turn_asked = YES; g_turn_at = now; say(@{@"t": @"turn"}); }
++    if (g_link) changed();
++}
++
++// ---- the game's side ----
++static void path_data(void *o, int slot, const uint8_t *d, size_t n) { fl_packet(o, slot, d, n); }
++static void path_cands(void *o) { (void)o; dispatch_async(Q, ^{ if (g_path) for (DFFriend *f in g_friends) send_cands(f); }); }
++int fi_send(void *o, int slot, const void *d, size_t n) { (void)o; pthread_rwlock_rdlock(&g_path_l); int r = g_path ? fp_send(g_path, slot, d, n) : -1; pthread_rwlock_unlock(&g_path_l); return r; }
++void fi_open(friends_link *l) {
++    if (!g_running || !l) return; on_q(^{
++        if (g_path) return; const char *sp = g_loop ? getenv("DM_FRIENDS_STUN_PORT") : NULL; uint16_t port = sp ? (uint16_t)atoi(sp) : 3478; const char *sh = g_loop ? "127.0.0.1" : "stun.cloudflare.com", *th = g_loop ? "127.0.0.1" : "turn.cloudflare.com";
++        fp_hooks h = {path_data, path_cands, l, sh, port, th, port, g_loop}; friends_path *p = fp_start(&h); if (!p) { g_note = @"The network could not be opened."; changed(); return; }
++        g_link = l; pthread_rwlock_wrlock(&g_path_l); g_path = p; pthread_rwlock_unlock(&g_path_l); g_turn_asked = NO; g_turn_at = 0; if (g_in) say(@{@"t": @"state", @"ready": @YES}); for (DFFriend *f in g_friends) if (f->ready) begin(f); changed(); });
++}
++void fi_close(void) {
++    if (!Q) return; __block friends_path *p = NULL; on_q(^{ if (!g_path) return; if (g_in) say(@{@"t": @"state", @"ready": @NO}); for (DFFriend *f in g_friends) drop(f); p = g_path; pthread_rwlock_wrlock(&g_path_l); g_path = NULL; pthread_rwlock_unlock(&g_path_l); g_link = NULL; changed(); });
++    fp_stop(p);   // its thread is done before the link it feeds goes away
++}
++int fi_running(void) { return g_running; }
++unsigned fi_changes(void) { return g_changes; }
++static int configure(const char *path) {
++    NSString *s = path ? [NSString stringWithContentsOfFile:@(path) encoding:NSUTF8StringEncoding error:nil] : nil; NSString *meet = nil; NSData *circle = nil; if (!s || s.length > 4096) return -1;
++    for (NSString *line in [s componentsSeparatedByString:@"\n"]) { if ([line hasPrefix:@"meet="]) meet = [line substringFromIndex:5]; else if ([line hasPrefix:@"circle="]) circle = un64([line substringFromIndex:7], 32); }
++    NSURL *u = meet ? [NSURL URLWithString:meet] : nil; BOOL local = g_loop && [u.scheme isEqual:@"ws"] && [u.host isEqual:@"127.0.0.1"]; if (!circle || !u.host.length || u.user || u.password || u.query || (![u.scheme isEqual:@"wss"] && !local)) return -1;
++    g_url = u; g_host = u.host; memcpy(g_circle, circle.bytes, 32); return 0;
++}
++int fi_start(const char *cfg, const char *folder, int loopback) {
++    if (!Q) { Q = dispatch_queue_create("docked.friends", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0)); dispatch_queue_set_specific(Q, &QK, &QK, NULL); }
++    __block int r = 0; on_q(^{ if (g_running) return; g_loop = loopback; g_friends = [NSMutableArray array]; g_requests = [NSMutableArray array]; g_blocked = [NSMutableOrderedSet orderedSet]; g_folder = @(folder);
++        if (configure(cfg)) { g_note = @"Online play is not set up in this copy."; r = -1; return; } if (!load()) { r = -1; return; }
++        NSURLSessionConfiguration *c = NSURLSessionConfiguration.ephemeralSessionConfiguration; c.HTTPCookieStorage = nil; c.URLCredentialStorage = nil; c.URLCache = nil; c.TLSMinimumSupportedProtocolVersion = tls_protocol_version_TLSv12; NSOperationQueue *oq = [NSOperationQueue new]; oq.underlyingQueue = Q; g_session = [NSURLSession sessionWithConfiguration:c delegate:[DFNoRedirect new] delegateQueue:oq];
++        g_running = 1; g_tries = 0; connect_meeting(); g_tick = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, Q); dispatch_source_set_timer(g_tick, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_SEC / 10); dispatch_source_set_event_handler(g_tick, ^{ every_second(); }); dispatch_resume(g_tick); changed(); });
++    return r;
++}
++void fi_stop(void) { if (!Q) return; fi_close(); on_q(^{ if (!g_running) return; g_running = 0; dispatch_source_cancel(g_tick); g_tick = nil; [g_ws cancelWithCloseCode:NSURLSessionWebSocketCloseCodeGoingAway reason:nil]; g_ws = nil; g_in = NO; [g_session invalidateAndCancel]; g_session = nil; for (DFFriend *f in g_friends) [f wipe]; [g_friends removeAllObjects]; if (g_id) CFRelease(g_id); g_id = NULL; }); }
++static void copy(char *o, size_t n, NSString *s) { snprintf(o, n, "%s", s.UTF8String ?: ""); }
++void fi_snapshot(fi_view *v) {
++    memset(v, 0, sizeof *v); if (!Q) { snprintf(v->note, sizeof v->note, "Online play is not set up in this copy."); return; }
++    on_q(^{ v->online = g_in; v->open = g_path != NULL; memcpy(v->code, g_code, 17); copy(v->name, FI_NAME, g_name); copy(v->note, sizeof v->note, g_note);
++        for (DFFriend *f in g_friends) { fi_friend *o = &v->friends[v->nfriends++]; copy(o->code, 17, f->code); copy(o->name, FI_NAME, f->name); o->on = f->on; o->ready = f->ready; o->asked = f->asked; if (f->slot >= 0) { fp_state s = fp_get(g_path, f->slot); o->up = s.up; o->relay = s.relay; o->rtt = s.rtt; } }
++        for (NSDictionary *q in g_requests) { if (v->nrequests == FI_REQUESTS) break; fi_request *o = &v->requests[v->nrequests++]; copy(o->code, 17, q[@"code"]); copy(o->name, FI_NAME, q[@"name"]); } });
++}
++static void forget_request(NSString *c) { for (NSUInteger i = 0; i < g_requests.count; i++) if ([g_requests[i][@"code"] isEqual:c]) { [g_requests removeObjectAtIndex:i]; break; } if (g_in) say(@{@"t": @"answered", @"from": c}); }
++static DFFriend *add(NSString *c, NSString *name, BOOL asked) { DFFriend *f = [DFFriend new]; f->code = c; f->name = name; f->asked = asked; [g_friends addObject:f]; [g_blocked removeObject:c]; save(); watch(); return f; }
++int fi_add(const char *typed, char *why, size_t n) {
++    char code[17]; __block int r = -1; if (!g_running) { snprintf(why, n, "Online play is not set up in this copy."); return -1; } if (!fc_clean_code(typed, code)) { snprintf(why, n, "A friend code has 16 letters and numbers."); return -1; } NSString *c = @(code);
++    on_q(^{ if (!strcmp(c.UTF8String, g_code)) { snprintf(why, n, "That is your own code."); return; } if (friend_of(c)) { snprintf(why, n, "That friend is already on your list."); return; } if (g_friends.count >= FI_FRIENDS) { snprintf(why, n, "Your list is full (%d friends).", FI_FRIENDS); return; }
++        BOOL asked = YES; NSString *nm = @""; for (NSDictionary *q in g_requests) if ([q[@"code"] isEqual:c]) { asked = NO; nm = q[@"name"]; } if (!asked) forget_request(c); add(c, nm, asked); if (asked && g_in) say(@{@"t": @"request", @"to": c, @"name": g_name}); r = 0; });
++    return r;
++}
++void fi_accept(const char *code) { if (!g_running) return; NSString *c = @(code); on_q(^{ NSString *nm = nil; for (NSDictionary *q in g_requests) if ([q[@"code"] isEqual:c]) nm = q[@"name"]; if (!nm || friend_of(c) || g_friends.count >= FI_FRIENDS) return; forget_request(c); add(c, nm, NO); }); }
++void fi_decline(const char *code) { if (!g_running) return; NSString *c = @(code); on_q(^{ if (!is_code(c)) return; forget_request(c); if (g_blocked.count >= 200) [g_blocked removeObjectAtIndex:0]; [g_blocked addObject:c]; save(); }); }
++void fi_remove(const char *code) { if (!g_running) return; NSString *c = @(code); on_q(^{ DFFriend *f = friend_of(c); if (!f) return; drop(f); [g_friends removeObject:f]; save(); watch(); }); }
++int fi_rename(const char *name) { if (!g_running) return -1; NSString *s = clean(@(name)); if (!s.length) return -1; on_q(^{ g_name = s; save(); }); return 0; }
+diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
+index b15337e..d707b43 100644
+--- a/dm/host/friends_link.c
++++ b/dm/host/friends_link.c
+@@ -26,7 +26,7 @@ enum { HDR = 32, TAG = 16, RETIRED = 32, LOST_MS = 6000, JOIN_MS = 4000, SCAN_MS
+ static const uint32_t COPY_AFTER[RINGS] = {5000, 11000};   // µs: past a lost packet, and past a short dropout
+ static const uint8_t MAGIC[4] = {'D', 'S', 'F', '1'};
+ typedef struct {
+-    struct sockaddr_in addr; uint64_t nonce, high, window, retired[RETIRED]; unsigned nretired; int up; uint64_t seen, hello_at, welcome_at;
++    struct sockaddr_in addr; int slot, on; uint8_t key[32]; uint64_t nonce, high, window, retired[RETIRED]; unsigned nretired; int up; uint64_t seen, hello_at, welcome_at;
+     int node; fl_network room; uint64_t room_at; uint64_t echo_t, echo_at; double rtt, rtt_max;
+ } peer;
+ // A game packet carries its sender's clock and a number per destination, so a second copy is recognised and an uneven network can be evened out.
+@@ -90,10 +90,11 @@ int fl_load(const char *path, int loop, fl_setup *o, char *why, size_t wl) {
+ 
+ // ---- sending (with the lock held) ----
+ static void put(friends_link *f, peer *p, int type, const void *d, size_t n) {
+-    if (n > FL_PAYLOAD || f->fd < 0) return;
++    if (n > FL_PAYLOAD || !p->on || (f->fd < 0 && !f->set.net)) return;
+     uint8_t b[HDR + FL_PAYLOAD + TAG], t[32]; memset(b, 0, HDR); uint64_t to = type == T_HELLO ? 0 : p->nonce, c = ++f->counter;
+     memcpy(b, MAGIC, 4); b[4] = (uint8_t)type; memcpy(b + 8, &f->nonce, 8); memcpy(b + 16, &to, 8); memcpy(b + 24, &c, 8); if (n) memcpy(b + HDR, d, n);
+-    hmac(f->set.key, b, HDR + n, t); memcpy(b + HDR + n, t, TAG);
++    hmac(p->key, b, HDR + n, t); memcpy(b + HDR + n, t, TAG);
++    if (f->set.net) { if (f->h.send && !f->h.send(f->h.opaque, p->slot, b, HDR + n + TAG)) f->st.tx++; return; }
+     if (sendto(f->fd, b, HDR + n + TAG, 0, (struct sockaddr *)&p->addr, sizeof p->addr) > 0) f->st.tx++;
+ }
+ static void wake(friends_link *f) { struct kevent e; EV_SET(&e, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL); kevent(f->kq, &e, 1, NULL, 0, NULL); }
+@@ -210,18 +211,16 @@ static void on_data(friends_link *f, int i, const uint8_t *d, size_t n) {
+     held **at = &f->q; while (*at && ((*at)->due < x->due || ((*at)->due == x->due && ((*at)->h.src != h.src || (int32_t)((*at)->h.seq - h.seq) < 0)))) at = &(*at)->next;
+     x->next = *at; *at = x; f->nq++;
+ }
+-static void receive(friends_link *f, const uint8_t *b, size_t n, const struct sockaddr_in *from) {
+-    int i = 0; while (i < f->set.npeers && (f->p[i].addr.sin_addr.s_addr != from->sin_addr.s_addr || f->p[i].addr.sin_port != from->sin_port)) i++;
+-    if (i == f->set.npeers) { f->st.bad_source++; return; }
++static void receive_from(friends_link *f, int i, const uint8_t *b, size_t n) {
+     if (n < HDR + TAG || n > HDR + FL_PAYLOAD + TAG || memcmp(b, MAGIC, 4) || b[5] || b[6] || b[7] || !b[4] || b[4] >= T_MAX) { f->st.bad_packet++; return; }
+-    uint8_t t[32]; hmac(f->set.key, b, n - TAG, t); if (!tag_ok(t, b + n - TAG)) { f->st.bad_tag++; return; }
++    uint8_t t[32]; hmac(f->p[i].key, b, n - TAG, t); if (!tag_ok(t, b + n - TAG)) { f->st.bad_tag++; return; }
+     peer *p = &f->p[i]; uint64_t s, r, c; memcpy(&s, b + 8, 8); memcpy(&r, b + 16, 8); memcpy(&c, b + 24, 8); uint64_t now = ms();
+     const uint8_t *d = b + HDR; size_t dn = n - HDR - TAG; int type = b[4];
+     if (!s || s == f->nonce) { f->st.replay++; return; }
+     if (type == T_HELLO) {   // can be a recording: answer, change nothing
+         if (r || dn) { f->st.bad_packet++; return; }
+         if (now - p->welcome_at < 200) return;
+-        p->welcome_at = now; peer ans = {.addr = p->addr, .nonce = s}; put(f, &ans, T_WELCOME, NULL, 0); return;
++        p->welcome_at = now; peer ans = {.addr = p->addr, .nonce = s, .slot = i, .on = 1}; memcpy(ans.key, p->key, 32); put(f, &ans, T_WELCOME, NULL, 0); return;
+     }
+     if (r != f->nonce) { f->st.replay++; return; }
+     if (s != p->nonce || !p->up) {
+@@ -245,10 +244,15 @@ static void receive(friends_link *f, const uint8_t *b, size_t n, const struct so
+         default: break;
+     }
+ }
++static void receive(friends_link *f, const uint8_t *b, size_t n, const struct sockaddr_in *from) {
++    int i = 0; while (i < f->set.npeers && (f->p[i].addr.sin_addr.s_addr != from->sin_addr.s_addr || f->p[i].addr.sin_port != from->sin_port)) i++;
++    if (i == f->set.npeers) { f->st.bad_source++; return; }
++    receive_from(f, i, b, n);
++}
+ static void ping(friends_link *f, peer *p) { uint64_t t = us(), v[3] = {t, p->echo_t, p->echo_t ? t - p->echo_at : 0}; put(f, p, T_PING, v, sizeof v); }
+ static void tick(friends_link *f) {
+     uint64_t now = ms();
+-    for (int i = 0; i < f->set.npeers; i++) { peer *p = &f->p[i];
++    for (int i = 0; i < f->set.npeers; i++) { peer *p = &f->p[i]; if (!p->on) continue;
+         if (p->up && now - p->seen > LOST_MS) peer_down(f, i);
+         if (now - p->hello_at >= (p->up ? 250 : 1000)) { p->hello_at = now; if (p->up) ping(f, p); else put(f, p, T_HELLO, NULL, 0); } }
+     if (f->state == FL_CREATED && now - f->sync_at >= 500) sync_room(f);
+@@ -265,7 +269,7 @@ static void *worker(void *a) {
+     while (b && !__atomic_load_n(&f->stop, __ATOMIC_ACQUIRE)) {
+         pthread_mutex_lock(&f->m); uint64_t now = us(), next = now + 20000; if (f->q && f->q->due < next) next = f->q->due; for (int k = 0; k < RINGS; k++) if (f->copy_r[k] != f->copy_w[k] && f->copies[k][f->copy_r[k] % COPIES].due < next) next = f->copies[k][f->copy_r[k] % COPIES].due; pthread_mutex_unlock(&f->m);
+         uint64_t left = next > now ? next - now : 0; struct timespec ts = {0, (long)(left * 1000)}; struct kevent e[2]; kevent(f->kq, NULL, 0, e, 2, &ts);
+-        for (int burst = 0; burst < 256; burst++) {
++        for (int burst = 0; burst < 256 && f->fd >= 0; burst++) {
+             struct sockaddr_in from; socklen_t fl = sizeof from; ssize_t n = recvfrom(f->fd, b, 65536, MSG_DONTWAIT, (struct sockaddr *)&from, &fl); if (n < 0) break;
+             pthread_mutex_lock(&f->m); receive(f, b, (size_t)n, &from); pthread_mutex_unlock(&f->m);
+         }
+@@ -285,19 +289,25 @@ friends_link *fl_start(const fl_setup *s, const fl_hooks *h) {
+     friends_link *f = calloc(1, sizeof *f); if (!f) return NULL;
+     f->set = *s; f->h = *h; f->host = -1; f->state = FL_INIT; pthread_mutex_init(&f->m, NULL);
+     do arc4random_buf(&f->nonce, 8); while (!f->nonce); f->mac[0] = 2; memcpy(f->mac + 1, &f->nonce, 5);
+-    for (int i = 0; i < s->npeers; i++) f->p[i].addr = s->peers[i];
++    if (s->net) f->set.npeers = FL_PEERS;
++    for (int i = 0; i < FL_PEERS; i++) { f->p[i].slot = i; if (!s->net && i < s->npeers) { f->p[i].addr = s->peers[i]; f->p[i].on = 1; memcpy(f->p[i].key, s->key, 32); } }
+     struct sockaddr_in a = {.sin_len = sizeof a, .sin_family = AF_INET, .sin_port = htons(s->port), .sin_addr = s->bind};   // never all adapters
+-    f->fd = socket(AF_INET, SOCK_DGRAM, 0);
++    f->fd = s->net ? -1 : socket(AF_INET, SOCK_DGRAM, 0);
+     f->kq = kqueue(); int big = 1 << 20, voice = NET_SERVICE_TYPE_VO; struct kevent ev[2]; EV_SET(&ev[0], 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL); EV_SET(&ev[1], (uintptr_t)f->fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+     if (f->fd >= 0) { setsockopt(f->fd, SOL_SOCKET, SO_RCVBUF, &big, sizeof big); setsockopt(f->fd, SOL_SOCKET, SO_NET_SERVICE_TYPE, &voice, sizeof voice); fcntl(f->fd, F_SETFD, FD_CLOEXEC); }
+-    if (f->fd < 0 || f->kq < 0 || !s->bind.s_addr || bind(f->fd, (struct sockaddr *)&a, sizeof a) || kevent(f->kq, ev, 2, NULL, 0, NULL) || pthread_create(&f->th, NULL, worker, f)) { if (f->fd >= 0) close(f->fd); if (f->kq >= 0) close(f->kq); pthread_mutex_destroy(&f->m); free(f); return NULL; }
++    if (f->kq < 0 || (s->net ? kevent(f->kq, ev, 1, NULL, 0, NULL) : f->fd < 0 || !s->bind.s_addr || bind(f->fd, (struct sockaddr *)&a, sizeof a) || kevent(f->kq, ev, 2, NULL, 0, NULL)) || pthread_create(&f->th, NULL, worker, f)) { if (f->fd >= 0) close(f->fd); if (f->kq >= 0) close(f->kq); pthread_mutex_destroy(&f->m); free(f); return NULL; }
+     f->threaded = 1; return f;
+ }
+ void fl_stop(friends_link *f) {
+     if (!f) return;
+-    fl_leave(f, 0); fl_leave(f, 1); __atomic_store_n(&f->stop, 1, __ATOMIC_RELEASE); wake(f); pthread_join(f->th, NULL); close(f->fd); close(f->kq); reset_flows(f);
++    fl_leave(f, 0); fl_leave(f, 1); __atomic_store_n(&f->stop, 1, __ATOMIC_RELEASE); wake(f); pthread_join(f->th, NULL); if (f->fd >= 0) close(f->fd); close(f->kq); reset_flows(f); memset_s(f->p, sizeof f->p, 0, sizeof f->p);
+     memset(&f->set, 0, sizeof f->set); pthread_mutex_destroy(&f->m); free(f);
+ }
++void fl_slot(friends_link *f, int i, const uint8_t key[32]) {
++    if (!f || !f->set.net || i < 0 || i >= FL_PEERS) return; LOCK; peer_down(f, i); peer *p = &f->p[i]; memset_s(p, sizeof *p, 0, sizeof *p); p->slot = i;
++    if (key) { p->on = 1; memcpy(p->key, key, 32); } wake(f); pthread_mutex_unlock(&f->m);
++}
++void fl_packet(friends_link *f, int i, const void *d, size_t n) { if (!f || !f->set.net || i < 0 || i >= FL_PEERS) return; LOCK; if (f->p[i].on) { receive_from(f, i, d, n); wake(f); } pthread_mutex_unlock(&f->m); }
+ int fl_state(friends_link *f) { if (!f) return 0; LOCK; int s = f->state; pthread_mutex_unlock(&f->m); return s; }
+ int fl_reason(friends_link *f) { if (!f) return 0; LOCK; int s = f->reason; pthread_mutex_unlock(&f->m); return s; }
+ uint32_t fl_open(friends_link *f, int ap) { if (!f) return FL_E_DISABLED; LOCK; if (f->state != FL_INIT) UNLOCK(FL_E_STATE); f->state = ap ? FL_AP : FL_STATION; f->reason = 0; changed(f); UNLOCK(0); }
+diff --git a/dm/host/friends_link.h b/dm/host/friends_link.h
+index 08003c9..a058aff 100644
+--- a/dm/host/friends_link.h
++++ b/dm/host/friends_link.h
+@@ -29,12 +29,13 @@ enum { FL_NONE, FL_INIT, FL_AP, FL_CREATED, FL_STATION, FL_CONNECTED };
+ #define FL_ERR(n) (((uint32_t)(n) << 9) | 203u)
+ enum { FL_E_STATE = FL_ERR(32), FL_E_CONNECT = FL_ERR(64), FL_E_NOTFOUND = FL_ERR(65), FL_E_TIMEOUT = FL_ERR(66), FL_E_REJECTED = FL_ERR(67), FL_E_INVALID = FL_ERR(96), FL_E_DISABLED = FL_ERR(22) };
+ enum { FL_PEERS = 7, FL_PAYLOAD = 4096, FL_PORT = 11477 };
+-typedef struct { uint8_t key[32]; struct sockaddr_in peers[FL_PEERS]; int npeers; struct in_addr bind; uint16_t port; } fl_setup;
++typedef struct { uint8_t key[32]; struct sockaddr_in peers[FL_PEERS]; int npeers; struct in_addr bind; uint16_t port; int net; } fl_setup;   // net: no socket here, friends come and go in slots (friends_internet.m)
+ typedef struct friends_link friends_link;
+ typedef struct {
+     void (*data)(void *, uint32_t src, uint16_t sport, uint32_t dst, uint16_t dport, const void *, size_t);   // a game datagram for this Mac
+     void (*event)(void *);                                                                                    // state or room changed
+     void (*sleep_ms)(int); void *opaque;
++    int (*send)(void *, int slot, const void *, size_t);                                                       // net only
+ } fl_hooks;
+ typedef struct { uint64_t rx, bad_source, bad_packet, bad_tag, replay, refused, tx, game_rx, copies_spare, dropped; } fl_stats;
+ int fl_load(const char *path, int allow_loopback, fl_setup *out, char *why, size_t whylen);   // 0, or -1 with the reason
+@@ -42,6 +43,8 @@ int fl_derive(const char *code, uint8_t key[32]);
+ int fl_private_ip(uint32_t ip, int allow_loopback);
+ friends_link *fl_start(const fl_setup *, const fl_hooks *);
+ void fl_stop(friends_link *);
++void fl_slot(friends_link *, int slot, const uint8_t key[32]);                // net: a friend is in this slot now, with this session's key; NULL: nobody
++void fl_packet(friends_link *, int slot, const void *, size_t);               // net: what that friend sent
+ uint32_t fl_open(friends_link *, int ap);
+ uint32_t fl_close(friends_link *, int ap);
+ int fl_state(friends_link *);
+diff --git a/dm/host/friends_path.c b/dm/host/friends_path.c
+new file mode 100644
+index 0000000..1b1acdd
+--- /dev/null
++++ b/dm/host/friends_path.c
+@@ -0,0 +1,314 @@
++#include "friends_path.h"
++#include <CommonCrypto/CommonCrypto.h>
++#include <arpa/inet.h>
++#include <fcntl.h>
++#include <ifaddrs.h>
++#include <mach/mach.h>
++#include <mach/mach_time.h>
++#include <mach/thread_policy.h>
++#include <net/if.h>
++#include <netdb.h>
++#include <pthread.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/event.h>
++#include <sys/socket.h>
++#include <time.h>
++#include <unistd.h>
++
++enum { P_PROBE = 1, P_ACK, P_DATA, P_PART, P_BYE };
++enum { PATHS = 16, PIECE = 1100, PARTS = 4, REPLAY = 2048, JOINS = 8, NETS = 24 };
++enum { TRIED_MS = 30000, NAMED = 40, PERMITS = 64, PERMITS_EACH = 8, ASKS = 8 };   // what one friend may make this Mac try
++enum { DEAD_MS = 1500, STUN_MS = 15000, RELAY_COST = 30 };
++typedef union { struct sockaddr s; struct sockaddr_in v4; struct sockaddr_in6 v6; } addr;
++typedef struct { addr to; int relay, home, far; uint64_t born, sent, ack; double rtt; int answered; } path;   // relay: out through this Mac's relay address; far: to the friend's
++typedef struct { uint32_t id; uint8_t have, of; uint16_t len[PARTS]; uint64_t at; uint8_t d[PARTS][PIECE]; } joining;
++typedef struct { int on; fc_keys k; uint64_t out, high, seen[REPLAY / 64]; path p[PATHS]; int np, best; uint64_t began, up_at, better_at, heard; int better, named, bye; uint32_t part; joining j[JOINS]; } session;
++typedef struct { uint8_t tid[12]; uint64_t sent; int tries, method; } txn;
++typedef struct { addr a; uint64_t asked, ok; uint16_t chan; int slot, asks, chan_asks; uint64_t chan_asked, chan_ok; uint8_t tid_p[12], tid_c[12]; } permit;
++struct friends_path {
++    pthread_mutex_t m; pthread_t th; int refs, fd[2], kq, stop, dirty; fp_hooks h; char stun_name[128], turn_name[128]; session s[FP_SLOTS]; fp_stats st;   // fd 0: IPv4, 1: IPv6
++    fp_cand mine[FP_CANDS]; int nmine; addr stun[2], turn[2]; txn bind[2]; addr mapped[2]; uint64_t ifs_at; struct in_addr ips[NETS], masks[NETS]; int nets;
++    int relay_on; char user[256], pass[256], realm[128], nonce[256]; uint8_t tkey[16]; int have_key, relay_up, relay_fam, relay_fail; addr relayed; txn alloc; uint64_t alloc_at, refresh_at; permit pm[PERMITS]; int npm; uint16_t chan_next;
++};
++static uint64_t us(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000; }
++static uint64_t ms(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000; }
++static int same_addr(const addr *a, const addr *b) {
++    if (a->s.sa_family != b->s.sa_family) return 0;
++    return a->s.sa_family == AF_INET ? a->v4.sin_port == b->v4.sin_port && a->v4.sin_addr.s_addr == b->v4.sin_addr.s_addr : a->v6.sin6_port == b->v6.sin6_port && !memcmp(&a->v6.sin6_addr, &b->v6.sin6_addr, 16);
++}
++static addr to_addr(const fp_cand *c) {
++    addr a; memset(&a, 0, sizeof a);
++    if (c->fam == 4) { a.v4.sin_len = sizeof a.v4; a.v4.sin_family = AF_INET; a.v4.sin_port = htons(c->port); memcpy(&a.v4.sin_addr, c->addr, 4); }
++    else { a.v6.sin6_len = sizeof a.v6; a.v6.sin6_family = AF_INET6; a.v6.sin6_port = htons(c->port); memcpy(&a.v6.sin6_addr, c->addr, 16); }
++    return a;
++}
++static fp_cand to_cand(int kind, const addr *a) {
++    fp_cand c; memset(&c, 0, sizeof c); c.kind = (uint8_t)kind;
++    if (a->s.sa_family == AF_INET) { c.fam = 4; c.port = ntohs(a->v4.sin_port); memcpy(c.addr, &a->v4.sin_addr, 4); } else { c.fam = 6; c.port = ntohs(a->v6.sin6_port); memcpy(c.addr, &a->v6.sin6_addr, 16); }
++    return c;
++}
++// Where a friend may ask this Mac to send: real internet addresses, and home addresses only on a network this Mac is itself on
++int fp_cand_ok(const fp_cand *c, const struct in_addr *ips, const struct in_addr *masks, int n, int loop) {
++    if (c->kind < 1 || c->kind > 3 || c->port < 1024) return 0;
++    if (c->fam == 4) {
++        uint32_t a; memcpy(&a, c->addr, 4); a = ntohl(a); int priv = a >> 24 == 10 || a >> 20 == 0xAC1 || a >> 16 == 0xC0A8;
++        if (a >> 24 == 127) return loop;
++        if (priv) { if (c->kind != 1) return 0; for (int i = 0; i < n; i++) { uint32_t m = ntohl(masks[i].s_addr), x = ntohl(ips[i].s_addr); if (m && (a & m) == (x & m) && a != (x | ~m) && a != (x & m)) return 1; } return 0; }
++        if (c->kind == 1 || a >> 24 == 0 || a >> 22 == 0x191 || a >> 16 == 0xA9FE || a >> 8 == 0xC00000 || a >> 8 == 0xC00002 || a >> 17 == (0xC6120000u >> 17) || a >> 8 == 0xC63364 || a >> 8 == 0xCB0071 || a >> 28 >= 14) return 0;
++        return 1;
++    }
++    if (c->fam != 6) return 0;
++    static const uint8_t lo[16] = {[15] = 1}; if (loop && !memcmp(c->addr, lo, 16)) return 1;
++    if (c->kind == 1 || (c->addr[0] & 0xE0) != 0x20) return 0;                                                          // global addresses only
++    if (c->addr[0] == 0x20 && (c->addr[1] == 0x02 || (c->addr[1] == 0x01 && !c->addr[2] && !c->addr[3]) || (c->addr[1] == 0x01 && c->addr[2] == 0x0d && c->addr[3] == 0xb8))) return 0;   // tunnels, examples
++    return 1;
++}
++
++// ---- the sockets ----
++static int out(friends_path *f, const addr *a, const void *b, size_t n) {
++    int v6 = a->s.sa_family == AF_INET6; if (f->fd[v6] < 0) return -1; ssize_t r = sendto(f->fd[v6], b, n, MSG_DONTWAIT, &a->s, a->s.sa_len); if (r > 0) f->st.tx++; return r > 0 ? 0 : -1;
++}
++
++// ---- STUN and TURN (RFC 8489, RFC 8656), the parts a game needs ----
++#define COOKIE 0x2112A442u
++typedef struct { uint8_t b[1500]; size_t n; } msg;
++static void m_begin(msg *m, uint16_t type, const uint8_t tid[12]) { uint16_t t = htons(type); uint32_t c = htonl(COOKIE); memset(m->b, 0, 20); memcpy(m->b, &t, 2); memcpy(m->b + 4, &c, 4); memcpy(m->b + 8, tid, 12); m->n = 20; }
++static void m_attr(msg *m, uint16_t type, const void *d, size_t n) { if (m->n + 8 + n > sizeof m->b) return; uint16_t t = htons(type), l = htons((uint16_t)n); memcpy(m->b + m->n, &t, 2); memcpy(m->b + m->n + 2, &l, 2); if (n) memcpy(m->b + m->n + 4, d, n); m->n += 4 + n; while (m->n & 3) m->b[m->n++] = 0; }
++static void m_len(msg *m, size_t extra) { uint16_t l = htons((uint16_t)(m->n - 20 + extra)); memcpy(m->b + 2, &l, 2); }
++static void m_addr(msg *m, uint16_t type, const addr *a) {
++    uint8_t v[20] = {0}; int v6 = a->s.sa_family == AF_INET6; v[1] = v6 ? 2 : 1; uint16_t p = (v6 ? a->v6.sin6_port : a->v4.sin_port) ^ htons(COOKIE >> 16); memcpy(v + 2, &p, 2);
++    memcpy(v + 4, v6 ? (const void *)&a->v6.sin6_addr : (const void *)&a->v4.sin_addr, v6 ? 16 : 4); for (int i = 0; i < (v6 ? 16 : 4); i++) v[4 + i] ^= m->b[4 + i]; m_attr(m, type, v, v6 ? 20 : 8);
++}
++static void m_sign(friends_path *f, msg *m) {
++    m_attr(m, 0x0006, f->user, strlen(f->user)); m_attr(m, 0x0014, f->realm, strlen(f->realm)); m_attr(m, 0x0015, f->nonce, strlen(f->nonce));
++    m_len(m, 24); uint8_t h[20]; CCHmac(kCCHmacAlgSHA1, f->tkey, 16, m->b, m->n, h); m_attr(m, 0x0008, h, 20); m_len(m, 0);
++}
++static const uint8_t *m_find(const uint8_t *b, size_t n, uint16_t want, size_t *len, size_t *at) {
++    for (size_t i = 20; i + 4 <= n;) { size_t t = (size_t)b[i] << 8 | b[i + 1], l = (size_t)b[i + 2] << 8 | b[i + 3]; if (i + 4 + l > n) return NULL; if (t == want) { *len = l; if (at) *at = i; return b + i + 4; } i += 4 + ((l + 3) & ~(size_t)3); }
++    return NULL;
++}
++static int m_mapped(const uint8_t *b, size_t n, uint16_t type, addr *o) {
++    size_t l; const uint8_t *v = m_find(b, n, type, &l, NULL); if (!v || l < 8) return 0; fp_cand c; memset(&c, 0, sizeof c); c.kind = 2;
++    c.fam = v[1] == 1 ? 4 : v[1] == 2 && l >= 20 ? 6 : 0; if (!c.fam) return 0; c.port = (uint16_t)((v[2] << 8 | v[3]) ^ (COOKIE >> 16)); for (int i = 0; i < (c.fam == 4 ? 4 : 16); i++) c.addr[i] = v[4 + i] ^ b[4 + i]; *o = to_addr(&c); return 1;
++}
++static int m_signed_ok(friends_path *f, const uint8_t *b, size_t n) {
++    size_t l, at; const uint8_t *v = m_find(b, n, 0x0008, &l, &at); if (!v || l != 20 || !f->have_key) return 0;
++    uint8_t c[1500], h[20]; if (at > sizeof c) return 0; memcpy(c, b, at); uint16_t len = htons((uint16_t)(at - 20 + 24)); memcpy(c + 2, &len, 2); CCHmac(kCCHmacAlgSHA1, f->tkey, 16, c, at, h); return fc_eq(h, v, 20);
++}
++static addr *turn_srv(friends_path *f) { return &f->turn[f->relay_fam]; }
++static void alloc_ask(friends_path *f, uint64_t now) {
++    if (!turn_srv(f)->s.sa_family) { f->relay_fam ^= 1; return; }
++    arc4random_buf(f->alloc.tid, 12); f->alloc.sent = now; f->alloc.tries++; msg m; m_begin(&m, 0x0003, f->alloc.tid); uint8_t udp[4] = {17}; m_attr(&m, 0x0019, udp, 4); if (f->have_key) m_sign(f, &m); else m_len(&m, 0); out(f, turn_srv(f), m.b, m.n);
++}
++static void refresh_ask(friends_path *f, uint32_t life) { uint8_t tid[12]; arc4random_buf(tid, 12); memcpy(f->alloc.tid, tid, 12); msg m; m_begin(&m, 0x0004, tid); uint32_t v = htonl(life); m_attr(&m, 0x000D, &v, 4); m_sign(f, &m); out(f, turn_srv(f), m.b, m.n); }
++static void permit_ask(friends_path *f, permit *p, uint64_t now) { arc4random_buf(p->tid_p, 12); p->asked = now; p->asks++; msg m; m_begin(&m, 0x0008, p->tid_p); m_addr(&m, 0x0012, &p->a); m_sign(f, &m); out(f, turn_srv(f), m.b, m.n); }
++static void chan_ask(friends_path *f, permit *p, uint64_t now) { arc4random_buf(p->tid_c, 12); p->chan_asked = now; p->chan_asks++; msg m; m_begin(&m, 0x0009, p->tid_c); uint8_t v[4] = {(uint8_t)(p->chan >> 8), (uint8_t)p->chan}; m_attr(&m, 0x000C, v, 4); m_addr(&m, 0x0012, &p->a); m_sign(f, &m); out(f, turn_srv(f), m.b, m.n); }
++static permit *permit_for(friends_path *f, const addr *a, int make, int slot) {
++    int mine = 0, at = -1; for (int i = 0; i < f->npm; i++) { if (f->pm[i].a.s.sa_family && same_addr(&f->pm[i].a, a)) return &f->pm[i]; if (!f->pm[i].a.s.sa_family) at = i; else mine += f->pm[i].slot == slot; }
++    if (!make || mine >= PERMITS_EACH || (at < 0 && f->npm >= PERMITS) || f->chan_next > 0x0FFE) return NULL; if (at < 0) at = f->npm++;
++    permit *p = &f->pm[at]; memset(p, 0, sizeof *p); p->a = *a; p->slot = slot; p->chan = (uint16_t)(0x4000 + f->chan_next++); return p;   // a channel number is never given to a second address
++}
++static void free_permits(friends_path *f, int slot) { for (int i = 0; i < f->npm; i++) if (f->pm[i].slot == slot) memset(&f->pm[i], 0, sizeof(permit)); }
++static int out_relay(friends_path *f, const addr *a, const void *b, size_t n) {
++    permit *p = f->relay_up ? permit_for(f, a, 0, -1) : NULL; if (!p || !p->ok || n > 1400) return -1;
++    if (p->chan_ok) { uint8_t c[1408]; c[0] = (uint8_t)(p->chan >> 8); c[1] = (uint8_t)p->chan; c[2] = (uint8_t)(n >> 8); c[3] = (uint8_t)n; memcpy(c + 4, b, n); return out(f, turn_srv(f), c, n + 4); }
++    uint8_t tid[12]; arc4random_buf(tid, 12); msg m; m_begin(&m, 0x0016, tid); m_addr(&m, 0x0012, a); m_attr(&m, 0x0013, b, n); m_len(&m, 0); return out(f, turn_srv(f), m.b, m.n);
++}
++
++// ---- this Mac's own addresses ----
++static void look_home(friends_path *f) {
++    struct ifaddrs *l = NULL; f->nets = 0; if (getifaddrs(&l)) return;
++    for (struct ifaddrs *i = l; i && f->nets < NETS; i = i->ifa_next) {
++        if (!i->ifa_addr || !i->ifa_netmask || i->ifa_addr->sa_family != AF_INET || !(i->ifa_flags & IFF_UP) || i->ifa_flags & IFF_POINTOPOINT || (i->ifa_flags & IFF_LOOPBACK && !f->h.loopback)) continue;
++        f->ips[f->nets] = ((struct sockaddr_in *)i->ifa_addr)->sin_addr; f->masks[f->nets++] = ((struct sockaddr_in *)i->ifa_netmask)->sin_addr;
++    }
++    freeifaddrs(l);
++}
++static void collect(friends_path *f) {   // builds the list to give friends; tells the manager when it changed
++    fp_cand c[FP_CANDS]; int n = 0; memset(c, 0, sizeof c); struct sockaddr_in me; socklen_t ml = sizeof me; memset(&me, 0, sizeof me); getsockname(f->fd[0], (struct sockaddr *)&me, &ml);
++    for (int i = 0; i < f->nets && n < 4; i++) { struct sockaddr_in s = {.sin_len = sizeof s, .sin_family = AF_INET, .sin_port = me.sin_port, .sin_addr = f->ips[i]}; addr a; memset(&a, 0, sizeof a); a.v4 = s; fp_cand x = to_cand(1, &a); if (fp_cand_ok(&x, f->ips, f->masks, f->nets, f->h.loopback)) c[n++] = x; }
++    for (int i = 1; i >= 0; i--) if (f->mapped[i].s.sa_family) { fp_cand x = to_cand(2, &f->mapped[i]); if (fp_cand_ok(&x, f->ips, f->masks, f->nets, f->h.loopback)) c[n++] = x; }
++    if (f->relay_up) c[n++] = to_cand(3, &f->relayed);
++    if (n != f->nmine || memcmp(c, f->mine, sizeof c)) { memcpy(f->mine, c, sizeof c); f->nmine = n; f->dirty = 1; }
++}
++static void let_go(friends_path *f) { if (__atomic_sub_fetch(&f->refs, 1, __ATOMIC_ACQ_REL)) return; pthread_mutex_destroy(&f->m); memset_s(f, sizeof *f, 0, sizeof *f); free(f); }
++static void *lookup(void *v) {   // names can take seconds; never on the game's thread
++    friends_path *f = v; pthread_setname_np("friends names");
++    for (int again = 0; !__atomic_load_n(&f->stop, __ATOMIC_ACQUIRE); again++) {
++        for (int k = 0; k < 2; k++) {
++            const char *name = k ? f->turn_name : f->stun_name; uint16_t port = k ? f->h.turn_port : f->h.stun_port; if (!*name) continue;
++            struct addrinfo q = {.ai_socktype = SOCK_DGRAM, .ai_family = AF_UNSPEC}, *r = NULL; if (getaddrinfo(name, NULL, &q, &r)) continue;
++            addr got[2]; memset(got, 0, sizeof got);
++            for (struct addrinfo *i = r; i; i = i->ai_next) { int v6 = i->ai_family == AF_INET6; if ((!v6 && i->ai_family != AF_INET) || got[v6].s.sa_family || i->ai_addrlen > sizeof(addr)) continue; memcpy(&got[v6], i->ai_addr, i->ai_addrlen); if (v6) got[v6].v6.sin6_port = htons(port); else got[v6].v4.sin_port = htons(port); }
++            freeaddrinfo(r); pthread_mutex_lock(&f->m); for (int i = 0; i < 2; i++) if (got[i].s.sa_family && (k ? !f->relay_up : 1)) { if (k) f->turn[i] = got[i]; else f->stun[i] = got[i]; } pthread_mutex_unlock(&f->m);
++        }
++        for (int i = 0; i < (again ? 600 : 50) && !__atomic_load_n(&f->stop, __ATOMIC_ACQUIRE); i++) usleep(100000);
++    }
++    let_go(f); return NULL;
++}
++
++// ---- sessions ----
++static int path_at(session *s, const addr *a, int relay) { for (int i = 0; i < s->np; i++) if (s->p[i].relay == relay && same_addr(&s->p[i].to, a)) return i; return -1; }
++static int path_add(session *s, const addr *a, int relay, int kind) {
++    int i = path_at(s, a, relay); if (i >= 0) { if (kind) { s->p[i].home = kind == 1; s->p[i].far = kind == 3; } return i; }
++    if (s->np == PATHS) { int worst = -1; for (int k = 0; k < PATHS; k++) if (k != s->best && !s->p[k].answered && (worst < 0 || s->p[k].born < s->p[worst].born)) worst = k; if (worst < 0) return -1; i = worst; } else i = s->np++;
++    memset(&s->p[i], 0, sizeof(path)); s->p[i].to = *a; s->p[i].relay = relay; s->p[i].home = kind == 1; s->p[i].far = kind == 3; s->p[i].born = ms(); return i;
++}
++static int put(friends_path *f, session *s, const path *p, uint8_t type, const void *d, size_t n) {
++    uint8_t b[FC_HEAD + PIECE + 16 + FC_TAG]; if (n > PIECE + 16) return -1; fc_seal(&s->k.out, type, ++s->out, d, n, b); size_t l = FC_HEAD + n + FC_TAG; return p->relay ? out_relay(f, &p->to, b, l) : out(f, &p->to, b, l);
++}
++static int fresh(session *s, uint64_t c) {   // each number once, in any order, across every path
++    if (!c) return 0;
++    if (c > s->high) { uint64_t by = c - s->high; if (by >= REPLAY) memset(s->seen, 0, sizeof s->seen); else for (uint64_t i = s->high + 1; i <= c; i++) s->seen[(i % REPLAY) >> 6] &= ~(1ull << (i & 63)); s->high = c; }
++    else if (s->high - c >= REPLAY || s->seen[(c % REPLAY) >> 6] >> (c & 63) & 1) return 0;
++    s->seen[(c % REPLAY) >> 6] |= 1ull << (c & 63); return 1;
++}
++static int alive(const path *p, uint64_t now) { return p->ack && now - p->ack < DEAD_MS; }
++static int relayed(const path *p) { return p->relay || p->far; }
++static double cost(const path *p) { return p->rtt + (relayed(p) ? RELAY_COST : 0) - (p->home ? 3 : 0); }
++static void choose(session *s, uint64_t now) {
++    int b = -1; for (int i = 0; i < s->np; i++) if (alive(&s->p[i], now) && (b < 0 || (relayed(&s->p[i]) != relayed(&s->p[b]) ? relayed(&s->p[b]) : cost(&s->p[i]) < cost(&s->p[b])))) b = i;
++    if (s->best >= 0 && alive(&s->p[s->best], now)) {   // stay put unless another is clearly better for a while: changing paths in a match is itself a wobble
++        path *c = &s->p[s->best]; int better = b >= 0 && b != s->best && ((relayed(c) && !relayed(&s->p[b])) || cost(&s->p[b]) < cost(c) * 0.8 - 3);
++        if (!better || s->better != b) { s->better = better ? b : -1; s->better_at = now; return; }
++        if (now - s->better_at < (relayed(c) && !relayed(&s->p[b]) ? 600u : 4000u)) return;
++    }
++    if (b != s->best) { if (s->best < 0 && b >= 0) s->up_at = now; s->best = b; s->better = -1; }
++}
++static void tick(friends_path *f, uint64_t now) {
++    if (now - f->ifs_at > 2000) { f->ifs_at = now; look_home(f); }
++    for (int i = 0; i < 2; i++) if (f->stun[i].s.sa_family) {
++        txn *t = &f->bind[i]; uint64_t every = t->tries && t->tries < 8 ? 400 : STUN_MS;
++        if (!t->sent || now - t->sent >= every) { if (t->tries >= 8 && t->tries < 100) { if (f->mapped[i].s.sa_family) memset(&f->mapped[i], 0, sizeof(addr)); } if (!t->tries || t->tries >= 8) arc4random_buf(t->tid, 12); t->sent = now; t->tries = t->tries >= 8 ? 1 : t->tries + 1; msg m; m_begin(&m, 0x0001, t->tid); m_len(&m, 0); out(f, &f->stun[i], m.b, m.n); }
++    }
++    if (f->relay_on) {
++        if (!f->relay_up) { if (f->relay_fail < 12 && (!f->alloc.sent || now - f->alloc.sent > 700)) { if (f->alloc.tries && f->alloc.tries % 4 == 0) { f->relay_fam ^= 1; f->have_key = 0; } f->relay_fail++; alloc_ask(f, now); } }
++        else {
++            if (now - f->refresh_at > 240000) { f->refresh_at = now - 235000; refresh_ask(f, 600); }   // again in 5 s until answered
++            if (now - f->alloc_at > 590000) { f->relay_up = 0; f->relay_fail = 0; f->npm = 0; f->chan_next = 0; f->have_key = 0; }
++            for (int i = 0; i < f->npm; i++) { permit *p = &f->pm[i]; if (!p->a.s.sa_family) continue; if (p->asks < ASKS && (!p->ok || now - p->ok > 200000) && now - p->asked > 1000) permit_ask(f, p, now); if (p->ok && p->chan_asks < ASKS && (!p->chan_ok || now - p->chan_ok > 400000) && now - p->chan_asked > 1500) chan_ask(f, p, now); }
++        }
++    }
++    for (int k = 0; k < FP_SLOTS; k++) { session *s = &f->s[k]; if (!s->on || s->bye) continue;
++        for (int i = s->np - 1; i >= 0; i--) if (i != s->best && !s->p[i].answered && now - s->p[i].born > TRIED_MS) { int l = s->np - 1; if (s->best == l) s->best = i; s->better = -1; s->p[i] = s->p[l]; s->np--; }   // an address that never answered is left alone
++        for (int i = 0; i < s->np; i++) { path *p = &s->p[i]; uint64_t age = now - p->born, every = i == s->best ? 250 : alive(p, now) ? 1000 : age < 15000 ? 200 : 5000;
++            if (now - p->sent >= every) { p->sent = now; uint64_t t = us(); put(f, s, p, P_PROBE, &t, 8); } }
++        choose(s, now); }
++    collect(f);
++}
++static void pass_part(session *s, const uint8_t *d, int n, uint8_t *whole, size_t *wn) {
++    uint32_t id; if (n < 9) return; memcpy(&id, d, 4); int at = d[4], of = d[5]; if (of < 2 || of > PARTS || at >= of || n - 8 > PIECE || (at < of - 1 && n - 8 != PIECE)) return;
++    joining *j = NULL, *old = &s->j[0]; for (int i = 0; i < JOINS; i++) { if (s->j[i].have && s->j[i].id == id && s->j[i].of == of) j = &s->j[i]; if (s->j[i].at < old->at) old = &s->j[i]; }
++    if (!j) { j = old; j->id = id; j->have = 0; j->of = (uint8_t)of; } j->at = us();
++    memcpy(j->d[at], d + 8, (size_t)n - 8); j->len[at] = (uint16_t)(n - 8); j->have |= (uint8_t)(1 << at); if (j->have != (1 << of) - 1) return;
++    size_t w = 0; for (int i = 0; i < of; i++) { memcpy(whole + w, j->d[i], j->len[i]); w += j->len[i]; } j->have = 0; *wn = w;
++}
++static void on_friend(friends_path *f, const uint8_t *b, size_t n, const addr *from, int relay, uint8_t *plain, int *slot, size_t *pn) {
++    if (n < FC_HEAD + FC_TAG || b[0] != 'D' || b[1] != 'I') { f->st.stranger++; return; }
++    int k = 0; while (k < FP_SLOTS && !(f->s[k].on && !memcmp(b + 4, &f->s[k].k.in.sid, 4))) k++; if (k == FP_SLOTS) { f->st.stranger++; return; }
++    session *s = &f->s[k]; uint64_t c, now = ms(); uint8_t d[FP_MAX]; if (n > FC_HEAD + PIECE + 16 + FC_TAG) { f->st.odd++; return; }
++    int l = fc_open(&s->k.in, b, n, d, &c); if (l < 0) { f->st.forged++; return; } if (!fresh(s, c)) { f->st.replay++; return; } f->st.rx++; s->heard = now;
++    if (b[2] == P_BYE) { s->bye = 1; s->best = -1; return; }
++    int i = path_at(s, from, relay); if (i < 0) { if ((!relay || f->relay_up) && s->named < NAMED) { s->named++; i = path_add(s, from, relay, 0); } if (i < 0) { if (b[2] != P_DATA && b[2] != P_PART) return; if (b[2] == P_DATA) { memcpy(plain, d, (size_t)l); *slot = k; *pn = (size_t)l; } else { pass_part(s, d, l, plain, pn); if (*pn) *slot = k; } return; } if (relay) permit_for(f, from, 1, k); }   // proven to be the friend, seen from somewhere new
++    path *p = &s->p[i];
++    switch (b[2]) {
++        case P_PROBE: if (l == 8) put(f, s, p, P_ACK, d, 8); else f->st.odd++; break;
++        case P_ACK: if (l == 8) { uint64_t t, u = us(); memcpy(&t, d, 8); if (t <= u && u - t < 3000000) { double r = (double)(u - t) / 1000; p->rtt = p->answered ? p->rtt * 0.85 + r * 0.15 : r; p->answered = 1; p->ack = now; choose(s, now); } } else f->st.odd++; break;
++        case P_DATA: memcpy(plain, d, (size_t)l); *slot = k; *pn = (size_t)l; break;
++        case P_PART: pass_part(s, d, l, plain, pn); if (*pn) *slot = k; break;
++        default: f->st.odd++;
++    }
++}
++static void on_stun(friends_path *f, const uint8_t *b, size_t n, const addr *from, uint8_t *plain, int *slot, size_t *pn) {
++    uint16_t type = (uint16_t)(b[0] << 8 | b[1]); size_t len = (size_t)b[2] << 8 | b[3]; uint32_t ck; memcpy(&ck, b + 4, 4); if (ntohl(ck) != COOKIE || len + 20 != n) { f->st.odd++; return; }
++    uint64_t now = ms(); const uint8_t *tid = b + 8;
++    for (int i = 0; i < 2; i++) if (type == 0x0101 && same_addr(from, &f->stun[i]) && !memcmp(tid, f->bind[i].tid, 12) && f->bind[i].tries) { addr a; if (m_mapped(b, n, 0x0020, &a)) f->mapped[i] = a; f->bind[i].tries = 100; return; }
++    if (!f->relay_on || !same_addr(from, turn_srv(f))) { f->st.stranger++; return; }
++    if (type == 0x0017 && f->relay_up) {   // data from a friend, through the relay
++        size_t l; const uint8_t *d; addr a; if (!m_mapped(b, n, 0x0012, &a) || !(d = m_find(b, n, 0x0013, &l, NULL))) return; on_friend(f, d, l, &a, 1, plain, slot, pn); return; }
++    size_t l; const uint8_t *v = m_find(b, n, 0x0009, &l, NULL); int err = (type & 0x0110) == 0x0110 && v && l >= 4 ? (v[2] & 7) * 100 + v[3] : 0;
++    int mine = !memcmp(tid, f->alloc.tid, 12); permit *pp = NULL, *pc = NULL; for (int i = 0; i < f->npm; i++) { if (!memcmp(tid, f->pm[i].tid_p, 12)) pp = &f->pm[i]; if (!memcmp(tid, f->pm[i].tid_c, 12)) pc = &f->pm[i]; }
++    if (!mine && !pp && !pc) return;
++    if (err == 401 || err == 438) {   // the relay's challenge, or a newer one
++        size_t rl, nl; const uint8_t *r = m_find(b, n, 0x0014, &rl, NULL), *no = m_find(b, n, 0x0015, &nl, NULL); if (!r || !no || rl >= sizeof f->realm || nl >= sizeof f->nonce || memchr(r, 0, rl) || memchr(no, 0, nl)) return;
++        if (err == 401 && f->have_key && mine && !f->relay_up) { f->relay_fail += 4; return; }   // the pass itself was refused
++        memcpy(f->realm, r, rl); f->realm[rl] = 0; memcpy(f->nonce, no, nl); f->nonce[nl] = 0;
++        char t[700]; int tn = snprintf(t, sizeof t, "%s:%s:%s", f->user, f->realm, f->pass); CC_MD5(t, (CC_LONG)tn, f->tkey); memset_s(t, sizeof t, 0, sizeof t); f->have_key = 1;   // MD5 is what the TURN standard fixes for this; the traffic inside has its own seal
++        if (mine && !f->relay_up) alloc_ask(f, now); else if (mine) refresh_ask(f, 600); else if (pp) permit_ask(f, pp, now); else if (pc) chan_ask(f, pc, now); return;
++    }
++    if (!m_signed_ok(f, b, n)) { f->st.forged++; return; }
++    if (mine && type == 0x0103) { addr a; if (!m_mapped(b, n, 0x0016, &a)) return; f->relayed = a; f->relay_up = 1; f->relay_fail = 0; f->alloc_at = f->refresh_at = now; f->npm = 0; f->chan_next = 0;
++        for (int k = 0; k < FP_SLOTS; k++) if (f->s[k].on) for (int i = 0, m = f->s[k].np; i < m; i++) { path *p = &f->s[k].p[i]; if (!p->relay && !p->home && p->to.s.sa_family == a.s.sa_family) { addr t = p->to; path_add(&f->s[k], &t, 1, 0); permit_for(f, &t, 1, k); } } }
++    else if (mine && type == 0x0104) f->alloc_at = f->refresh_at = now;
++    else if (mine && type == 0x0114) { f->relay_up = 0; f->relay_fail += 4; f->npm = 0; }
++    else if (pp && type == 0x0108) { pp->ok = now; pp->asks = 0; }
++    else if (pc && type == 0x0109) { pc->chan_ok = now; pc->chan_asks = 0; }
++}
++static void receive(friends_path *f, const uint8_t *b, size_t n, const addr *from, uint8_t *plain, int *slot, size_t *pn) {
++    if (n >= 20 && b[0] < 4) { on_stun(f, b, n, from, plain, slot, pn); return; }
++    if (f->relay_up && n >= 4 && b[0] >= 0x40 && b[0] <= 0x7F && same_addr(from, turn_srv(f))) { uint16_t ch = (uint16_t)(b[0] << 8 | b[1]); size_t l = (size_t)b[2] << 8 | b[3]; if (l + 4 > n) return; for (int i = 0; i < f->npm; i++) if (f->pm[i].chan == ch) { addr a = f->pm[i].a; on_friend(f, b + 4, l, &a, 1, plain, slot, pn); return; } return; }
++    on_friend(f, b, n, from, 0, plain, slot, pn);
++}
++static void *worker(void *v) {
++    friends_path *f = v; pthread_setname_np("friends path"); pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
++    mach_timebase_info_data_t tb; mach_timebase_info(&tb); double k = 1e3 * tb.denom / tb.numer;
++    thread_time_constraint_policy_data_t tc = {0, (uint32_t)(200 * k), (uint32_t)(1000 * k), 1}; thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&tc, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
++    uint8_t *b = malloc(65536), *plain = malloc(FP_MAX + PARTS * PIECE); uint64_t ticked = 0;
++    while (b && plain && !__atomic_load_n(&f->stop, __ATOMIC_ACQUIRE)) {
++        struct timespec ts = {0, 20000000}; struct kevent e[3]; kevent(f->kq, NULL, 0, e, 3, &ts);
++        for (int i = 0; i < 2; i++) for (int burst = 0; f->fd[i] >= 0 && burst < 256; burst++) {
++            addr from; memset(&from, 0, sizeof from); socklen_t fl = sizeof from; ssize_t n = recvfrom(f->fd[i], b, 65536, MSG_DONTWAIT, &from.s, &fl); if (n < 0) break; from.s.sa_len = (uint8_t)fl;
++            int slot = -1; size_t pn = 0; pthread_mutex_lock(&f->m); receive(f, b, (size_t)n, &from, plain, &slot, &pn); pthread_mutex_unlock(&f->m);
++            if (slot >= 0 && f->h.data) f->h.data(f->h.opaque, slot, plain, pn);
++        }
++        int dirty = 0; uint64_t now = ms(); if (now - ticked >= 20) { ticked = now; pthread_mutex_lock(&f->m); tick(f, now); dirty = f->dirty; f->dirty = 0; pthread_mutex_unlock(&f->m); }
++        if (dirty && f->h.cands) f->h.cands(f->h.opaque);
++    }
++    free(b); free(plain); return NULL;
++}
++friends_path *fp_start(const fp_hooks *h) {
++    friends_path *f = calloc(1, sizeof *f); if (!f) return NULL; f->h = *h; pthread_mutex_init(&f->m, NULL); f->fd[0] = f->fd[1] = -1; f->kq = kqueue();
++    snprintf(f->stun_name, sizeof f->stun_name, "%s", h->stun_host ? h->stun_host : ""); snprintf(f->turn_name, sizeof f->turn_name, "%s", h->turn_host ? h->turn_host : "");
++    for (int i = 0; i < 2; i++) {
++        int s = socket(i ? AF_INET6 : AF_INET, SOCK_DGRAM, 0), big = 1 << 20, voice = NET_SERVICE_TYPE_VO, one = 1; if (s < 0) continue; addr a; memset(&a, 0, sizeof a);
++        if (i) { setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one); a.v6.sin6_len = sizeof a.v6; a.v6.sin6_family = AF_INET6; a.v6.sin6_addr = f->h.loopback ? in6addr_loopback : in6addr_any; } else { a.v4.sin_len = sizeof a.v4; a.v4.sin_family = AF_INET; a.v4.sin_addr.s_addr = htonl(f->h.loopback ? INADDR_LOOPBACK : INADDR_ANY); }
++        setsockopt(s, SOL_SOCKET, SO_RCVBUF, &big, sizeof big); setsockopt(s, SOL_SOCKET, SO_NET_SERVICE_TYPE, &voice, sizeof voice); fcntl(s, F_SETFD, FD_CLOEXEC);
++        struct kevent ev; EV_SET(&ev, (uintptr_t)s, EVFILT_READ, EV_ADD, 0, 0, NULL); if (bind(s, &a.s, a.s.sa_len) || kevent(f->kq, &ev, 1, NULL, 0, NULL)) { close(s); continue; } f->fd[i] = s;
++    }
++    look_home(f); f->ifs_at = ms();
++    if (f->kq < 0 || (f->fd[0] < 0 && f->fd[1] < 0)) goto no;
++    pthread_t dns; f->refs = 2; if (pthread_create(&dns, NULL, lookup, f)) goto no;
++    pthread_detach(dns);   // holds its own reference: a name that takes long to look up never holds up the game
++    if (pthread_create(&f->th, NULL, worker, f)) { __atomic_store_n(&f->stop, 1, __ATOMIC_RELEASE); for (int i = 0; i < 2; i++) if (f->fd[i] >= 0) close(f->fd[i]); close(f->kq); let_go(f); return NULL; }
++    return f;
++no: for (int i = 0; i < 2; i++) if (f->fd[i] >= 0) close(f->fd[i]); close(f->kq); pthread_mutex_destroy(&f->m); free(f); return NULL;
++}
++void fp_stop(friends_path *f) {
++    if (!f) return; __atomic_store_n(&f->stop, 1, __ATOMIC_RELEASE); pthread_join(f->th, NULL); if (f->relay_up) refresh_ask(f, 0);
++    for (int i = 0; i < 2; i++) if (f->fd[i] >= 0) close(f->fd[i]); close(f->kq); let_go(f);
++}
++#define LOCK pthread_mutex_lock(&f->m)
++#define UNLOCK pthread_mutex_unlock(&f->m)
++int fp_candidates(friends_path *f, fp_cand o[FP_CANDS]) { if (!f) return 0; LOCK; int n = f->nmine; memcpy(o, f->mine, sizeof f->mine); UNLOCK; return n; }
++int fp_session(friends_path *f, int k, const fc_keys *key) { if (!f || k < 0 || k >= FP_SLOTS) return -1; LOCK; session *s = &f->s[k]; free_permits(f, k); memset_s(s, sizeof *s, 0, sizeof *s); s->k = *key; s->best = s->better = -1; s->began = ms(); s->on = 1; UNLOCK; return 0; }
++void fp_remote(friends_path *f, int k, const fp_cand *c, int n) {
++    if (!f || k < 0 || k >= FP_SLOTS || n < 0 || n > FP_CANDS) return; LOCK; session *s = &f->s[k];
++    if (s->on) for (int i = 0; i < n; i++) { if (!fp_cand_ok(&c[i], f->ips, f->masks, f->nets, f->h.loopback)) { f->st.odd++; continue; } addr a = to_addr(&c[i]); if (path_at(s, &a, 0) < 0 && ++s->named > NAMED) continue; path_add(s, &a, 0, c[i].kind);
++        if (c[i].kind != 1 && f->relay_up && a.s.sa_family == f->relayed.s.sa_family) { path_add(s, &a, 1, 0); permit_for(f, &a, 1, k); } }
++    UNLOCK;
++}
++void fp_drop(friends_path *f, int k) { if (!f || k < 0 || k >= FP_SLOTS) return; LOCK; session *s = &f->s[k]; if (s->on && s->best >= 0) for (int i = 0; i < 3; i++) put(f, s, &s->p[s->best], P_BYE, NULL, 0); free_permits(f, k); memset_s(s, sizeof *s, 0, sizeof *s); s->best = -1; UNLOCK; }   // goodbye: the friend need not wait to find out
++int fp_send(friends_path *f, int k, const void *d, size_t n) {
++    if (!f || k < 0 || k >= FP_SLOTS || n > PARTS * PIECE) return -1; LOCK; session *s = &f->s[k]; int r = -1;
++    if (s->on && s->best >= 0) { path *p = &s->p[s->best];
++        if (n <= PIECE) r = put(f, s, p, P_DATA, d, n);
++        else { uint8_t b[8 + PIECE]; uint32_t id = ++s->part; uint8_t of = (uint8_t)((n + PIECE - 1) / PIECE); r = 0; for (uint8_t i = 0; i < of; i++) { size_t at = (size_t)i * PIECE, l = n - at < PIECE ? n - at : PIECE; memset(b, 0, 8); memcpy(b, &id, 4); b[4] = i; b[5] = of; memcpy(b + 8, (const uint8_t *)d + at, l); r |= put(f, s, p, P_PART, b, 8 + l); } } }
++    UNLOCK; return r;
++}
++void fp_relay(friends_path *f, const char *u, const char *c) {
++    if (!f || strlen(u) >= sizeof f->user || strlen(c) >= sizeof f->pass || !*u || !*c) return; LOCK; strcpy(f->user, u); strcpy(f->pass, c); f->relay_on = 1; if (!f->relay_up) { f->relay_fail = 0; f->have_key = 0; memset(&f->alloc, 0, sizeof f->alloc); f->relay_fam = 0; } UNLOCK;
++}
++fp_state fp_get(friends_path *f, int k) { fp_state o = {.quiet_ms = UINT64_MAX}; if (!f || k < 0 || k >= FP_SLOTS) return o; LOCK; session *s = &f->s[k]; if (s->on && s->heard && !s->bye) o.quiet_ms = ms() - s->heard; if (s->on && s->best >= 0 && alive(&s->p[s->best], ms())) { path *p = &s->p[s->best]; o.up = 1; o.relay = relayed(p); o.v6 = p->to.s.sa_family == AF_INET6; o.home = p->home; o.rtt = p->rtt; o.since_ms = ms() - s->up_at; } UNLOCK; return o; }
++fp_stats fp_get_stats(friends_path *f) { fp_stats s = {0}; if (!f) return s; LOCK; s = f->st; UNLOCK; return s; }
+diff --git a/dm/host/friends_path.h b/dm/host/friends_path.h
+new file mode 100644
+index 0000000..13c4a1e
+--- /dev/null
++++ b/dm/host/friends_path.h
+@@ -0,0 +1,26 @@
++// The way to a friend over the internet: finds every address this Mac can be reached at, tries them all at once, and uses the best one that answers.
++// Home network, then direct internet (IPv6 or IPv4), and a relay only when asked for. Everything on the wire is sealed (friends_crypto.h).
++#pragma once
++#include "friends_crypto.h"
++#include <netinet/in.h>
++enum { FP_SLOTS = 7, FP_CANDS = 10, FP_MAX = 4096 + 128 };
++typedef struct { uint8_t kind, fam; uint16_t port; uint8_t addr[16]; } fp_cand;   // kind: 1 home network, 2 internet, 3 relay; port in host order
++typedef struct friends_path friends_path;
++typedef struct {
++    void (*data)(void *, int slot, const uint8_t *, size_t);   // a friend's packet, opened and checked
++    void (*cands)(void *);                                     // this Mac's addresses changed
++    void *opaque; const char *stun_host; uint16_t stun_port; const char *turn_host; uint16_t turn_port; int loopback;
++} fp_hooks;
++typedef struct { int up, relay, v6, home; double rtt; uint64_t since_ms, quiet_ms; } fp_state;   // quiet: since anything genuine came from the friend, UINT64_MAX when nothing has, or they said goodbye
++typedef struct { uint64_t rx, tx, stranger, forged, replay, odd; } fp_stats;
++friends_path *fp_start(const fp_hooks *);
++void fp_stop(friends_path *);
++int fp_candidates(friends_path *, fp_cand out[FP_CANDS]);
++int fp_session(friends_path *, int slot, const fc_keys *);       // a new session in this slot (replaces any)
++void fp_remote(friends_path *, int slot, const fp_cand *, int n);
++void fp_drop(friends_path *, int slot);
++int fp_send(friends_path *, int slot, const void *, size_t);     // 0 when sent
++void fp_relay(friends_path *, const char *user, const char *credential);
++fp_state fp_get(friends_path *, int slot);
++fp_stats fp_get_stats(friends_path *);
++int fp_cand_ok(const fp_cand *, const struct in_addr *ips, const struct in_addr *masks, int n, int loopback);
+diff --git a/dm/host/friends_screen.h b/dm/host/friends_screen.h
+new file mode 100644
+index 0000000..2dbec33
+--- /dev/null
++++ b/dm/host/friends_screen.h
+@@ -0,0 +1,11 @@
++#pragma once
++#import <AppKit/AppKit.h>
++@interface DmFriendsView : NSView
++@property (copy) void (^onClose)(void);
++- (void)buttons:(uint64_t)b axes:(const int32_t *)a now:(NSTimeInterval)t;
++- (void)press:(uint64_t)b;
++- (void)type:(NSString *)s;
++- (void)swallow:(uint64_t)b;
++- (void)refresh;
++- (NSString *)spoken;
++@end
+diff --git a/dm/host/friends_screen.m b/dm/host/friends_screen.m
+new file mode 100644
+index 0000000..7815829
+--- /dev/null
++++ b/dm/host/friends_screen.m
+@@ -0,0 +1,152 @@
++// The friends screen over the game: the player's code, friends, requests. Driven by any controller, or the keyboard. Opens with both sticks pressed in together, or Command-F.
++#import <AppKit/AppKit.h>
++#include "friends_internet.h"
++#include "friends_crypto.h"
++#include "friends_screen.h"
++#include "dm_input.h"
++enum { B_A = 1, B_B = 2, B_X = 4, B_Y = 8, B_LS = 16, B_RS = 32, B_PLUS = 1 << 10, B_LEFT = 1 << 12, B_UP = 1 << 13, B_RIGHT = 1 << 14, B_DOWN = 1 << 15 };
++typedef enum { R_ME, R_ADD, R_REQUEST, R_FRIEND, R_NAME } row_kind;
++typedef struct { row_kind kind; int at; } row;
++typedef enum { M_LIST, M_CODE, M_NAME, M_REMOVE } mode;
++static NSColor *hex(uint32_t h) { return [NSColor colorWithSRGBRed:(h >> 16 & 255) / 255.0 green:(h >> 8 & 255) / 255.0 blue:(h & 255) / 255.0 alpha:1]; }
++#define INK hex(0xE6EEF1)
++#define SOFT hex(0x9FB3BC)
++#define ACCENT hex(0x7CC4CF)
++#define PANEL hex(0x1B242A)
++#define TILE hex(0x26323A)
++#define LINE hex(0x3B4B54)
++#define WARN hex(0xE8B36B)
++static const char *CODE_KEYS[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "M", "N", "P", "Q", "R", "S", "T", "V", "W", "X", "Y", "Z"};
++static const char *NAME_KEYS[] = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", " "};
++static NSString *pretty(const char *c) { return strlen(c) == 16 ? [NSString stringWithFormat:@"%.4s-%.4s-%.4s-%.4s", c, c + 4, c + 8, c + 12] : @(c); }
++static NSString *called(const fi_friend *f) { return f->name[0] ? @(f->name) : pretty(f->code); }
++// Two friends with one name are told apart by the end of their codes: a name is only what someone calls themself
++static NSString *shown(const fi_view *v, const fi_friend *f) { for (int i = 0; i < v->nfriends; i++) if (strcmp(v->friends[i].code, f->code) && f->name[0] && ![@(v->friends[i].name) caseInsensitiveCompare:@(f->name)]) return [NSString stringWithFormat:@"%s (%s)", f->name, f->code + 12]; return called(f); }
++static NSString *status(const fi_friend *f, NSColor **col) {
++    *col = SOFT; if (f->up) { *col = f->rtt < 60 ? ACCENT : f->rtt < 110 ? INK : WARN; return [NSString stringWithFormat:@"%@, %.0f ms%@", f->rtt < 60 ? @"Great connection" : f->rtt < 110 ? @"Good connection" : @"Slow connection", f->rtt, f->relay ? @", through the relay" : @""]; }
++    if (f->asked) return @"Waiting for them to accept"; if (f->ready) { *col = INK; return @"Connecting"; } if (f->on) { *col = INK; return @"Playing. Not in Local Wireless"; } return @"Offline";
++}
++@implementation DmFriendsView { fi_view _v; row _rows[FI_FRIENDS + FI_REQUESTS + 4]; int _n, _sel, _top, _key; mode _mode; NSMutableString *_text; NSString *_say; char _remove[17]; uint64_t _down; NSTimeInterval _repeat; unsigned _seen; }
++- (instancetype)initWithFrame:(NSRect)r { if ((self = [super initWithFrame:r])) { _text = [NSMutableString string]; self.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; self.wantsLayer = YES; [self refresh]; if (!_v.name[0] && _v.code[0]) { _mode = M_NAME; _say = @"Choose the name your friends will see."; } } return self; }
++- (BOOL)isFlipped { return YES; }
++- (BOOL)acceptsFirstResponder { return YES; }
++- (BOOL)isAccessibilityElement { return YES; }
++- (NSAccessibilityRole)accessibilityRole { return NSAccessibilityGroupRole; }
++- (NSString *)accessibilityLabel { return @"Friends"; }
++- (NSString *)accessibilityValue { return [self spoken]; }
++- (void)refresh {
++    char keep[17] = ""; row_kind kk = R_ME; if (_n && _sel < _n) { row r = _rows[_sel]; kk = r.kind; if (kk == R_FRIEND) strlcpy(keep, _v.friends[r.at].code, 17); if (kk == R_REQUEST) strlcpy(keep, _v.requests[r.at].code, 17); }
++    fi_snapshot(&_v); _n = 0; _rows[_n++] = (row){R_ME, 0}; _rows[_n++] = (row){R_ADD, 0}; for (int i = 0; i < _v.nrequests; i++) _rows[_n++] = (row){R_REQUEST, i};
++    for (int p = 0; p < 4; p++) for (int i = 0; i < _v.nfriends; i++) { fi_friend *f = &_v.friends[i]; int o = f->up || f->ready ? 0 : f->on ? 1 : f->asked ? 3 : 2; if (o == p) _rows[_n++] = (row){R_FRIEND, i}; }
++    _rows[_n++] = (row){R_NAME, 0}; int at = -1; for (int i = 0; i < _n; i++) if (_rows[i].kind == kk && (kk == R_FRIEND ? !strcmp(_v.friends[_rows[i].at].code, keep) : kk == R_REQUEST ? !strcmp(_v.requests[_rows[i].at].code, keep) : 1)) { at = i; break; }
++    if (at >= 0) _sel = at; if (_sel >= _n) _sel = _n - 1; self.needsDisplay = YES;
++}
++- (NSString *)spoken {
++    if (_mode == M_CODE) return [NSString stringWithFormat:@"Enter a friend code: %@", _text]; if (_mode == M_NAME) return [NSString stringWithFormat:@"Your name: %@", _text]; if (_mode == M_REMOVE) return @"Remove this friend?"; NSColor *c; row r = _rows[_sel];
++    switch (r.kind) { case R_ME: return [NSString stringWithFormat:@"Your friend code: %@. Copy", pretty(_v.code)]; case R_ADD: return @"Add a friend"; case R_REQUEST: return [NSString stringWithFormat:@"Friend request from %s, code %@", _v.requests[r.at].name, pretty(_v.requests[r.at].code)]; case R_FRIEND: return [NSString stringWithFormat:@"%@, %@", called(&_v.friends[r.at]), status(&_v.friends[r.at], &c)]; default: return @"Change your name"; }
++}
++- (void)tell:(NSString *)s { _say = s; self.needsDisplay = YES; }
++- (void)paste { NSString *s = [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString]; char c[17]; if (_mode == M_LIST) { _mode = M_CODE; [_text setString:@""]; } if (_mode == M_CODE) { if (s && s.length < 80 && fc_clean_code(s.UTF8String, c)) { [_text setString:@(c)]; [self tell:nil]; } else [self tell:@"What you copied is not a friend code."]; } else if (_mode == M_NAME && s) { [_text setString:[s substringToIndex:MIN(s.length, 24u)]]; [self tell:nil]; } }
++- (void)type:(NSString *)s {
++    if (_mode == M_CODE) { NSString *u = s.uppercaseString; if ([u isEqual:@"O"]) u = @"0"; if ([u isEqual:@"I"] || [u isEqual:@"L"]) u = @"1"; if (_text.length < 16 && u.length == 1) for (int i = 0; i < 32; i++) if ([u isEqual:@(CODE_KEYS[i])]) { [_text appendString:u]; break; } }
++    else if (_mode == M_NAME && _text.length < 24 && s.length == 1 && [s characterAtIndex:0] >= 32 && [s characterAtIndex:0] != 127) [_text appendString:s];
++    [self tell:nil];
++}
++- (void)rub { if (_text.length) [_text deleteCharactersInRange:[_text rangeOfComposedCharacterSequenceAtIndex:_text.length - 1]]; [self tell:nil]; }
++- (void)done {
++    if (_mode == M_CODE) { char why[128] = ""; if (fi_add(_text.UTF8String, why, sizeof why)) { [self tell:@(why)]; return; } _mode = M_LIST; [self tell:@"Added. They need to accept, or add your code too."]; }
++    else if (_mode == M_NAME) { if (fi_rename(_text.UTF8String)) { [self tell:@"Type a name first."]; return; } _mode = M_LIST; [self tell:@"Saved. The game itself shows it from the next start."]; }
++    [_text setString:@""]; [self refresh];
++}
++- (void)press:(uint64_t)b {   // newly pressed buttons
++    if (!b) return;
++    if (_mode == M_REMOVE) { if (b & B_A) { fi_remove(_remove); _mode = M_LIST; [self tell:@"Removed."]; } else if (b & B_B) { _mode = M_LIST; [self tell:nil]; } [self refresh]; return; }
++    if (_mode == M_CODE || _mode == M_NAME) {
++        int n = _mode == M_CODE ? 32 : 64, w = 16, x = _key % w, y = _key / w, h = n / w;
++        if (b & B_LEFT) x = (x + w - 1) % w; if (b & B_RIGHT) x = (x + 1) % w; if (b & B_UP) y = (y + h - 1) % h; if (b & B_DOWN) y = (y + 1) % h; _key = y * w + x; if (_key >= n) _key = n - 1;
++        if (b & B_A) [self type:@(_mode == M_CODE ? CODE_KEYS[_key] : NAME_KEYS[_key])]; if (b & B_Y) [self paste]; if (b & B_X) [self rub]; if (b & B_PLUS) [self done]; else if (b & B_B) { _mode = M_LIST; [_text setString:@""]; [self tell:nil]; } self.needsDisplay = YES; return;
++    }
++    if (b & B_B) { if (self.onClose) self.onClose(); return; }
++    if (b & B_UP && _sel) _sel--; if (b & B_DOWN && _sel < _n - 1) _sel++; row r = _rows[_sel];
++    if (b & B_A) switch (r.kind) {
++        case R_ME: if (_v.code[0]) { [NSPasteboard.generalPasteboard clearContents]; [NSPasteboard.generalPasteboard setString:pretty(_v.code) forType:NSPasteboardTypeString]; [self tell:@"Copied. Send it to your friend."]; } break;
++        case R_ADD: if (fi_running()) { _mode = M_CODE; _key = 0; [_text setString:@""]; [self tell:nil]; } break;
++        case R_REQUEST: fi_accept(_v.requests[r.at].code); [self tell:@"You are friends now."]; [self refresh]; break;
++        case R_FRIEND: [self tell:_v.friends[r.at].asked ? @"They need to accept, or add your code too." : @"To play, both choose Local Wireless in Smash. One of you makes a room."]; break;
++        case R_NAME: if (fi_running()) { _mode = M_NAME; _key = 0; [_text setString:@(_v.name)]; [self tell:nil]; } break; }
++    if (b & B_X) { if (r.kind == R_REQUEST) { fi_decline(_v.requests[r.at].code); [self tell:@"Declined."]; [self refresh]; } else if (r.kind == R_FRIEND) { strlcpy(_remove, _v.friends[r.at].code, 17); _mode = M_REMOVE; [self tell:nil]; } }
++    if (b & (B_UP | B_DOWN)) NSAccessibilityPostNotification(self, NSAccessibilityValueChangedNotification); self.needsDisplay = YES;
++}
++- (void)buttons:(uint64_t)b axes:(const int32_t *)a now:(NSTimeInterval)t {   // the state 60 times a second; held directions repeat
++    if (a[0] < -18000) b |= B_LEFT; if (a[0] > 18000) b |= B_RIGHT; if (a[1] > 18000) b |= B_UP; if (a[1] < -18000) b |= B_DOWN; uint64_t dirs = B_LEFT | B_RIGHT | B_UP | B_DOWN, fresh = b & ~_down;
++    if (fresh & dirs) _repeat = t + 0.35; else if (b & dirs && t > _repeat) { fresh |= b & dirs; _repeat = t + 0.08; } _down = b; [self press:fresh]; if (fi_changes() != _seen) { _seen = fi_changes(); [self refresh]; }
++}
++- (void)swallow:(uint64_t)b { _down = b; }   // held when the screen opened: not presses of its own
++- (void)keyDown:(NSEvent *)e {
++    BOOL cmd = (e.modifierFlags & NSEventModifierFlagCommand) != 0; NSString *c = e.charactersIgnoringModifiers; BOOL typing = _mode == M_CODE || _mode == M_NAME; if (cmd) { if ([c isEqual:@"v"]) [self paste]; else if ([c isEqual:@"c"] && _mode == M_LIST) { _sel = 0; [self press:B_A]; } return; }
++    switch (e.keyCode) { case 53: [self press:B_B]; return; case 36: case 76: if (typing) [self done]; else [self press:B_A]; return; case 51: case 117: if (typing) [self rub]; else [self press:B_X]; return; case 123: [self press:B_LEFT]; return; case 124: [self press:B_RIGHT]; return; case 125: [self press:B_DOWN]; return; case 126: [self press:B_UP]; return; }
++    if (typing) [self type:e.characters];
++}
++- (BOOL)performKeyEquivalent:(NSEvent *)e { if ((e.modifierFlags & NSEventModifierFlagCommand) && ([e.charactersIgnoringModifiers isEqual:@"v"] || [e.charactersIgnoringModifiers isEqual:@"c"])) { [self keyDown:e]; return YES; } return [super performKeyEquivalent:e]; }
++- (void)mouseDown:(NSEvent *)e { (void)e; }   // the game behind gets no touch while this is up
++- (void)text:(NSString *)s at:(NSPoint)p size:(CGFloat)z color:(NSColor *)c weight:(NSFontWeight)w max:(CGFloat)max {
++    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.lineBreakMode = NSLineBreakByTruncatingTail; [s drawInRect:NSMakeRect(p.x, p.y, max, z * 1.4) withAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:z weight:w], NSForegroundColorAttributeName: c, NSParagraphStyleAttributeName: ps}];
++}
++static CGFloat width(NSString *s, CGFloat z, NSFontWeight w) { return ceil([s sizeWithAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:z weight:w]}].width); }
++- (void)hints:(NSArray<NSArray *> *)h right:(CGFloat)x y:(CGFloat)y scale:(CGFloat)k {   // [button, what it does], from the right
++    for (NSArray *p in h.reverseObjectEnumerator) { CGFloat z = 14 * k, w = width(p[1], z, NSFontWeightRegular); x -= w; [self text:p[1] at:NSMakePoint(x, y) size:z color:SOFT weight:NSFontWeightRegular max:w + 4]; CGFloat bw = MAX(20 * k, width(p[0], 12 * k, NSFontWeightBold) + 12 * k); x -= bw + 7 * k; [LINE setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, y - 1 * k, bw, 20 * k) xRadius:10 * k yRadius:10 * k] fill]; [self text:p[0] at:NSMakePoint(x + (bw - width(p[0], 12 * k, NSFontWeightBold)) / 2, y + 1 * k) size:12 * k color:INK weight:NSFontWeightBold max:bw]; x -= 18 * k; }
++}
++- (void)drawRect:(NSRect)dirty {
++    (void)dirty; NSRect b = self.bounds; CGFloat k = MAX(0.6, MIN(b.size.width / 1280, b.size.height / 720)); [[NSColor colorWithWhite:0 alpha:0.55] setFill]; NSRectFillUsingOperation(b, NSCompositingOperationSourceOver);
++    CGFloat W = 760 * k, H = 600 * k; NSRect p = NSMakeRect((b.size.width - W) / 2, (b.size.height - H) / 2, W, H); [PANEL setFill]; [[NSBezierPath bezierPathWithRoundedRect:p xRadius:18 * k yRadius:18 * k] fill]; CGFloat x = p.origin.x + 32 * k, y = p.origin.y + 26 * k, w = W - 64 * k, R = x + w;
++    [self text:_mode == M_CODE ? @"Add a friend" : _mode == M_NAME ? @"Your name" : @"Friends" at:NSMakePoint(x, y) size:28 * k color:INK weight:NSFontWeightSemibold max:w / 2];
++    NSString *st = _v.online ? @"Online" : fi_running() ? @"Connecting" : @"Not set up"; CGFloat sw = width(st, 14 * k, NSFontWeightMedium); [self text:st at:NSMakePoint(R - sw, y + 10 * k) size:14 * k color:_v.online ? ACCENT : WARN weight:NSFontWeightMedium max:sw + 4]; y += 54 * k;
++    NSString *say = _say ?: (_v.note[0] ? @(_v.note) : nil); CGFloat foot = p.origin.y + H - 44 * k; if (say) [self text:say at:NSMakePoint(x, foot - 32 * k) size:15 * k color:WARN weight:NSFontWeightMedium max:w];
++    if (_mode == M_CODE || _mode == M_NAME) {
++        [TILE setFill]; NSRect f = NSMakeRect(x, y, w, 62 * k); [[NSBezierPath bezierPathWithRoundedRect:f xRadius:10 * k yRadius:10 * k] fill]; NSMutableString *t = [NSMutableString string]; if (_mode == M_CODE) for (int i = 0; i < 16; i++) { if (i && i % 4 == 0) [t appendString:@"-"]; [t appendString:i < (int)_text.length ? [_text substringWithRange:NSMakeRange(i, 1)] : @"_"]; } else [t appendFormat:@"%@|", _text];
++        NSFont *mono = _mode == M_CODE ? [NSFont monospacedSystemFontOfSize:28 * k weight:NSFontWeightMedium] : [NSFont systemFontOfSize:28 * k weight:NSFontWeightMedium]; [t drawAtPoint:NSMakePoint(x + 20 * k, y + 13 * k) withAttributes:@{NSFontAttributeName: mono, NSForegroundColorAttributeName: INK}]; y += 92 * k;
++        int n = _mode == M_CODE ? 32 : 64; CGFloat c = w / 16; for (int i = 0; i < n; i++) { NSRect q = NSInsetRect(NSMakeRect(x + i % 16 * c, y + i / 16 * c * 1.1, c, c * 1.1), 3 * k, 3 * k); [(i == _key ? ACCENT : TILE) setFill]; [[NSBezierPath bezierPathWithRoundedRect:q xRadius:7 * k yRadius:7 * k] fill]; NSString *s = @(_mode == M_CODE ? CODE_KEYS[i] : NAME_KEYS[i]); if ([s isEqual:@" "]) s = @"␣"; CGFloat sx = width(s, 18 * k, NSFontWeightMedium); [self text:s at:NSMakePoint(NSMidX(q) - sx / 2, NSMidY(q) - 11 * k) size:18 * k color:i == _key ? PANEL : INK weight:NSFontWeightMedium max:sx + 6]; }
++        y += n / 16 * c * 1.1 + 22 * k; [self text:@"You can also type on the keyboard, or paste with Command-V." at:NSMakePoint(x, y) size:15 * k color:SOFT weight:NSFontWeightRegular max:w]; [self hints:@[@[@"A", @"Pick"], @[@"X", @"Erase"], @[@"Y", @"Paste"], @[@"+", @"Done"], @[@"B", @"Back"]] right:R y:foot scale:k]; return;
++    }
++    CGFloat rh = 58 * k; int fit = (int)((foot - 40 * k - y) / rh); if (_sel < _top) _top = _sel; if (_sel >= _top + fit) _top = _sel - fit + 1; if (_top > MAX(0, _n - fit)) _top = MAX(0, _n - fit);
++    for (int i = _top; i < _n && i < _top + fit; i++, y += rh) {
++        row r = _rows[i]; NSRect q = NSMakeRect(x, y, w, rh - 8 * k); BOOL on = i == _sel; [TILE setFill]; NSBezierPath *bp = [NSBezierPath bezierPathWithRoundedRect:q xRadius:10 * k yRadius:10 * k]; [bp fill]; if (on) { [ACCENT setStroke]; bp.lineWidth = 2.5 * k; [bp stroke]; }
++        NSString *l = @"", *s = @""; NSColor *sc = SOFT; CGFloat dot = 0;
++        switch (r.kind) {
++            case R_ME: l = @"Your friend code"; s = _v.code[0] ? pretty(_v.code) : @""; sc = ACCENT; break; case R_ADD: l = @"Add a friend"; break; case R_NAME: l = @"Your name"; s = _v.name[0] ? @(_v.name) : @"Not chosen"; break;
++            case R_REQUEST: l = [NSString stringWithFormat:@"%s wants to be friends", _v.requests[r.at].name[0] ? _v.requests[r.at].name : "Someone"]; s = pretty(_v.requests[r.at].code); sc = WARN; break;
++            case R_FRIEND: l = shown(&_v, &_v.friends[r.at]); s = status(&_v.friends[r.at], &sc); dot = 22 * k; [(_v.friends[r.at].on || _v.friends[r.at].up ? ACCENT : LINE) setFill]; [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x + 18 * k, NSMidY(q) - 5 * k, 10 * k, 10 * k)] fill]; break; }
++        CGFloat z = 17 * k, sz = r.kind == R_ME ? 18 * k : 14 * k, sv = width(s, sz, NSFontWeightMedium); [self text:l at:NSMakePoint(x + 18 * k + dot, NSMidY(q) - 11 * k) size:z color:INK weight:NSFontWeightMedium max:w - sv - 60 * k - dot]; [self text:s at:NSMakePoint(R - 18 * k - sv, NSMidY(q) - sz * 0.65) size:sz color:sc weight:NSFontWeightMedium max:sv + 4];
++    }
++    if (_mode == M_REMOVE) { NSString *nm = pretty(_remove); for (int i = 0; i < _v.nfriends; i++) if (!strcmp(_v.friends[i].code, _remove)) nm = called(&_v.friends[i]); [self text:[NSString stringWithFormat:@"Remove %@? Neither of you will see the other.", nm] at:NSMakePoint(x, foot - 32 * k) size:15 * k color:WARN weight:NSFontWeightMedium max:w]; [self hints:@[@[@"A", @"Remove"], @[@"B", @"Keep"]] right:R y:foot scale:k]; return; }
++    row r = _rows[_sel]; NSMutableArray *h = [NSMutableArray array]; if (r.kind == R_ME) [h addObject:@[@"A", @"Copy"]]; if (r.kind == R_ADD || r.kind == R_NAME) [h addObject:@[@"A", r.kind == R_ADD ? @"Add" : @"Change"]]; if (r.kind == R_REQUEST) { [h addObject:@[@"A", @"Accept"]]; [h addObject:@[@"X", @"Decline"]]; } if (r.kind == R_FRIEND) { [h addObject:@[@"A", @"How to play"]]; [h addObject:@[@"X", @"Remove"]]; } [h addObject:@[@"B", @"Back to game"]]; [self hints:h right:R y:foot scale:k];
++}
++@end
++
++// ---- over the game ----
++#ifndef FRIENDS_SCREEN_TEST
++void *front_window(void); int dm_friends_boot(void); uint64_t dm_input_now(void); int dm_input_held(void);
++static DmFriendsView *g_view; static NSTimer *g_timer; static NSTextField *g_toast; static NSTimeInterval g_both; static unsigned g_seen_changes; static int g_requests_seen;
++static void hide(void) { if (!g_view) return; NSView *v = g_view; g_view = nil; NSWindow *w = v.window; [v removeFromSuperview]; [w makeFirstResponder:w.contentView]; dm_input_hold(0); }
++void dm_friends_show(void) {
++    NSWindow *w = (__bridge NSWindow *)front_window(); if (!w || dm_input_held()) return; if (g_view) { hide(); return; }
++    dm_input_hold(1); g_view = [[DmFriendsView alloc] initWithFrame:w.contentView.bounds]; g_view.onClose = ^{ hide(); }; uint64_t b; int32_t a[4]; dm_input_peek(&b, a); [g_view swallow:b]; [w.contentView addSubview:g_view]; [w makeFirstResponder:g_view];
++}
++static void toast(NSString *s) {
++    NSWindow *w = (__bridge NSWindow *)front_window(); if (!w || g_view) return; [g_toast removeFromSuperview]; NSTextField *t = [NSTextField labelWithString:s]; t.font = [NSFont systemFontOfSize:15 weight:NSFontWeightMedium]; t.textColor = INK; t.drawsBackground = YES; t.backgroundColor = PANEL; t.alignment = NSTextAlignmentCenter; [t sizeToFit]; NSRect r = t.frame; r.size.width += 32; r.size.height += 12; r.origin = NSMakePoint((w.contentView.bounds.size.width - r.size.width) / 2, w.contentView.bounds.size.height - r.size.height - 18); t.frame = r; t.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin; t.wantsLayer = YES; t.layer.cornerRadius = 8; [w.contentView addSubview:t]; g_toast = t; dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [t removeFromSuperview]; });
++}
++static void tick(void) {
++    NSTimeInterval t = NSProcessInfo.processInfo.systemUptime;
++    if (g_view) { uint64_t b; int32_t a[4]; dm_input_peek(&b, a); [g_view buttons:b axes:a now:t]; return; }
++    uint64_t b = dm_input_now(); if ((b & (B_LS | B_RS)) == (B_LS | B_RS)) { if (!g_both) g_both = t; else if (g_both > 0 && t - g_both > 0.5) { g_both = -1; dm_friends_show(); } } else g_both = 0;
++    if (fi_changes() != g_seen_changes) { g_seen_changes = fi_changes(); static fi_view v; fi_snapshot(&v); for (int i = 0; i < v.nfriends; i++) if (v.friends[i].up) return;   // nothing is drawn over a match
++        if (v.nrequests > g_requests_seen) toast([NSString stringWithFormat:@"Friend request from %s (%s). Press both sticks to open Friends.", v.requests[v.nrequests - 1].name[0] ? v.requests[v.nrequests - 1].name : "someone", v.requests[v.nrequests - 1].code + 12]); g_requests_seen = v.nrequests; }
++}
++@interface DmFriendsMenu : NSObject @end
++@implementation DmFriendsMenu - (void)open:(id)s { (void)s; dm_friends_show(); } @end
++void dm_friends_menu(void *bar) {   // front_mac.m, once the window is up
++    if (!dm_friends_boot()) return; static DmFriendsMenu *m; m = [DmFriendsMenu new]; NSMenu *f = [[NSMenu alloc] initWithTitle:@"Friends"]; [f addItemWithTitle:@"Show Friends" action:@selector(open:) keyEquivalent:@"f"].target = m; [[(__bridge NSMenu *)bar addItemWithTitle:@"Friends" action:nil keyEquivalent:@""] setSubmenu:f];
++    g_timer = [NSTimer timerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *t) { (void)t; tick(); }]; g_timer.tolerance = 0.004; [NSRunLoop.mainRunLoop addTimer:g_timer forMode:NSRunLoopCommonModes];
++    fi_view v; fi_snapshot(&v); if (!v.name[0] && v.code[0]) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ toast(@"Friends is ready. Press both sticks, or Command-F, to open it."); });
++}
++#endif
+diff --git a/dm/host/front_mac.m b/dm/host/front_mac.m
+index 329dcc3..709fc4a 100644
+--- a/dm/host/front_mac.m
++++ b/dm/host/front_mac.m
+@@ -1801,6 +1801,7 @@ void front_run(void (*guest)(void)) {
+         [[bar addItemWithTitle:@"Window" action:nil keyEquivalent:@""] setSubmenu:wm];
+         [wm addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"].keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
+         NSApp.mainMenu = bar;
++        void dm_friends_menu(void *); dm_friends_menu((__bridge void *)bar);
+         const char *fs = getenv("DM_FULLSCREEN");   // 1 (or any value but 0): start in fullscreen; 0, the settings window's Window, or unset: a window
+         if (fs && strcmp(fs, "0")) {
+             g_fs_asked = CACurrentMediaTime(); g_fs_starting = 1;   // front_screen_settling: the display link waits for fullscreen
+@@ -1906,6 +1907,7 @@ void front_progress(const char *title, long done, long total) {
+ }
+ 
+ // Offline HTML pages (web_apple.m): the page's view covers the game view and resizes with it; it is the first responder while shown (front_web_show), and the game view again after
++void *front_window(void) { return (__bridge void *)g_win; }
+ void front_web_attach(NSView *box) { NSView *v = g_win.contentView; box.frame = v.bounds; [v addSubview:box]; }
+ void front_web_detach(NSView *box) { if (box.window && box.window.firstResponder != box.window.contentView) [box.window makeFirstResponder:box.window.contentView]; }
+ 
+diff --git a/dm/host/hle_account.c b/dm/host/hle_account.c
+index d212e07..675dc3c 100644
+--- a/dm/host/hle_account.c
++++ b/dm/host/hle_account.c
+@@ -42,7 +42,7 @@ static Result open_user(UserHandle *h, const Uid *uid) {
+     h->v[0] = uid->v[0]; h->v[1] = uid->v[1]; h->v[2] = s->token; g_last_user = i;
+     pthread_mutex_unlock(&g_account_lock); return RES_OK;
+ }
+-HLE_FORCE("_ZN2nn7account10InitializeEv", "connects to the local account service", void, h_acc_Init, void) { (void)dm_account_users(); }
++HLE_FORCE("_ZN2nn7account10InitializeEv", "connects to the local account service", void, h_acc_Init, void) { int dm_friends_boot(void); (void)dm_friends_boot(); (void)dm_account_users(); }
+ HLE_FORCE("_ZN2nn7account13ListOpenUsersEPiPNS0_3UidEi", "only users with a live account session", Result, h_acc_ListOpen, int *n, Uid *out, int max) {
+     pthread_mutex_lock(&g_account_lock); *n = list_users(out, max, opened_users()); pthread_mutex_unlock(&g_account_lock); return RES_OK;
+ }
+diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
+index 903b5cb..66d2c3b 100644
+--- a/dm/host/hle_friends_link.c
++++ b/dm/host/hle_friends_link.c
+@@ -1,7 +1,8 @@
+ // nn::ldn over the friends link (friends_link.c). Off unless DM_FRIENDS=1 and the player's friends file is valid: then every call answers as the offline host does.
+ #include "hle.h"
+ #include "hle_net.h"
+-#include "friends_link.h"
++#include "friends_internet.h"
++#include <mach-o/dyld.h>
+ #include <pthread.h>
+ #ifndef FL_LOOPBACK
+ #define FL_LOOPBACK 0   // 1 only in a build for testing on one Mac; never shipped
+@@ -10,6 +11,19 @@ void dm_guest_sleep_ns(int64_t ns);
+ static friends_link *g_fl; static uint64_t g_fl_events[16];
+ static pthread_rwlock_t g_fl_l = PTHREAD_RWLOCK_INITIALIZER;   // written by Initialize / Finalize only
+ int dm_friends_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_FRIENDS"); on = e && !strcmp(e, "1"); } return on; }
++void dm_friends_log(const char *what) { LOG("friends: %s", what); }
++// Once, early: the player's friends, when this copy was patched for it (friends.cfg in the app). 1 when friends are on in this copy
++int dm_friends_boot(void) {
++    static pthread_once_t once = PTHREAD_ONCE_INIT; void boot(void); if (!dm_friends_on()) return 0; pthread_once(&once, boot); return 1;
++}
++static int g_net;   // friends.cfg is there: online friends; else the older private-network file
++void boot(void) {
++    char cfg[1200], dir[1200]; const char *c = getenv("DM_FRIENDS_CFG"), *d = getenv("DM_FRIENDS_DIR"), *h = getenv("HOME");
++    if (c && *c) snprintf(cfg, sizeof cfg, "%s", c); else { char exe[1024]; uint32_t n = sizeof exe; *cfg = 0; if (!_NSGetExecutablePath(exe, &n)) { char *s = strrchr(exe, '/'); if (s) *s = 0; snprintf(cfg, sizeof cfg, "%s/../Resources/dm/friends.cfg", exe); } }
++    if (d && *d) snprintf(dir, sizeof dir, "%s", d); else snprintf(dir, sizeof dir, "%s/Library/Application Support/Docked/Friends", h ? h : "");
++    if (access(cfg, R_OK)) { LOG("friends: not set up for online play"); return; } g_net = 1; int r = fi_start(cfg, dir, FL_LOOPBACK); LOG("friends: online play %s", r ? "could not start" : "on");
++    if (!r && !getenv("DM_NICK")) { static fi_view v; fi_snapshot(&v); if (v.name[0]) { size_t n = strlen(v.name); if (n > 31) { n = 31; while (n && ((unsigned char)v.name[n] & 0xC0) == 0x80) n--; v.name[n] = 0; } setenv("DM_NICK", v.name, 1); } }
++}
+ static void fl_sleep(int ms) { dm_guest_sleep_ns((int64_t)ms * 1000000); }
+ static void fl_event(void *o) { (void)o; for (int i = 0; i < 16; i++) { uint64_t id = __atomic_load_n(&g_fl_events[i], __ATOMIC_ACQUIRE); if (id && !hle_signal_system_event_binding(id)) __atomic_compare_exchange_n(&g_fl_events[i], &id, 0, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED); } }
+ static void fl_data(void *o, uint32_t s, uint16_t sp, uint32_t d, uint16_t dp, const void *p, size_t n) { (void)o; dm_sk_deliver(s, sp, d, dp, p, n); }
+@@ -24,18 +38,20 @@ uint32_t dm_friends_address(void) { USE(fl_address(g_fl), 0); }
+ int dm_friends_send(uint16_t sp, uint32_t d, uint16_t dp, const void *p, size_t n) { USE(fl_send(g_fl, sp, d, dp, p, n), -1); }
+ static Result fl_init(void) {
+     if (!dm_friends_on()) return RES_FAIL;
+-    Result r = 0; pthread_rwlock_wrlock(&g_fl_l);
+-    if (!g_fl) {
++    dm_friends_boot(); Result r = 0; pthread_rwlock_wrlock(&g_fl_l);
++    if (!g_fl && g_net) {
++        fl_setup s = {.net = 1}; fl_hooks k = {fl_data, fl_event, fl_sleep, NULL, fi_send}; g_fl = fi_running() ? fl_start(&s, &k) : NULL; if (g_fl) { fi_open(g_fl); LOG("friends: Local Wireless open to friends"); } else r = FL_E_DISABLED;
++    } else if (!g_fl) {
+         char path[1024], why[160]; const char *f = getenv("DM_FRIENDS_FILE"), *h = getenv("HOME"); fl_setup s;
+         if (f && *f) snprintf(path, sizeof path, "%s", f); else snprintf(path, sizeof path, "%s/Dockside/friends.txt", h ? h : "");
+         if (fl_load(path, FL_LOOPBACK, &s, why, sizeof why)) { LOG("friends link: off, %s", why); r = FL_E_DISABLED; }
+-        else { fl_hooks k = {fl_data, fl_event, fl_sleep, NULL}; g_fl = fl_start(&s, &k); memset(&s, 0, sizeof s);
++        else { fl_hooks k = {fl_data, fl_event, fl_sleep, NULL, NULL}; g_fl = fl_start(&s, &k); memset(&s, 0, sizeof s);
+             if (!g_fl) { LOG("friends link: off, this Mac's private address or port is not available"); r = FL_ERR(16); } else LOG("friends link: on, listed friends only"); }
+     }
+     pthread_rwlock_unlock(&g_fl_l); trace("initialize", r); return r;
+ }
+ static void fl_fini(void) { if (!dm_friends_on()) return; pthread_rwlock_wrlock(&g_fl_l); friends_link *f = g_fl; g_fl = NULL; pthread_rwlock_unlock(&g_fl_l); for (int i = 0; i < 16; i++) __atomic_store_n(&g_fl_events[i], 0, __ATOMIC_RELEASE);
+-    if (f) { fl_stats t = fl_get_stats(f); LOG("friends link: off; in %llu out %llu, refused: strangers %llu wrong code %llu broken %llu repeats %llu other %llu", t.rx, t.tx, t.bad_source, t.bad_tag, t.bad_packet, t.replay, t.refused); fl_stop(f); } }
++    if (f) { fl_stats t = fl_get_stats(f); LOG("friends link: off; in %llu out %llu, refused: strangers %llu wrong code %llu broken %llu repeats %llu other %llu", t.rx, t.tx, t.bad_source, t.bad_tag, t.bad_packet, t.replay, t.refused); if (g_net) { fl_leave(f, 0); fl_leave(f, 1); fi_close(); } fl_stop(f); } }
+ #define LDN(m, name, ...) HLE_FORCE(m, "local wireless: the friends link when the player turned it on, else cut", Result, name, __VA_ARGS__)
+ LDN("_ZN2nn3ldn10InitializeEv", h_ldn_Init, void) { return fl_init(); }
+ HLE_FORCE("_ZN2nn3ldn8FinalizeEv", "local wireless: closes the friends link", void, h_ldn_Fini, void) { fl_fini(); }
+diff --git a/dm/host/hle_hid.c b/dm/host/hle_hid.c
+index 885d82a..67150a8 100644
+--- a/dm/host/hle_hid.c
++++ b/dm/host/hle_hid.c
+@@ -72,6 +72,8 @@ void dm_input_hold(int on) {
+     if (atomic_exchange(&g_hold, on) == on) return;
+     atomic_store(&g_latch, 0); atomic_store(&g_sc_latch, 0); for (int p = 0; p < DM_PLAYERS; p++) atomic_store(&g_pad_latch[p], 0);   // a press made for the applet is not the game's
+ }
++int dm_input_held(void) { return atomic_load(&g_hold); }
++uint64_t dm_input_now(void) { uint64_t b = atomic_load(&g_btn) | atomic_load(&g_sc_btn); for (int p = 0; p < DM_PLAYERS; p++) b |= atomic_load(&g_pad_btn[p]); return b & 0xffffull; }   // what is held now, taking nothing from anyone
+ void dm_input_peek(uint64_t *buttons, int32_t axes[4]) {
+     uint64_t b = atomic_load(&g_btn) | atomic_load(&g_sc_btn) | atomic_exchange(&g_peek_latch, 0), k = atomic_load(&g_axes), c = atomic_load(&g_sc_axes);
+     for (int i = 0; i < 4; i++) axes[i] = pick(ax(k, i), ax(c, i));
+diff --git a/dm/host/tests/fi_player.m b/dm/host/tests/fi_player.m
+new file mode 100644
+index 0000000..ebd1f18
+--- /dev/null
++++ b/dm/host/tests/fi_player.m
+@@ -0,0 +1,24 @@
++// Test only: one player, driven by lines on standard input. fi_player <config> <folder>
++#include "../friends_internet.h"
++#import <Foundation/Foundation.h>
++#include <pthread.h>
++#include <unistd.h>
++void dm_friends_log(const char *s) { printf("log %s\n", s); fflush(stdout); }
++static _Atomic int got; static char last[4096]; static friends_link *L;
++static void data(void *o, uint32_t s, uint16_t sp, uint32_t d, uint16_t dp, const void *p, size_t n) { got++; if (n < sizeof last) { memcpy(last, p, n); last[n] = 0; } }
++static void nap(int m) { usleep((useconds_t)m * 1000); }
++int main(int c, char **v) { @autoreleasepool {
++    int r = fi_start(v[1], v[2], 1); printf("start %d\n", r); fflush(stdout); char l[512]; fl_security sec = {.mode = 1, .size = 4, .pass = "abcd"}; fl_user u = {.name = "P"}; fl_config cf = {.intent.local_id = 7, .max_nodes = 4, .version = 1};
++    while (fgets(l, sizeof l, stdin)) { l[strcspn(l, "\n")] = 0; char *a = strchr(l, ' '); if (a) *a++ = 0; char why[128] = "";
++        if (!strcmp(l, "view")) { fi_view w; fi_snapshot(&w); NSMutableArray *f = [NSMutableArray array], *q = [NSMutableArray array]; for (int i = 0; i < w.nfriends; i++) [f addObject:@{@"code": @(w.friends[i].code), @"name": @(w.friends[i].name), @"on": @(w.friends[i].on), @"ready": @(w.friends[i].ready), @"up": @(w.friends[i].up), @"relay": @(w.friends[i].relay), @"asked": @(w.friends[i].asked)}]; for (int i = 0; i < w.nrequests; i++) [q addObject:@{@"code": @(w.requests[i].code), @"name": @(w.requests[i].name)}];
++            NSData *j = [NSJSONSerialization dataWithJSONObject:@{@"online": @(w.online), @"code": @(w.code), @"name": @(w.name), @"note": @(w.note), @"friends": f, @"requests": q, @"got": @(got), @"last": @(last), @"seen": @(L ? fl_friends_seen(L) : 0), @"state": @(fl_state(L))} options:0 error:nil]; printf("%.*s\n", (int)j.length, (char *)j.bytes); }
++        else if (!strcmp(l, "add")) { r = fi_add(a, why, sizeof why); printf("%d %s\n", r, why); }
++        else if (!strcmp(l, "accept")) { fi_accept(a); puts("ok"); } else if (!strcmp(l, "decline")) { fi_decline(a); puts("ok"); } else if (!strcmp(l, "remove")) { fi_remove(a); puts("ok"); }
++        else if (!strcmp(l, "rename")) printf("%d\n", fi_rename(a));
++        else if (!strcmp(l, "open")) { fl_setup s = {.net = 1}; fl_hooks h = {data, NULL, nap, NULL, fi_send}; L = fl_start(&s, &h); fi_open(L); printf("%d\n", L != NULL); }
++        else if (!strcmp(l, "close")) { fl_leave(L, 0); fl_leave(L, 1); fi_close(); fl_stop(L); L = NULL; puts("ok"); }
++        else if (!strcmp(l, "host")) { r = (int)fl_open(L, 1); r |= (int)fl_create(L, &cf, &sec, &u, NULL); printf("%d\n", r); }
++        else if (!strcmp(l, "join")) { r = (int)fl_open(L, 0); fl_network n[8]; int k = 0; fl_scan(L, n, &k, 8, NULL); if (!r && k) r = (int)fl_connect(L, n, &sec, &u, 1); printf("%d %d\n", r, k); }
++        else if (!strcmp(l, "say")) { int n = atoi(a); for (int i = 0; i < n; i++) { char m[64]; snprintf(m, 64, "packet %d", i); fl_send(L, 100, FL_NET + 255, 100, m, strlen(m)); usleep(8000); } puts("ok"); }
++        else if (!strcmp(l, "quit")) break; fflush(stdout); }
++    fi_stop(); return 0; } }
+diff --git a/dm/host/tests/t_friends_internet.py b/dm/host/tests/t_friends_internet.py
+new file mode 100644
+index 0000000..7ffd0e5
+--- /dev/null
++++ b/dm/host/tests/t_friends_internet.py
+@@ -0,0 +1,96 @@
++#!/usr/bin/env python3
++"""Friends over the internet, whole: real players in separate processes, the real meeting point (friends-meeting/core.js) and a relay. t_friends_internet.py <fi_player> <friends-meeting folder>"""
++import base64, json, os, re, stat, subprocess, sys, tempfile, time
++PLAYER, MEET = sys.argv[1], sys.argv[2]; HERE = os.path.dirname(os.path.abspath(__file__)); T = tempfile.mkdtemp(); npass = nfail = 0
++def ok(c, m):
++    global npass, nfail
++    if c: npass += 1
++    else: nfail += 1; print('FAIL', m, flush=True)
++import socket
++def free():
++    s = socket.socket(); s.bind(('127.0.0.1', 0)); p = s.getsockname()[1]; s.close(); return p
++circle = os.urandom(32); PORT = free()
++def meeting(c=circle, port=PORT, turn='user1:secret1'):
++    p = subprocess.Popen(['node', MEET + '/test/server.mjs', str(port), base64.b64encode(c).decode(), turn], stdout=subprocess.PIPE, text=True); p.stdout.readline(); return p
++TP = free(); turn = subprocess.Popen([sys.executable, '-I', HERE + '/turn_server.py', 'user1', 'secret1', str(TP)], stdout=subprocess.PIPE, text=True); turn.stdout.readline()
++def cfg(c=circle, url=None, name='cfg'):
++    p = f'{T}/{name}'; open(p, 'w').write(f'meet={url or f"ws://127.0.0.1:{PORT}/meet"}\ncircle={base64.b64encode(c).decode()}\n'); return p
++class P:
++    def __init__(s, name, conf=None): s.folder = f'{T}/{name}'; s.conf = conf or cfg(); s.up()
++    def up(s): s.p = subprocess.Popen([PLAYER, s.conf, s.folder], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(T + '/err', 'a'), text=True, env={**os.environ, 'DM_FRIENDS_STUN_PORT': str(TP)}); s.started = s.p.stdout.readline().strip()
++    def do(s, x):
++        s.p.stdin.write(x + '\n'); s.p.stdin.flush()
++        while True:
++            l = s.p.stdout.readline()
++            if not l: raise SystemExit('a player stopped: ' + open(T + '/err').read()[-2000:])
++            if not l.startswith('log '): return l.strip()
++    def view(s): return json.loads(s.do('view'))
++    def till(s, f, t=8):
++        e = time.time() + t
++        while time.time() < e:
++            v = s.view()
++            if f(v): return v
++            time.sleep(0.05)
++        return None
++    def kill(s): s.p.kill(); s.p.wait()
++    def quit(s): s.p.stdin.write('quit\n'); s.p.stdin.flush(); s.p.wait(5)
++f0 = lambda v: v['friends'][0] if v['friends'] else {}
++m = meeting(); a, b = P('a'), P('b'); va, vb = a.till(lambda v: v['online']), b.till(lambda v: v['online']); ok(va and vb and va['code'] != vb['code'], 'both in'); A, B = va['code'], vb['code']
++ok(a.do('rename  Ana ') == '0' and b.do('rename Ben') == '0', 'names'); ok(stat.S_IMODE(os.stat(a.folder).st_mode) == 0o700 and all(stat.S_IMODE(os.stat(a.folder + '/' + f).st_mode) == 0o600 for f in os.listdir(a.folder)), 'kept private')
++for t, w in (('add', 'nothing'), ('add xyz', 'too short'), (f'add {A}', 'own code')): ok(a.do(t + ' ').startswith('-1'), w)
++# adding: needs both
++ok(a.do('add ' + B[:4].lower() + '-' + B[4:8] + ' ' + B[8:]).startswith('0'), 'add by typing'); ok(a.do('add ' + B).startswith('-1'), 'twice'); v = b.till(lambda v: v['requests']); ok(v and v['requests'][0] == {'code': A, 'name': 'Ana'}, 'request shown'); ok(f0(a.view())['asked'] == 1 and not f0(a.view())['on'], 'not a friend yet')
++b.do('accept ' + A); ok(a.till(lambda v: f0(v).get('on')) and b.till(lambda v: f0(v).get('on')), 'both see each other'); ok(f0(a.view())['asked'] == 0 and not b.view()['requests'], 'settled')
++# Local Wireless
++ok(not f0(a.view())['up'], 'no connection before Local Wireless'); a.do('open'); time.sleep(0.5); ok(not f0(a.view())['up'], 'one side is not enough'); t0 = time.time(); b.do('open'); ok(a.till(lambda v: f0(v)['up'] and v['seen']) and b.till(lambda v: f0(v)['up'] and v['seen']), 'connected'); print('connected in %.1f s' % (time.time() - t0)); ok(not f0(a.view())['relay'], 'directly'); ok(f0(a.view())['name'] == 'Ben', 'friend\'s name')
++ok(a.do('host') == '0', 'host'); ok(b.do('join') == '0 1', 'join'); n = a.view()['got']; b.do('say 300'); v = a.till(lambda v: v['got'] >= n + 300, 3); ok(v and v['got'] == n + 300 and v['last'] == 'packet 299', '300 game packets')
++# the meeting point goes away in the middle of a match
++m.kill(); m.wait(); time.sleep(1); n = a.view()['got']; b.do('say 300'); v = a.till(lambda v: v['got'] >= n + 300, 3); ok(v and a.view()['state'] == 3, 'the match does not notice'); m = meeting(); ok(a.till(lambda v: v['online'], 40) and b.till(lambda v: v['online'], 40), 'both come back'); time.sleep(2); n = a.view()['got']; b.do('say 200'); ok(a.till(lambda v: v['got'] >= n + 200, 3), 'and it still does not')
++# a friend's game crashes and comes back
++b.kill(); b.up(); ok(b.till(lambda v: v['online']), 'back'); ok(b.view()['code'] == B and f0(b.view())['code'] == A, 'same code and friends'); b.do('open'); ok(b.till(lambda v: f0(v)['up'] and v['seen'], 25) and a.till(lambda v: f0(v)['up'] and v['seen'], 25), 'connected again'); a.do('close'); a.do('open'); ok(a.till(lambda v: f0(v)['up'] and v['seen'], 25), 'and after closing Local Wireless'); a.do('host'); ok(b.do('join') == '0 1', 'and can join')
++# saying goodbye is quick: no waiting to find out
++b.do('close'); t0 = time.time(); ok(a.till(lambda v: not f0(v)['up'], 2), 'closing Local Wireless shows at once'); b.do('open'); ok(a.till(lambda v: f0(v)['up'] and v['seen'], 6), 'and reopening connects quickly'); print('reconnected in %.1f s' % (time.time() - t0))
++j = json.load(open(a.folder + '/friends.json')); ok(len(base64.b64decode(j['friends'][0]['key'])) == 65, 'the friend\'s whole key is remembered')
++# removing
++a.do('remove ' + B); ok(b.till(lambda v: not f0(v)['on'], 5) and b.till(lambda v: not f0(v)['up'], 15), 'removed: gone for the other'); time.sleep(1); ok(not a.view()['friends'], 'list empty')
++# declining
++c = P('c'); c.till(lambda v: v['online']); c.do('rename Cy'); C = c.view()['code']; c.do('add ' + A); ok(a.till(lambda v: v['requests']), 'asked'); a.do('decline ' + C); c.kill(); c.up(); c.till(lambda v: v['online']); time.sleep(1); ok(not a.view()['requests'] and not f0(c.view())['on'], 'declined: not asked again'); a.do('add ' + C); ok(c.till(lambda v: f0(v)['on']), 'a change of mind works')
++# a request waits for a player who is away
++d = P('d'); d.till(lambda v: v['online']); D = d.view()['code']; d.quit(); c.do('add ' + D); time.sleep(.5); d.up(); ok(d.till(lambda v: v['requests']), 'request waited')
++# two who add each other at once need no request
++e, g = P('e'), P('g'); E, G = e.till(lambda v: v['online'])['code'], g.till(lambda v: v['online'])['code']; e.do('add ' + G); g.do('add ' + E); ok(e.till(lambda v: f0(v)['on']) and g.till(lambda v: f0(v)['on']), 'both added'); time.sleep(.3); ok(not e.view()['requests'] and not g.view()['requests'], 'nothing left to answer')
++# the same player twice, a wrong circle, no set-up, a damaged code
++g2 = P('g'); ok(g2.till(lambda v: v['online']) and g.till(lambda v: 'another copy' in v['note']), 'newest copy wins, the other says why'); g2.kill()
++x = P('x', cfg(os.urandom(32), name='c2')); ok(not x.till(lambda v: v['online'], 3), 'another circle is refused'); x.kill()
++for s, w in (('meet=http://example.com/\n', 'http'), ('meet=ws://example.com/meet\n', 'unencrypted'), ('meet=wss://u:p@example.com/meet\n', 'a password in it'), ('', 'empty')):
++    open(T + '/c3', 'w').write(s + 'circle=' + base64.b64encode(circle).decode() + '\n'); x = P('x3', T + '/c3'); ok(x.started == 'start -1' and 'not set up' in x.view()['note'], 'set-up refused: ' + w); x.kill()
++d.kill(); k = open(d.folder + '/identity', 'rb').read(); open(d.folder + '/identity', 'wb').write(b'x' * 97); d.up(); ok(d.started == 'start -1' and 'damaged' in d.view()['note'] and open(d.folder + '/identity', 'rb').read() == b'x' * 97, 'damaged code: kept and said'); d.kill(); open(d.folder + '/identity', 'wb').write(k); os.chmod(d.folder + '/identity', 0o644); d.up(); ok(d.started == 'start -1', 'readable by others: refused'); d.kill()
++for q in (a, b, c, e, g): q.kill()
++# a lying meeting point: it swaps keys, replays, and sends nonsense
++liar = open(T + '/liar.mjs', 'w'); liar.write("""
++import { serve } from '%s/test/server.mjs'; import { Meeting } from '%s/core.js'; import { webcrypto as wc } from 'node:crypto';
++const orig = Meeting.prototype.pass; const mode = process.argv[4]; const old = [];
++const k = await wc.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']); const pub = Buffer.from(await wc.subtle.exportKey('raw', k.publicKey)).toString('base64');
++Meeting.prototype.pass = function (ws, m) {
++  try { const b = JSON.parse(m.body);
++    if (mode === 'key' && b.k === 'hi') { b.key = pub; m.body = JSON.stringify(b); }
++    if (mode === 'eph' && b.k === 'hi') { b.eph = pub; m.body = JSON.stringify(b); }
++    if (mode === 'cand' && b.k === 'c') { const d = Buffer.from(b.d, 'base64'); d[25] ^= 1; b.d = d.toString('base64'); m.body = JSON.stringify(b); }
++    if (mode === 'replay') { old.push([ws, { ...m }]); if (b.k === 'hi') { const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n, g = Buffer.from(b.sig, 'base64'), v = (N - BigInt('0x' + g.subarray(32).toString('hex'))).toString(16).padStart(64, '0'); old.push([ws, { ...m, body: JSON.stringify({ ...b, sig: Buffer.concat([g.subarray(0, 32), Buffer.from(v, 'hex')]).toString('base64') }) }]); } if (b.k === 'hi') for (let i = 0; i < 160; i++) setTimeout(() => { for (const [w, o] of old) orig.call(this, w, o); for (const s of this.sockets()) if (s.att?.id) { s.send('{"t":"peer","id":"' + s.att.watch[0] + '","on":false,"ready":false}'); s.send('{"t":"from","id":"' + s.att.watch[0] + '","body":"nonsense"}'); s.send('{"t":"from","id":5,"body":{}}'); s.send('{"t":"peer","id":"' + s.att.watch[0] + '","on":true,"ready":true}'); s.send('{"t":"turn","servers":{"username":5}}'); s.send('{"t":"request","from":"x","name":[]}'); } }, 1500 + i * 100); }
++  } catch {}
++  return orig.call(this, ws, m); };
++await serve(+process.argv[2], new Uint8Array(Buffer.from(process.argv[3], 'base64'))); console.log('up');
++""" % (MEET, MEET)); liar.close()
++for mode in ('key', 'eph', 'cand', 'replay'):
++    m.kill(); m.wait(); m = subprocess.Popen(['node', T + '/liar.mjs', str(PORT), base64.b64encode(circle).decode(), mode], stdout=subprocess.PIPE, text=True); m.stdout.readline()
++    a, b = P('la' + mode), P('lb' + mode); A, B = a.till(lambda v: v['online'])['code'], b.till(lambda v: v['online'])['code']; a.do('add ' + B); b.do('add ' + A); a.till(lambda v: f0(v)['on']); a.do('open'); b.do('open')
++    u = a.till(lambda v: f0(v)['up'], 6 if mode == 'replay' else 4)
++    if mode == 'replay':
++        ok(u, 'liar replaying: connects'); a.till(lambda v: v['seen']); b.till(lambda v: v['seen']); a.do('host'); ok(b.do('join') == '0 1', 'joins'); n = a.view()['got']; b.do('say 400'); v = a.till(lambda v: v['got'] >= n + 400, 3); ok(v and v['state'] == 3 and b.view()['state'] == 5, 'liar replaying: the match goes on, got %d' % (a.view()['got'] - n))
++    if mode == 'replay':
++        import signal
++        for who in (b, a): who.p.send_signal(signal.SIGSTOP); time.sleep(3.2); who.p.send_signal(signal.SIGCONT); time.sleep(1.5)
++        n = a.view()['got']; b.do('say 300'); v = a.till(lambda v: v['got'] >= n + 300, 4); ok(v and v['state'] == 3 and b.view()['state'] == 5, 'liar replaying during a 3 s stall: the match goes on, got %d state %d %d' % (a.view()['got'] - n, a.view()['state'], b.view()['state']))
++    if mode != 'replay': ok(not u and a.view()['seen'] == 0, 'liar (%s): no connection, rather than a false one' % mode)
++    a.kill(); b.kill()
++m.kill(); turn.kill(); print(f'friends internet: {npass} passed, {nfail} failed'); sys.exit(nfail != 0)
+diff --git a/dm/host/tests/t_friends_path.c b/dm/host/tests/t_friends_path.c
+new file mode 100644
+index 0000000..646ec3f
+--- /dev/null
++++ b/dm/host/tests/t_friends_path.c
+@@ -0,0 +1,81 @@
++// Friends over the internet: keys, sealing, and paths (direct, through a relay, changing, hostile input). Loopback only.
++#include "../friends_path.c"
++#include <signal.h>
++static int np, nf; 
++#define OK(c, ...) do { if (c) np++; else { nf++; printf("FAIL %d: ", __LINE__); printf(__VA_ARGS__); puts(""); } } while (0)
++typedef struct { int got, slot, cands; size_t n; uint8_t last[8192]; friends_path *f; pthread_mutex_t m; uint64_t lat[4000]; } side;
++static void on_data(void *o, int slot, const uint8_t *d, size_t n) { side *s = o; pthread_mutex_lock(&s->m); s->slot = slot; s->n = n; memcpy(s->last, d, n); if (n >= 16) { uint64_t t; memcpy(&t, d + 8, 8); s->lat[s->got % 4000] = us() - t; } s->got++; pthread_mutex_unlock(&s->m); }
++static void on_cands(void *o) { ((side *)o)->cands++; }
++static int until(int (*f)(void *), void *a, int t) { for (; t > 0; t -= 5) { if (f(a)) return 1; usleep(5000); } return 0; }
++static int is_up(void *a) { return fp_get(((side *)a)->f, 2).up; }
++static int has_relay(void *a) { fp_cand c[FP_CANDS]; int n = fp_candidates(((side *)a)->f, c); for (int i = 0; i < n; i++) if (c[i].kind == 3) return 1; return 0; }
++static int has_any(void *a) { fp_cand c[FP_CANDS]; return fp_candidates(((side *)a)->f, c) > 0; }
++static int is_relay(void *a) { fp_state s = fp_get(((side *)a)->f, 2); return s.up && s.relay; }
++static int is_direct(void *a) { fp_state s = fp_get(((side *)a)->f, 2); return s.up && !s.relay; }
++static fp_cand v4(int kind, const char *ip, int port) { fp_cand c; memset(&c, 0, sizeof c); c.kind = (uint8_t)kind; c.fam = 4; c.port = (uint16_t)port; inet_pton(AF_INET, ip, c.addr); return c; }
++static fp_cand v6(int kind, const char *ip, int port) { fp_cand c; memset(&c, 0, sizeof c); c.kind = (uint8_t)kind; c.fam = 6; c.port = (uint16_t)port; inet_pton(AF_INET6, ip, c.addr); return c; }
++static int port_of(friends_path *f) { struct sockaddr_in a; socklen_t l = sizeof a; getsockname(f->fd[0], (struct sockaddr *)&a, &l); return ntohs(a.sin_port); }
++static pid_t turn(const char *user, const char *pw, int stale, int *port) {
++    int p[2]; pipe(p); pid_t c = fork(); if (!c) { dup2(p[1], 1); close(p[0]); execlp("python3", "python3", "-I", "tests/turn_server.py", user, pw, "0", stale ? "stale" : NULL, NULL); _exit(1); }
++    close(p[1]); char b[32] = {0}; read(p[0], b, 31); *port = atoi(b); close(p[0]); return c;
++}
++static void keys(fc_keys *a, fc_keys *b) { SecKeyRef i = fc_new_key(), j = fc_new_key(), x = fc_new_key(), y = fc_new_key(); uint8_t p[65], q[65]; char ci[17], cj[17]; fc_public(i, p); fc_public(j, q); fc_code(p, ci); fc_code(q, cj); fc_hi hi, hj; fc_make_hi(i, x, cj, &hi); fc_make_hi(j, y, ci, &hj); if (fc_session(x, &hi, &hj, a) || fc_session(y, &hj, &hi, b)) abort(); CFRelease(i); CFRelease(j); CFRelease(x); CFRelease(y); }
++static side A, B;
++static void start(int port, int tport) { memset(&A, 0, sizeof A); memset(&B, 0, sizeof B); pthread_mutex_init(&A.m, NULL); pthread_mutex_init(&B.m, NULL);
++    fp_hooks h = {on_data, on_cands, &A, port ? "127.0.0.1" : NULL, (uint16_t)port, tport ? "127.0.0.1" : NULL, (uint16_t)tport, 1}; A.f = fp_start(&h); h.opaque = &B; B.f = fp_start(&h); }
++static void swap(int kinds) { fp_cand c[FP_CANDS], d[FP_CANDS]; int n = fp_candidates(A.f, c), m = 0; for (int i = 0; i < n; i++) if (kinds >> c[i].kind & 1) d[m++] = c[i]; fp_remote(B.f, 2, d, m); n = fp_candidates(B.f, c); m = 0; for (int i = 0; i < n; i++) if (kinds >> c[i].kind & 1) d[m++] = c[i]; fp_remote(A.f, 2, d, m); }
++int main(void) {
++    signal(SIGPIPE, SIG_IGN);
++    // ---- identity and codes ----
++    SecKeyRef a = fc_new_key(), b = fc_new_key(), m = fc_new_key(); uint8_t pa[65], pb[65], pm[65], raw[97]; char ca[17], cb[17], cm[17], t[17];
++    OK(a && !fc_public(a, pa) && !fc_public(b, pb) && !fc_public(m, pm), "keys"); fc_code(pa, ca); fc_code(pb, cb); fc_code(pm, cm); OK(strlen(ca) == 16 && strcmp(ca, cb), "codes");
++    OK(!fc_export(a, raw), "export"); SecKeyRef a2 = fc_import(raw); uint8_t p2[65]; OK(a2 && !fc_public(a2, p2) && !memcmp(p2, pa, 65), "import gives the same player");
++    char typed[64]; snprintf(typed, sizeof typed, " %.4s-%.4s %.4s-%.4s ", ca, ca + 4, ca + 8, ca + 12); for (char *c = typed; *c; c++) *c = (char)tolower(*c); OK(fc_clean_code(typed, t) && !strcmp(t, ca), "typed code");
++    OK(fc_clean_code("OIL0000000000000", t) && !strcmp(t, "0110000000000000"), "look-alikes"); OK(!fc_clean_code("", t) && !fc_clean_code("ABC", t) && !fc_clean_code("U234567890123456", t) && !fc_clean_code("12345678901234567", t), "bad codes");
++    // a fixed vector, worked out apart from this code (python hashlib): the meeting point and this must agree
++    { uint8_t k[65]; k[0] = 4; for (int i = 1; i < 65; i++) k[i] = (uint8_t)i; char c[17]; fc_code(k, c); FILE *f = popen("python3 -I -c \"import hashlib;h=hashlib.sha256(b'docked-friend-code-v1'+bytes([4])+bytes(range(1,65))).digest()[:10];n=int.from_bytes(h,'big');print(''.join('0123456789ABCDEFGHJKMNPQRSTVWXYZ'[n>>(75-5*i)&31] for i in range(16)))\"", "r"); char w[32] = {0}; fgets(w, 31, f); pclose(f); w[strcspn(w, "\n")] = 0; OK(!strcmp(c, w), "code %s, expected %s", c, w); }
++    // ---- saying hi: only the code's owner, only to that friend ----
++    SecKeyRef ea = fc_new_key(), eb = fc_new_key(); fc_hi ha, hb, x; OK(!fc_make_hi(a, ea, cb, &ha) && !fc_make_hi(b, eb, ca, &hb), "hi");
++    OK(fc_check_hi(&ha, ca, cb) && fc_check_hi(&hb, cb, ca), "genuine"); OK(!fc_check_hi(&ha, ca, cm), "meant for someone else"); OK(!fc_check_hi(&ha, cm, cb), "from someone else");
++    fc_make_hi(m, ea, cb, &x); OK(!fc_check_hi(&x, ca, cb), "an impostor's own key"); memcpy(x.key, pa, 65); OK(!fc_check_hi(&x, ca, cb), "an impostor showing the real key");
++    for (size_t i = 0; i < sizeof x; i += 7) { x = ha; ((uint8_t *)&x)[i] ^= 1; OK(!fc_check_hi(&x, ca, cb), "changed byte %zu", i); }
++    fc_keys ka, kb, kx; OK(!fc_session(ea, &ha, &hb, &ka) && !fc_session(eb, &hb, &ha, &kb), "session");
++    OK(!memcmp(&ka.out, &kb.in, sizeof(fc_way)) && !memcmp(&ka.in, &kb.out, sizeof(fc_way)) && !memcmp(&ka.note_out, &kb.note_in, sizeof(fc_way)) && !memcmp(ka.link, kb.link, 32), "both ends agree");
++    OK(memcmp(ka.out.enc, ka.in.enc, 32) && memcmp(ka.out.enc, ka.out.mac, 32) && memcmp(ka.out.enc, ka.note_out.enc, 32) && ka.out.sid != ka.in.sid, "every key different");
++    SecKeyRef ec = fc_new_key(); fc_hi hc; fc_make_hi(a, ec, cb, &hc); fc_session(ec, &hc, &hb, &kx); OK(memcmp(kx.out.enc, ka.out.enc, 32), "fresh keys each session"); OK(fc_session(ea, &ha, &ha, &kx) == -1, "own reflection"); x = hb; memset(x.eph + 1, 1, 64); OK(fc_session(ea, &ha, &x, &kx) == -1, "a point not on the curve");
++    for (int i = 0; i < 400; i++) { uint8_t sg[64]; OK(!fc_sign(a, &i, 4, sg) && fc_verify(pa, &i, 4, sg), "signature %d", i); }   // every length the numbers can have
++    { uint8_t z[64] = {0}; OK(!fc_verify(pa, "x", 1, z), "an empty signature"); memset(z, 255, 64); OK(!fc_verify(pa, "x", 1, z), "a full one"); }
++    // ---- sealing ----
++    uint8_t sealed[200], open_[200]; uint64_t c; fc_seal(&ka.out, 3, 9, "hello friend", 12, sealed); OK(fc_open(&kb.in, sealed, 12 + 32, open_, &c) == 12 && c == 9 && !memcmp(open_, "hello friend", 12), "open"); OK(!memmem(sealed, 44, "hello", 5), "not readable on the way");
++    for (int i = 0; i < 44; i++) { uint8_t z[200]; memcpy(z, sealed, 44); z[i] ^= 0x10; OK(fc_open(&kb.in, z, 44, open_, &c) < 0, "changed byte %d", i); } OK(fc_open(&ka.in, sealed, 44, open_, &c) < 0, "sent back to its sender"); for (size_t n = 0; n < 44; n++) if (fc_open(&kb.in, sealed, n, open_, &c) >= 0) OK(0, "cut to %zu", n); np++;
++    // ---- which addresses a friend may name ----
++    struct in_addr ip[1], mk[1]; inet_pton(AF_INET, "192.168.1.20", ip); inet_pton(AF_INET, "255.255.255.0", mk);
++    struct { fp_cand c; int ok; } w[] = {{v4(1, "192.168.1.30", 5000), 1}, {v4(1, "192.168.2.30", 5000), 0}, {v4(2, "192.168.1.30", 5000), 0}, {v4(1, "192.168.1.255", 5000), 0}, {v4(1, "10.0.0.1", 5000), 0}, {v4(2, "8.8.8.8", 5000), 1}, {v4(2, "8.8.8.8", 53), 0}, {v4(1, "8.8.8.8", 5000), 0}, {v4(2, "127.0.0.1", 5000), 0}, {v4(2, "0.0.0.0", 5000), 0}, {v4(2, "224.0.0.251", 5353), 0}, {v4(2, "255.255.255.255", 5000), 0}, {v4(2, "169.254.1.1", 5000), 0}, {v4(2, "100.64.0.1", 5000), 0}, {v4(2, "192.0.0.2", 5000), 0}, {v4(2, "198.18.0.1", 5000), 0}, {v4(2, "203.0.113.9", 5000), 0}, {v4(3, "104.30.1.1", 5000), 1}, {v4(0, "8.8.8.8", 5000), 0}, {v4(4, "8.8.8.8", 5000), 0}, {v6(2, "2606:4700::1", 5000), 1}, {v6(2, "fe80::1", 5000), 0}, {v6(2, "fd00::1", 5000), 0}, {v6(2, "::1", 5000), 0}, {v6(2, "ff02::1", 5000), 0}, {v6(2, "::ffff:8.8.8.8", 5000), 0}, {v6(2, "2002::1", 5000), 0}, {v6(2, "2001:db8::1", 5000), 0}, {v6(1, "2606:4700::1", 5000), 0}, {v6(2, "64:ff9b::808:808", 5000), 0}};
++    for (size_t i = 0; i < sizeof w / sizeof *w; i++) OK(fp_cand_ok(&w[i].c, ip, mk, 1, 0) == w[i].ok, "address rule %zu", i);
++    // ---- direct ----
++    start(0, 0); OK(A.f && B.f, "start"); OK(until(has_any, &A, 1000) && until(has_any, &B, 1000), "own addresses"); keys(&ka, &kb); fp_session(A.f, 2, &ka); fp_session(B.f, 2, &kb); OK(fp_send(A.f, 2, "x", 1) == -1, "nothing is sent before a path is proven"); swap(2 | 4);
++    OK(until(is_up, &A, 2000) && until(is_up, &B, 2000), "direct path"); uint8_t big[4400]; for (size_t i = 0; i < sizeof big; i++) big[i] = (uint8_t)(i * 7 + i / 256);
++    for (size_t n = 0; n <= 4400; n += n < 1090 || n > 1110 ? 137 : 1) { int g = B.got; if (fp_send(A.f, 2, big, n)) { OK(0, "send %zu", n); continue; } for (int i = 0; i < 100 && B.got == g; i++) usleep(1000); OK(B.got == g + 1 && B.n == n && !memcmp(B.last, big, n) && B.slot == 2, "size %zu", n); }
++    OK(fp_send(A.f, 2, big, 4401) == -1 && fp_send(A.f, 3, big, 1) == -1 && fp_send(A.f, -1, big, 1) == -1 && fp_send(A.f, 99, big, 1) == -1, "what cannot be sent");
++    { int g = B.got; uint64_t s[2]; for (int i = 0; i < 600; i++) { s[0] = (uint64_t)i; s[1] = us(); fp_send(A.f, 2, s, 16); usleep(2000); } usleep(50000); OK(B.got == g + 600, "600 of 600, got %d", B.got - g); uint64_t v[600]; memcpy(v, B.lat, 0); int k = 0; for (int i = g; i < B.got; i++) v[k++] = B.lat[i % 4000]; for (int i = 1; i < k; i++) { uint64_t y = v[i]; int j = i; while (j && v[j - 1] > y) { v[j] = v[j - 1]; j--; } v[j] = y; } printf("added delay: middle %llu us, 99%% %llu us\n", v[k / 2], v[k * 99 / 100]); OK(v[k / 2] < 2000, "delay"); }
++    // ---- hostile input ----
++    int s = socket(AF_INET, SOCK_DGRAM, 0); struct sockaddr_in to = {.sin_len = 16, .sin_family = AF_INET, .sin_port = htons((uint16_t)port_of(B.f)), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)}; int g = B.got; fp_stats st0 = fp_get_stats(B.f);
++    uint8_t junk[2000]; for (int i = 0; i < 4000; i++) { size_t n = arc4random_uniform(sizeof junk); arc4random_buf(junk, n); if (i & 1 && n > 40) { junk[0] = 'D'; junk[1] = 'I'; junk[3] = 1; memcpy(junk + 4, &kb.in.sid, 4); } else if (i & 2 && n >= 20) { junk[0] = (uint8_t)(i & 3 ? 1 : 0); junk[1] = (uint8_t)(i % 24); uint16_t l = htons((uint16_t)(n - 20)); memcpy(junk + 2, &l, 2); uint32_t ck = htonl(COOKIE); memcpy(junk + 4, &ck, 4); } sendto(s, junk, n, 0, (void *)&to, sizeof to); if (i % 100 == 0) usleep(1000); }
++    usleep(100000); fp_stats st = fp_get_stats(B.f); OK(B.got == g && st.forged > st0.forged && st.stranger > st0.stranger, "strangers and forgeries get nothing through"); OK(B.f->s[2].np <= 3, "and add no paths");
++    { uint8_t z[300]; fc_seal(&ka.out, P_DATA, A.f->s[2].out + 400, "again", 5, z); sendto(s, z, 37, 0, (void *)&to, sizeof to); usleep(30000); OK(B.got == g + 1, "a genuine one from a new address is taken (the friend moved)"); sendto(s, z, 37, 0, (void *)&to, sizeof to); usleep(30000); OK(B.got == g + 1 && fp_get_stats(B.f).replay > st.replay, "but never twice"); fc_seal(&ka.out, P_PART, A.f->s[2].out + 401, "\1\0\0\0\5\2\0\0x", 9, z); sendto(s, z, 41, 0, (void *)&to, sizeof to); fc_seal(&ka.out, 77, A.f->s[2].out + 402, "x", 1, z); sendto(s, z, 33, 0, (void *)&to, sizeof to); fc_seal(&ka.out, P_PROBE, A.f->s[2].out + 403, "x", 1, z); sendto(s, z, 33, 0, (void *)&to, sizeof to); usleep(30000); OK(B.got == g + 1, "odd pieces are ignored"); }
++    usleep(2500000); OK(is_up(&B) && fp_get(B.f, 2).rtt < 20, "a new address that never answers is not used"); close(s);
++    { fp_cand many[FP_CANDS]; for (int r = 0; r < 12; r++) { for (int i = 0; i < FP_CANDS; i++) many[i] = v4(2, "198.51.99.1", 2000 + r * 10 + i); fp_remote(B.f, 2, many, FP_CANDS); } OK(B.f->s[2].np <= PATHS && B.f->s[2].named >= NAMED, "addresses a friend names are limited"); usleep(2100000); OK(is_up(&B), "the good path is not pushed out"); pthread_mutex_lock(&B.f->m); for (int i = 0; i < B.f->s[2].np; i++) if (B.f->s[2].p[i].to.s.sa_family == AF_INET && B.f->s[2].p[i].to.v4.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) B.f->s[2].p[i].born = ms() - TRIED_MS - 1; pthread_mutex_unlock(&B.f->m); usleep(100000); int left = 0; pthread_mutex_lock(&B.f->m); for (int i = 0; i < B.f->s[2].np; i++) left += B.f->s[2].p[i].to.s.sa_family == AF_INET && B.f->s[2].p[i].to.v4.sin_addr.s_addr != htonl(INADDR_LOOPBACK); pthread_mutex_unlock(&B.f->m); OK(!left && is_up(&B), "addresses that never answer are given up, the good one stays"); }
++    OK(fp_get(B.f, 2).quiet_ms < 2000, "heard lately"); fp_drop(A.f, 2); usleep(60000); OK(fp_get(B.f, 2).quiet_ms == UINT64_MAX, "goodbye is heard at once"); usleep(1800000); OK(!fp_get(B.f, 2).up && fp_send(B.f, 2, "x", 1) == -1 + 1 - 1 || !fp_get(B.f, 2).up, "friend gone: path down"); keys(&ka, &kb); fp_session(A.f, 2, &ka); fp_session(B.f, 2, &kb); swap(2 | 4); OK(until(is_up, &A, 2000) && until(is_up, &B, 2000), "back with new keys"); fp_stop(A.f); fp_stop(B.f);
++    // ---- STUN and the relay ----
++    for (int stale = 0; stale < 2; stale++) {
++        int port; pid_t srv = turn("user1", "secret1", stale, &port); start(port, port); usleep(700000); fp_cand cs[FP_CANDS]; int n = fp_candidates(A.f, cs), seen = 0; for (int i = 0; i < n; i++) seen |= cs[i].kind == 2 && cs[i].port == port_of(A.f); OK(seen || n >= 1, "STUN"); OK(A.f->mapped[0].s.sa_family == AF_INET && ntohs(A.f->mapped[0].v4.sin_port) == port_of(A.f), "STUN tells this Mac its address");
++        keys(&ka, &kb); fp_session(A.f, 2, &ka); fp_session(B.f, 2, &kb); fp_relay(A.f, "user1", "secret1"); fp_relay(B.f, "user1", "secret1"); OK(until(has_relay, &A, 4000) && until(has_relay, &B, 4000), "relay address (stale %d)", stale);
++        // both behind walls: only relay addresses are known, and direct packets from anywhere but the relay are refused
++        swap(8); int both = until(is_relay, &A, 4000) && until(is_relay, &B, 4000); OK(both, "through the relay"); usleep(3200000);
++        int g0 = B.got; for (int i = 0; i < 100; i++) { big[0] = (uint8_t)i; fp_send(A.f, 2, big, 1100 + (size_t)i); usleep(3000); } usleep(100000); OK(B.got == g0 + 100 && B.n == 1199 && !memcmp(B.last, big, 1199), "game packets through the relay: %d of 100", B.got - g0); OK(A.f->pm[0].chan_ok, "with the short header");
++        swap(2 | 4 | 8); OK(until(is_direct, &A, 4000) && until(is_direct, &B, 4000), "direct opens up: the relay is left"); fp_stop(A.f); fp_stop(B.f); kill(srv, SIGTERM);
++    }
++    { int port; pid_t srv = turn("user1", "secret1", 0, &port); start(port, port); usleep(200000); fp_relay(A.f, "user1", "wrong"); OK(!until(has_relay, &A, 2500), "a wrong relay pass gets no relay"); fp_stop(A.f); fp_stop(B.f); kill(srv, SIGTERM); }
++    { start(9, 9); uint64_t t0 = ms(); fp_stop(A.f); fp_stop(B.f); OK(ms() - t0 < 1000, "stopping is quick"); }
++    printf("friends path: %d passed, %d failed\n", np, nf); return nf != 0;
++}
+diff --git a/dm/host/tests/t_friends_screen.m b/dm/host/tests/t_friends_screen.m
+new file mode 100644
+index 0000000..7ff3855
+--- /dev/null
++++ b/dm/host/tests/t_friends_screen.m
+@@ -0,0 +1,22 @@
++// The friends screen: what every button does, and pictures of each state. t_friends_screen <folder for pictures>
++#define FRIENDS_SCREEN_TEST 1
++#include "../friends_screen.m"
++static fi_view V; static int np, nf, closed; static char added[64], accepted[32], declined[32], removed[32], renamed[128]; static unsigned ch = 1;
++void fi_snapshot(fi_view *o) { *o = V; } unsigned fi_changes(void) { return ch; } int fi_running(void) { return 1; }
++int fi_add(const char *t, char *w, size_t n) { if (strlen(t) != 16) { snprintf(w, n, "A friend code has 16 letters and numbers."); return -1; } snprintf(added, sizeof added, "%s", t); return 0; }
++void fi_accept(const char *c) { snprintf(accepted, 32, "%s", c); V.nrequests = 0; } void fi_decline(const char *c) { snprintf(declined, 32, "%s", c); V.nrequests = 0; } void fi_remove(const char *c) { snprintf(removed, 32, "%s", c); V.nfriends--; } int fi_rename(const char *c) { if (!*c) return -1; snprintf(renamed, 128, "%s", c); return 0; }
++#define OK(c, m) do { if (c) np++; else { nf++; printf("FAIL %s\n", m); } } while (0)
++static void shot(DmFriendsView *v, const char *d, const char *n) { NSBitmapImageRep *r = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:1280 pixelsHigh:720 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0]; NSGraphicsContext *g = [NSGraphicsContext graphicsContextWithBitmapImageRep:r]; [NSGraphicsContext saveGraphicsState]; NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithCGContext:g.CGContext flipped:YES]; CGContextTranslateCTM(g.CGContext, 0, 720); CGContextScaleCTM(g.CGContext, 1, -1); [hex(0x6A8CA0) setFill]; NSRectFill(v.bounds); [v drawRect:v.bounds]; [NSGraphicsContext restoreGraphicsState]; [[r representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"%s/%s.png", d, n] atomically:YES]; }
++static fi_friend F(const char *c, const char *n, int on, int ready, int up, int relay, int asked, double rtt) { fi_friend f = {.on = on, .ready = ready, .up = up, .relay = relay, .asked = asked, .rtt = rtt}; snprintf(f.code, 17, "%s", c); snprintf(f.name, FI_NAME, "%s", n); return f; }
++int main(int c, char **a) { (void)c; @autoreleasepool { [NSApplication sharedApplication]; V.online = 1; strcpy(V.code, "7K2Q9XTDM4PRB8HN"); strcpy(V.name, "Sam");
++    V.friends[0] = F("AAAAAAAAAAAAAAAA", "Sam", 0, 0, 0, 0, 0, 0); V.friends[1] = F("BBBBBBBBBBBBBBBB", "Alex", 1, 1, 1, 0, 0, 18.4); V.friends[2] = F("CCCCCCCCCCCCCCCC", "", 0, 0, 0, 0, 1, 0); V.friends[3] = F("DDDDDDDDDDDDDDDD", "Jordan with quite a long name here", 1, 1, 1, 1, 0, 124); V.nfriends = 4; V.nrequests = 1; strcpy(V.requests[0].code, "EEEEEEEEEEEEEEEE"); strcpy(V.requests[0].name, "Riley");
++    DmFriendsView *v = [[DmFriendsView alloc] initWithFrame:NSMakeRect(0, 0, 1280, 720)]; v.onClose = ^{ closed++; }; shot(v, a[1], "list");
++    int32_t z[4] = {0}; NSTimeInterval t = 10; [v swallow:B_LS | B_RS]; [v buttons:B_LS | B_RS axes:z now:t]; OK(!closed, "the opening press does nothing"); [v buttons:0 axes:z now:t];
++    [v buttons:B_DOWN axes:z now:t]; OK([[v spoken] isEqual:@"Add a friend"], "down"); [v buttons:B_DOWN axes:z now:t + .1]; OK([[v spoken] isEqual:@"Add a friend"], "held: not yet"); [v buttons:B_DOWN axes:z now:t + .5]; OK([[v spoken] containsString:@"Riley"], "held: repeats"); [v buttons:0 axes:z now:t + .6];
++    [v press:B_X]; OK(!strcmp(declined, "EEEEEEEEEEEEEEEE") && !*accepted, "decline"); V.nrequests = 1; [v refresh]; while (![[v spoken] containsString:@"Riley"]) [v press:B_UP]; [v press:B_A]; OK(!strcmp(accepted, "EEEEEEEEEEEEEEEE"), "accept");
++    for (int i = 0; i < 20; i++) [v press:B_UP]; OK([[v spoken] containsString:@"7K2Q-9XTD"], "top"); [v press:B_A]; OK([[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString] isEqual:@"7K2Q-9XTD-M4PR-B8HN"], "copy");
++    [v press:B_DOWN]; [v press:B_A]; OK([[v spoken] hasPrefix:@"Enter a friend code"], "add opens"); [v press:B_PLUS]; OK([[v spoken] hasPrefix:@"Enter"] && !*added, "too short: stays"); shot(v, a[1], "short"); [v press:B_A]; [v press:B_RIGHT]; [v press:B_A]; [v press:B_LEFT]; [v press:B_LEFT]; [v press:B_A]; [v press:B_DOWN]; [v press:B_A]; OK([[v spoken] isEqual:@"Enter a friend code: 01FZ"], "picked 01FZ"); [v press:B_X]; [v type:@"o"]; [v type:@"i"]; [v type:@"!"]; [v type:@"u"]; OK([[v spoken] isEqual:@"Enter a friend code: 01F01"], "typed"); shot(v, a[1], "code"); [NSPasteboard.generalPasteboard clearContents]; [NSPasteboard.generalPasteboard setString:@"7k2q 9xtd m4pr b8hn" forType:NSPasteboardTypeString]; [v press:B_Y]; [v press:B_PLUS]; OK(!strcmp(added, "7K2Q9XTDM4PRB8HN") && [[v spoken] isEqual:@"Add a friend"], "pasted and added");
++    while (![[v spoken] hasPrefix:@"Sam"]) [v press:B_DOWN]; [v press:B_X]; OK(!*removed, "remove asks"); shot(v, a[1], "remove"); [v press:B_B]; OK(!*removed && !closed, "kept"); [v press:B_X]; [v press:B_A]; OK(!strcmp(removed, "AAAAAAAAAAAAAAAA"), "removed the right one");
++    for (int i = 0; i < 20; i++) [v press:B_DOWN]; OK([[v spoken] isEqual:@"Change your name"], "bottom"); [v press:B_A]; for (int i = 0; i < 9; i++) [v press:B_X]; [v press:B_PLUS]; OK(!*renamed, "no empty name"); for (int i = 0; i < 40; i++) [v type:@"x"]; OK([[v spoken] length] == 11 + 24, "24 at most"); shot(v, a[1], "name"); [v press:B_PLUS]; OK(strlen(renamed) == 24, "renamed");
++    [v press:B_B]; OK(closed == 1, "B closes"); V.nfriends = 0; V.online = 0; V.name[0] = 0; strcpy(V.note, ""); v = [[DmFriendsView alloc] initWithFrame:NSMakeRect(0, 0, 640, 360)]; OK([[v spoken] hasPrefix:@"Your name"], "first time: asks for a name"); [v press:B_B]; V.nfriends = FI_FRIENDS; for (int i = 0; i < FI_FRIENDS; i++) { char k[17]; snprintf(k, 17, "%016d", i); V.friends[i] = F(k, k, 0, 0, 0, 0, 0, 0); } [v refresh]; for (int i = 0; i < 60; i++) [v press:B_DOWN]; shot(v, a[1], "small"); OK([[v spoken] isEqual:@"Change your name"], "a full list scrolls");
++    printf("friends screen: %d passed, %d failed\n", np, nf); return nf != 0; } }
+diff --git a/dm/host/tests/turn_server.py b/dm/host/tests/turn_server.py
+new file mode 100644
+index 0000000..eff168f
+--- /dev/null
++++ b/dm/host/tests/turn_server.py
+@@ -0,0 +1,64 @@
++#!/usr/bin/env python3
++"""Test only: a small STUN/TURN server on 127.0.0.1 (RFC 8489 / 8656), written from the RFCs apart from friends_path.c. turn_server.py <user> <credential> -> prints its port"""
++import hashlib, hmac, os, select, socket, struct, sys, time
++USER, PW = sys.argv[1].encode(), sys.argv[2].encode(); REALM = b'test.realm'; NONCES = {b'n0'}; COOKIE = 0x2112A442
++KEY = hashlib.md5(USER + b':' + REALM + b':' + PW).digest()
++main = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); main.bind(('127.0.0.1', int(sys.argv[3]) if len(sys.argv) > 3 else 0)); print(main.getsockname()[1], flush=True)
++allocs = {}  # client -> dict(sock, perms{ip: t}, chans{num: peer}, by{peer: num})
++def attrs(b):
++    o, i = {}, 20
++    while i + 4 <= len(b):
++        t, l = struct.unpack_from('>HH', b, i); o.setdefault(t, (b[i+4:i+4+l], i)); i += 4 + ((l + 3) & ~3)
++    return o
++def attr(t, v): return struct.pack('>HH', t, len(v)) + v + b'\0' * (-len(v) % 4)
++def xaddr(t, a): return attr(t, struct.pack('>BBH', 0, 1, a[1] ^ (COOKIE >> 16)) + struct.pack('>I', struct.unpack('>I', socket.inet_aton(a[0]))[0] ^ COOKIE))
++def unx(v): return (socket.inet_ntoa(struct.pack('>I', struct.unpack('>I', v[4:8])[0] ^ COOKIE)), struct.unpack('>H', v[2:4])[0] ^ (COOKIE >> 16))
++def msg(t, tid, body, sign=False):
++    if sign:
++        h = struct.pack('>HHI', t, len(body) + 24, COOKIE) + tid + body; body += attr(8, hmac.new(KEY, h, hashlib.sha1).digest())
++    return struct.pack('>HHI', t, len(body), COOKIE) + tid + body
++def err(t, tid, code, reason, extra=b''): return msg(t | 0x110, tid, attr(9, struct.pack('>HBB', 0, code // 100, code % 100) + reason) + extra)
++def authed(b, a):
++    if 8 not in a or 6 not in a or 0x14 not in a or 0x15 not in a: return False
++    at = a[8][1]; h = bytearray(b[:at]); struct.pack_into('>H', h, 2, at - 20 + 24)
++    return a[6][0] == USER and a[0x14][0] == REALM and hmac.compare_digest(hmac.new(KEY, bytes(h), hashlib.sha1).digest(), a[8][0])
++stale_once = len(sys.argv) > 4
++while True:
++    socks = [main] + [x['sock'] for x in allocs.values()]
++    for s in select.select(socks, [], [], 1)[0]:
++        b, src = s.recvfrom(65536)
++        if s is not main:
++            c, al = next((k, v) for k, v in allocs.items() if v['sock'] is s)
++            if src[0] not in al['perms']: continue
++            n = al['by'].get(src)
++            main.sendto(struct.pack('>HH', n, len(b)) + b if n else msg(0x17, os.urandom(12), xaddr(0x12, src) + attr(0x13, b)), c); continue
++        if len(b) >= 4 and 0x40 <= b[0] <= 0x7f:
++            al = allocs.get(src); n, l = struct.unpack_from('>HH', b)
++            if al and n in al['chans'] and al['chans'][n][0] in al['perms']: al['sock'].sendto(b[4:4+l], al['chans'][n])
++            continue
++        if len(b) < 20 or struct.unpack_from('>I', b, 4)[0] != COOKIE: continue
++        t = struct.unpack_from('>H', b)[0]; tid = b[8:20]; a = attrs(b)
++        if t == 1: main.sendto(msg(0x101, tid, xaddr(0x20, src)), src); continue
++        if t == 0x16:
++            al = allocs.get(src)
++            if al and 0x12 in a and 0x13 in a and unx(a[0x12][0])[0] in al['perms']: al['sock'].sendto(a[0x13][0], unx(a[0x12][0]))
++            continue
++        if t not in (3, 4, 8, 9): continue
++        ch = attr(0x14, REALM) + attr(0x15, b'n0' if not stale_once else b'n1')
++        if 8 not in a: main.sendto(err(t, tid, 401, b'Unauthorized', attr(0x14, REALM) + attr(0x15, b'n0')), src); continue
++        if not authed(b, a): main.sendto(err(t, tid, 401, b'Unauthorized', ch), src); continue
++        if stale_once and a[0x15][0] == b'n0': main.sendto(err(t, tid, 438, b'Stale Nonce', ch), src); continue
++        if t == 3:
++            if a.get(0x19, (b'',))[0][:1] != b'\x11': main.sendto(err(t, tid, 442, b'x'), src); continue
++            if src not in allocs:
++                r = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); r.bind(('127.0.0.1', 0)); allocs[src] = dict(sock=r, perms={}, chans={}, by={})
++            main.sendto(msg(0x103, tid, xaddr(0x16, allocs[src]['sock'].getsockname()) + xaddr(0x20, src) + attr(0x0d, struct.pack('>I', 600)), True), src); continue
++        al = allocs.get(src)
++        if not al: main.sendto(err(t, tid, 437, b'Mismatch'), src); continue
++        if t == 4:
++            life = struct.unpack('>I', a[0x0d][0])[0]
++            if not life: allocs.pop(src)['sock'].close()
++            main.sendto(msg(0x104, tid, attr(0x0d, struct.pack('>I', life)), True), src)
++        elif t == 8: al['perms'][unx(a[0x12][0])[0]] = time.time(); main.sendto(msg(0x108, tid, b'', True), src)
++        else:
++            n = struct.unpack('>H', a[0x0c][0][:2])[0]; p = unx(a[0x12][0]); al['chans'][n] = p; al['by'][p] = n; al['perms'][p[0]] = 1; main.sendto(msg(0x109, tid, b'', True), src)
+-- 
+2.43.0
+

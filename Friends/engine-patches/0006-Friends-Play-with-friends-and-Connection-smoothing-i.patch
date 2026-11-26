@@ -1,0 +1,70 @@
+From a63827e412c97943eb2eda88306f51c1ce08eda4 Mon Sep 17 00:00:00 2001
+From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 16:35:31 +0000
+Subject: [PATCH 6/6] Friends: Play with friends and Connection smoothing in
+ each game's settings; the circle Docked keeps works for every game
+
+---
+ dm/games/settings.tsv                    | 2 ++
+ dm/host/hle_friends_link.c               | 1 +
+ dm/tools/tests/test_launcher_settings.py | 2 +-
+ docs/env_switches.tsv                    | 8 ++++++++
+ 4 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/dm/games/settings.tsv b/dm/games/settings.tsv
+index cc4f3ff..85b6224 100644
+--- a/dm/games/settings.tsv
++++ b/dm/games/settings.tsv
+@@ -42,3 +42,5 @@ DM_PSO_PREBUILD	toggle	-	1	gfxapi:nvn	Performance	Pipeline prebuild	The first st
+ DM_NVN_ENC_THREAD	toggle	-	1|DM_GAME_ENC_THREAD	gfxapi:nvn	Performance	Encode thread
+ DM_FPS_HOLD	toggle	on/off	DM_GAME_FPS_HOLD	DM_GAME_FPS_TARGET!=0	Performance	Hold frames when late
+ DM_METAL_HUD	toggle	-	0	always	Performance	Performance HUD
++DM_FRIENDS	toggle	-	0	platform:mac	Game	Play with friends	Local wireless play reaches your Docked friends over the internet. Friends you play with see this Mac's internet address.	level=basic
++DM_FRIENDS_CUSHION_MS	choice	0=Off,4=Light,12=Medium,25=Strong	4	platform:mac	Game	Connection smoothing	Holds packets back to even out a bumpy connection, which adds delay. Keep it light for fighting and racing games.	needs=DM_FRIENDS=1
+diff --git a/dm/host/hle_friends_link.c b/dm/host/hle_friends_link.c
+index b74a0bd..cc363a8 100644
+--- a/dm/host/hle_friends_link.c
++++ b/dm/host/hle_friends_link.c
+@@ -21,6 +21,7 @@ void boot(void) {
+     char cfg[1200], dir[1200]; const char *c = getenv("DM_FRIENDS_CFG"), *d = getenv("DM_FRIENDS_DIR"), *h = getenv("HOME");
+     if (c && *c) snprintf(cfg, sizeof cfg, "%s", c); else { char exe[1024]; uint32_t n = sizeof exe; *cfg = 0; if (!_NSGetExecutablePath(exe, &n)) { char *s = strrchr(exe, '/'); if (s) *s = 0; snprintf(cfg, sizeof cfg, "%s/../Resources/dm/friends.cfg", exe); } }
+     if (d && *d) snprintf(dir, sizeof dir, "%s", d); else snprintf(dir, sizeof dir, "%s/Library/Application Support/Docked/Friends", h ? h : "");
++    if (access(cfg, R_OK) && !(c && *c)) snprintf(cfg, sizeof cfg, "%s/friends.cfg", dir);   // Docked keeps the circle beside the player's friends, for every game
+     if (access(cfg, R_OK)) { LOG("friends: not set up for online play"); return; } g_net = 1; int r = fi_start(cfg, dir, FL_LOOPBACK); LOG("friends: online play %s", r ? "could not start" : "on");
+     if (!r && !getenv("DM_NICK")) { static fi_view v; fi_snapshot(&v); if (v.name[0]) { size_t n = strlen(v.name); if (n > 31) { n = 31; while (n && ((unsigned char)v.name[n] & 0xC0) == 0x80) n--; v.name[n] = 0; } setenv("DM_NICK", v.name, 1); } }
+ }
+diff --git a/dm/tools/tests/test_launcher_settings.py b/dm/tools/tests/test_launcher_settings.py
+index 25feee6..f00c1ab 100644
+--- a/dm/tools/tests/test_launcher_settings.py
++++ b/dm/tools/tests/test_launcher_settings.py
+@@ -77,7 +77,7 @@ class LauncherSettingsTests(unittest.TestCase):
+         self.assertEqual(build(BOTW, 'nvn', 'ios').keys(), ios.keys())   # ios when unset
+         self.assertEqual(set(ios) - set(mac), {'DM_SHOW_FPS', 'DM_TOUCH_HAPTICS', 'DM_ROTATION'})
+         self.assertIn('DM_RUMBLE', mac); self.assertIn('DM_METAL_HUD', mac)
+-        self.assertEqual(set(mac) - set(ios), {'DM_FULLSCREEN', 'DM_SW2', 'DM_NVN_ANISO'})   # Mac-only Display mode, Switch 2 controllers, and NVN texture filtering
++        self.assertEqual(set(mac) - set(ios), {'DM_FULLSCREEN', 'DM_SW2', 'DM_NVN_ANISO', 'DM_FRIENDS', 'DM_FRIENDS_CUSHION_MS'})   # Mac-only Display mode, Switch 2 controllers, NVN texture filtering, and play with friends (Docked)
+         self.assertNotIn('DM_NVN_ANISO', build('0100535012974000', 'vulkan', 'mac'))
+         self.assertNotIn('DM_NVN_ANISO', build('010014E00DB56000', 'gl', 'mac'))
+         s = mac['DM_FULLSCREEN']
+diff --git a/docs/env_switches.tsv b/docs/env_switches.tsv
+index 0a12fd1..233de0b 100644
+--- a/docs/env_switches.tsv
++++ b/docs/env_switches.tsv
+@@ -54,6 +54,14 @@ DM_FORCE_STRICT	diagnostic	`=1` makes the loader fail on forced-hook entries no
+ DM_FPS	switch	`30` or `60` pins the frame rate the display link and frame pacing aim for; otherwise it follows the game's present interval (60, or 30 when the game asks for 30)
+ DM_FPS_HOLD	player	`on` / `off` overrides the profile's `fps_hold`: whether late frames may raise the hold above the frame cap's vsyncs (on by default)
+ DM_FPS_TARGET	player	Frame-rate cap: `30` or `60`, `40` for a build whose frame step takes ticks of 1/120 s (`FRAME_STEP_120`: Ocarina of Time; 30 elsewhere, on a screen not at a multiple of 120 Hz, in Low Power Mode, or with `DM_PRESENT_LINK=1`) ([40 fps in ticks of 1/120 s](reference/frame-rate.md#40-fps-in-ticks-of-1120-s)), `120` for a game whose profile has `fps_max 120` (60 otherwise), or `0` for the game's own limit; overrides the profile's `fps_target`
++DM_FRIENDS	player	`=1` turns on the friends link (Docked): Local Wireless reaches the friends in the player's circle, over the internet. Off, nn::ldn stays cut as before
++DM_FRIENDS_CFG	path	The friends circle file (friends.cfg: meeting point and circle key); default the app's dm/friends.cfg. Docked passes its own
++DM_FRIENDS_COPIES	diagnostic	`=<0..2>` spare copies the friends link sends of each small game packet, a few ms apart (default 1)
++DM_FRIENDS_CUSHION_MS	player	`=<0..25>` the most the friends link holds a friend's packet back to even out jitter (default 4). Lockstep games stand still while a packet is held, so keep it small for them
++DM_FRIENDS_DIR	path	Folder where the friends link keeps this player's code, name and friends (default ~/Library/Application Support/Docked/Friends)
++DM_FRIENDS_FILE	path	The home-network friends file (code, this Mac's and the friend's private address) used when there is no friends.cfg (default ~/Dockside/friends.txt)
++DM_FRIENDS_STUN_PORT	test	Port of the local STUN server the friends tests start (loopback builds only)
++DM_FRIENDS_TRACE	diagnostic	`=1` logs the game's local wireless and socket calls on the friends link (no names, codes or addresses)
+ DM_FS	diagnostic	When set, logs file opens, paths not found or not mounted, and a read summary every 64 MiB or 1000 reads
+ DM_FSLOG	diagnostic	`=<file>` writes one TSV line per ReadFile: seconds since boot, guest path, offset, length and guest buffer address
+ DM_FSLOG_HASH	diagnostic	With `DM_FSLOG`, adds a column with the FNV-1a 64 hash of the bytes read
+-- 
+2.43.0
+
