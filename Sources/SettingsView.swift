@@ -4,7 +4,7 @@ struct SettingsSheet: View {
     @EnvironmentObject var model: Model
     @EnvironmentObject var builder: Builder
     @Environment(\.dismiss) var dismiss
-    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", tools = "Setup" }
+    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", tools = "Setup" }
     @State private var tab = Tab.general
     private let phoneGames = xcodeGames()
     var body: some View {
@@ -116,7 +116,12 @@ struct ThemeSwatch: View {
 // Other consoles: RetroAchievements, retro looks and controllers
 struct RetroSettings: View {
     @EnvironmentObject var model: Model
-    @State private var user = "", password = "", key = "", busy = false, note: String?, pads = Pads.installed
+    @State private var user = ""
+    @State private var password = ""
+    @State private var key = ""
+    @State private var busy = false
+    @State private var note: String?
+    @State private var pads = Pads.installed
     func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
