@@ -353,7 +353,7 @@ if fm.isExecutableFile(atPath: "/usr/bin/hdiutil") {
     RetroArch.buildbot = bb.absoluteString.hasSuffix("/") ? String(bb.absoluteString.dropLast()) : bb.absoluteString
     _ = mk("OldRA/saves/Puzzle Box.srm", "my save"); _ = mk("RA/saves/Kept.srm", "newer"); _ = mk("OldRA/saves/Kept.srm", "older")
     RetroArch.dmgSHA = "0000"; do { try RetroArch.setUp(console("gb")!); check(false, "a different RetroArch refused") } catch { check(!RetroArch.installed && (error as? RetroError)?.text.contains("reviewed") == true, "a different RetroArch refused") }
-    RetroArch.dmgSHA = RetroArch.sha256(dmg); var said: [String] = []
+    RetroArch.dmgSHA = sha256(dmg) ?? ""; var said: [String] = []
     do { try RetroArch.setUp(console("gb")!) { w, _ in said.append(w) } } catch { check(false, "set up: \(error)") }
     check(RetroArch.installed && RetroArch.installedVersion == RetroArch.version && !RetroArch.app.path.hasPrefix("/Applications"), "RetroArch inside Docked")
     check(RetroArch.core(console("gb")!)?.lastPathComponent == "gambatte_libretro.dylib" && RetroArch.ready(console("gb")!), "the next core when the best isn't built: \(said)")

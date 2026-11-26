@@ -10,13 +10,6 @@ B=$(mktemp -d); for a in arm64 x86_64; do swiftc -swift-version 5 -O -whole-modu
 lipo -create "$B/arm64" "$B/x86_64" -output "$APP/Contents/MacOS/Docked"
 strip -x "$APP/Contents/MacOS/Docked"
 cp Info.plist "$APP/Contents/"; cp "Art/${LOGO:-docked}.icns" "$APP/Contents/Resources/AppIcon.icns"
-# With Xcode 26 or later, add the icon that follows light, dark and tinted; anything else keeps AppIcon.icns
-XC="${DEVELOPER_DIR:-$(xcode-select -p)}"; xcrun --find actool >/dev/null 2>&1 || XC=/Applications/Xcode.app/Contents/Developer
-if [ -z "${LOGO:-}" ] && DEVELOPER_DIR="$XC" xcrun --find actool >/dev/null 2>&1; then
-  if DEVELOPER_DIR="$XC" xcrun actool Art/Docked.icon --compile "$B" --app-icon Docked --platform macosx --target-device mac --minimum-deployment-target 13.0 --output-partial-info-plist "$B/icon.plist" --errors --warnings >"$B/actool.log" 2>&1 && [ -f "$B/Assets.car" ] && plutil -extract CFBundleIconName raw "$B/icon.plist" >/dev/null 2>&1; then
-    cp "$B/Assets.car" "$APP/Contents/Resources/"; plutil -replace CFBundleIconName -string Docked "$APP/Contents/Info.plist"
-  else echo "Skipped the light, dark and tinted icon:"; cat "$B/actool.log"; fi
-fi
 # The licence texts and the GPL source travel inside the app, as THIRD-PARTY.md promises.
 cp LICENSE THIRD-PARTY.md "$APP/Contents/Resources/"; cp -R Licences GPL-source "$APP/Contents/Resources/"
 if [ -n "$PAYLOAD" ]; then
@@ -24,7 +17,6 @@ if [ -n "$PAYLOAD" ]; then
   plutil -insert DSPayloadSHA256 -string "$(shasum -a 256 "$PAYLOAD" | cut -c1-64)" "$APP/Contents/Info.plist"
   # What the carried tools were really built for decides where converting works; the rest of Docked goes further back.
   M=$(xz -dc "$PAYLOAD" | tar -xOf - tools/.tools-minimum 2>/dev/null || echo 27.0); plutil -insert DSToolsMinimum -string "$M" "$APP/Contents/Info.plist"
-elif [ "${SLIM:-}" = 1 ]; then cp setup.sh ENGINE_PIN "$APP/Contents/Resources/"   # an update for a Mac that already has the tools
-else cp setup.sh ENGINE_PIN "$APP/Contents/Resources/"; fi
+else cp setup.sh ENGINE_PIN "$APP/Contents/Resources/"; fi   # also an update (SLIM=1) for a Mac that already has the tools
 codesign --force --sign - "$APP"
 du -sh "$APP"

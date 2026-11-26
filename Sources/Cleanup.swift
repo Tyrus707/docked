@@ -9,7 +9,7 @@ private func inside(_ u: URL, _ dir: URL) -> Bool { u.deletingLastPathComponent(
 // Does a game hold everything it needs? A link to anything outside it means the leftovers may still be in use.
 func selfContained(_ app: URL, titleID: String) -> Bool {
     let fm = FileManager.default
-    guard isRealFolder(app), let p = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")), (p["DMTitleID"] as? String)?.uppercased() == titleID.uppercased(),
+    guard isRealFolder(app), let p = appInfo(app), (p["DMTitleID"] as? String)?.uppercased() == titleID.uppercased(),
           fm.isExecutableFile(atPath: app.appendingPathComponent("Contents/MacOS/dmhost").path) else { return false }
     var real = [CChar](repeating: 0, count: Int(PATH_MAX)); guard realpath(app.path, &real) != nil else { return false }
     let root = String(cString: real) + "/"

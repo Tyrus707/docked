@@ -133,7 +133,7 @@ enum Engine {
         guard !root.path.contains(" ") else { throw InstallError.spaces }
         let here = tree(tools.appendingPathComponent("engine"))
         let d = i.deltas.first(where: { $0.from == now.commit && $0.fromTree == here }), pack = d ?? i.full   // only what changed, when the engine here is exactly the one it was made from
-        guard free > Int64(pack.bytes) * 10 + 1_000_000_000 else { throw EngineError("There isn't enough space for the new engine. It needs about \(ByteCountFormatter.string(fromByteCount: Int64(pack.bytes) * 10 + 1_000_000_000, countStyle: .file)).") }
+        guard free > Int64(pack.bytes) * 10 + 1_000_000_000 else { throw EngineError("There isn't enough space for the new engine. It needs about \(byteText(Int64(pack.bytes) * 10 + 1_000_000_000)).") }
         for u in [next, x] { try? fm.removeItem(at: u) }
         var good = false
         defer { try? fm.removeItem(at: x); if !good { try? fm.removeItem(at: next) } }
