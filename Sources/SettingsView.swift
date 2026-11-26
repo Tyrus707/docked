@@ -4,37 +4,45 @@ struct SettingsSheet: View {
     @EnvironmentObject var model: Model
     @EnvironmentObject var builder: Builder
     @Environment(\.dismiss) var dismiss
-    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", tools = "Setup" }
+    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", friends = "Friends", tools = "Setup" }
     @State private var tab = Tab.general
     private let phoneGames = xcodeGames()
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
-            Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .tools: tools } }.frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
+            ScrollView {
+                Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tools: tools } }
+                    .frame(maxWidth: .infinity, alignment: .topLeading).padding(.leading, 2).padding(.trailing, 14).padding(.vertical, 4)
+            }.frame(height: 470)
+            Divider()
             HStack { Button("How to Use Docked") { model.leaveSettings { model.showHelp = true } }; Button("Release Notes") { model.leaveSettings { model.showReleaseNotes = true } }; Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).tint(style.button) }
-        }.padding(24).frame(width: 520).background(AllowQuit()).background(Backdrop())
+        }.padding(24).frame(width: 660).background(AllowQuit()).background(Backdrop())
     }
-    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { settingsRow(t, d, c) }
     func flip(_ t: String, _ d: String, _ b: Binding<Bool>) -> some View { line(t, d) { Toggle(t, isOn: b).labelsHidden().toggleStyle(.switch).tint(style.button) } }
     @ViewBuilder var general: some View {
         VStack(spacing: 14) {
-            line("Theme", "Docked keeps its own look, whatever your Mac's light or dark setting.") {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(60), spacing: 8), count: 5), spacing: 10) { ForEach(Style.all) { t in ThemeSwatch(theme: t, on: model.palette == t) { model.palette = t } } }.fixedSize()
-            }
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) { Text("Theme"); Text("Docked keeps its own look, whatever your Mac's light or dark setting.").font(.caption).foregroundStyle(.secondary) }
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(84), spacing: 12), count: 6), alignment: .leading, spacing: 12) { ForEach(Style.all) { t in ThemeSwatch(theme: t, on: model.palette == t) { model.palette = t } } }.fixedSize()
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Divider()
             line("Show games as", "") { Picker("Show games as", selection: $model.look) { Text("Covers").tag(Look.covers); Text("Icons").tag(Look.icons) }.pickerStyle(.segmented).labelsHidden().fixedSize() }
             flip("Open filling the screen", "A window as big as the screen, without a separate Space. From the next time Docked opens.", $model.fullScreen)
             flip("Play other consoles full screen", "Retro games fill the whole screen. Off: a window as big as the screen. Press F in a game to switch.", .init(get: { RetroArch.fullScreen }, set: { RetroArch.fullScreen = $0; model.objectWillChange.send() }))
+            flip("Show games in Spotlight", "Type a game's name in Spotlight to play it. Each game's ••• menu also has a link for Shortcuts.", $model.spotlight)
             flip("Step aside while playing", "Docked hides when a game starts and comes back when it closes.", $model.hideWhilePlaying)
             flip("Theme music", "Plays a game's own theme while it is selected.", $model.themes)
             flip("Couch Mode sounds", "Soft clicks and chimes as you move around Couch Mode.", $model.couchSounds)
-            flip("Find covers and details", "Covers and descriptions for games from other consoles, Switch banners in Couch Mode, and critic scores, popularity, year and genre for every game. Your files are matched on this Mac; libretro, Wikidata and Wikipedia see only a game's name, the banner service only its title ID.", .init(get: { model.lookUp == true }, set: { model.lookUp = $0; if $0 { model.lookUpAll(); model.findMetaAll() } }))
+            flip("Find covers and details", "Covers and descriptions for games from other consoles, Switch banners in Couch Mode, and critic scores, popularity, year and genre for every game. Your files are matched on this Mac; libretro sees only a game's name, Wikidata a name and any chosen item ID, Wikipedia the article title for reader counts, and the banner service only the title ID.", .init(get: { model.lookUp == true }, set: { model.lookUp = $0; if $0 { model.lookUpAll(); model.findMetaAll() } }))
             line("Game details", model.scoring.isEmpty ? "Looks up every game not checked in the last month, a couple of seconds each, while you use Docked." : "Finding details, \(model.scoring.count) to go…") {
                 if !model.scoring.isEmpty { ProgressView().controlSize(.small) }
                 Button("Find for All Games") { model.lookUpAll(); model.findMetaAll() }.disabled(model.lookUp != true || !model.scoring.isEmpty)
             }
-            flip("Check for updates at launch", "Asks GitHub for the newest version numbers of Docked and its engine. Nothing else is sent.", $model.updatesAtLaunch)
-            line("Updates", "") { if model.checkingUpdate { ProgressView().controlSize(.small) }; Button("Check Now") { model.leaveSettings { model.lookForUpdate() } }.disabled(model.checkingUpdate) }
+            Divider()
+            line("Updates", "Asks GitHub for the newest version numbers of Docked and its engine. Nothing else is sent.") { if model.checkingUpdate { ProgressView().controlSize(.small) }; Button("Check Now") { model.leaveSettings { model.lookForUpdate() } }.disabled(model.checkingUpdate) }
+            flip("Check for updates at launch", "", $model.updatesAtLaunch)
         }
     }
     @ViewBuilder var converting: some View {
@@ -42,10 +50,11 @@ struct SettingsSheet: View {
             line("Keys file", findKeys(model.keys).map { ($0 as NSString).lastPathComponent } ?? "Not chosen. Needed for .nsp, .xci, .nsz and .xcz games.") { Button(findKeys(model.keys) == nil ? "Choose…" : "Change…") { _ = model.pickKeys() } }
             if model.organized { line("New games go to", "Their console's folder in your library, automatically. Choose a folder of your own only if you want to.") { HStack { Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([model.consoleFolder("switch")]) }; Button("Choose…") { if let u = model.pickFolder(model.destination) { model.destination = u; model.organized = false } } } } }
             else { line("New games go to", model.destination.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) { Button("Change…") { if let u = model.pickFolder(model.destination) { model.destination = u } } } }
-            flip("Find details when a game is done", "Critic score, popularity, year and genre from Wikidata and Wikipedia, which see only the game's name.", .init(get: { model.lookUp == true && model.metaConverted ?? true }, set: { model.metaConverted = $0; if $0, model.lookUp != true { model.lookUp = true } }))
+            flip("Find details when a game is done", "Critic score, popularity, year and genre from Wikidata and Wikipedia, which see the game's name, its Wikidata ID and its Wikipedia article title.", .init(get: { model.lookUp == true && model.metaConverted ?? true }, set: { model.metaConverted = $0; if $0, model.lookUp != true { model.lookUp = true } }))
             line("When a game is done", "You can change this for each game.") { Picker("When a game is done", selection: $model.after) { ForEach(After.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
             flip("Skip the pipeline step", "Faster to convert, slower to start the first time.", $model.quick)
             line("Conversion speed", model.speed.note + " The finished game is the same. Applies to games added after this.") { Picker("Conversion speed", selection: $model.speed) { ForEach(Speed.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
+            line("Convert", model.convertWhen.note) { Picker("Convert", selection: $model.convertWhen) { ForEach(ConvertWhen.allCases, id: \.self) { Text($0.label).tag($0) } }.labelsHidden().fixedSize() }
             if !phoneGames.isEmpty { line("Games for iPhone and iPad", phoneGames.map(\.name).joined(separator: ", ")) { Button("Open Steps…") { model.leaveSettings { model.showXcode = true } } } }
             line("Cloud saves", model.cloudSaves.isEmpty ? "Off. Choose a folder in iCloud Drive to carry your Switch saves between Macs and an iPhone or iPad." : "Every converted game syncs its save through \((model.cloudSaves as NSString).lastPathComponent). It starts with the newer save.") {
                 if !model.cloudSaves.isEmpty { Button("Turn Off") { model.cloudSaves = "" } }
@@ -82,6 +91,15 @@ struct SettingsSheet: View {
 }
 
 // A game has arrived: its cover comes down, and what comes next is right there.
+/// One Settings row: title and description on the left, wrapping to fit; the control on the right at its natural size.
+func settingsRow<C: View>(_ t: String, _ d: String, _ c: () -> C) -> some View {
+    HStack(alignment: .center, spacing: 20) {
+        VStack(alignment: .leading, spacing: 2) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        c().fixedSize()
+    }
+}
+
 struct FinishCard: View {
     @EnvironmentObject var model: Model
     let game: Game
@@ -132,7 +150,7 @@ struct RetroSettings: View {
     @State private var busy = false
     @State private var note: String?
     @State private var pads = Pads.installed
-    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { HStack(alignment: .center, spacing: 14) { VStack(alignment: .leading, spacing: 1) { Text(t); if !d.isEmpty { Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) } }; Spacer(); c() } }
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { settingsRow(t, d, c) }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let u = Cheevos.user, Cheevos.signedIn {
@@ -176,5 +194,72 @@ struct RetroSettings: View {
                 switch r { case .success: key = ""; model.objectWillChange.send(); model.refreshCheevos(force: true); case .failure(let e): note = e.localizedDescription }
             }
         }
+    }
+}
+
+struct FriendsSettings: View {
+    @EnvironmentObject var model: Model
+    @State private var ready = Friends.ready
+    @State private var airDrop = UserDefaults.standard.string(forKey: "friends.airDrop") ?? ""
+    @State private var share: URL?   // a copy made once, for AirDrop, Messages or Mail
+    @State private var note: String?
+    @State private var choosing = false
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { settingsRow(t, d, c) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            line("Friends circle", ready ? "Connected through \(Friends.meetingPoint ?? "your meeting point"). To add friends, open a game's Friends screen (Friends menu, or click both sticks) and swap codes." : "Play local wireless games with friends over the internet. Add the friends pass you were sent: AirDrop and Messages save it to Downloads.") {
+                Button(ready ? "Replace Pass…" : "Add Friends Pass…") { pick() }
+                if ready, let u = share { ShareLink("Send to a Friend…", item: u) }
+            }
+            if let note { Text(note).font(.caption).foregroundStyle(.red) }
+            line("Multiplayer for older games", "For a game converted before multiplayer: converts it again, then turns Play with friends on. Its save stays, but this takes a while.") {
+                Button("Add Multiplayer to Game…") { choosing = true }
+            }
+            line("In each game", "Turn on Play with friends in a game's Game Settings, then start its local wireless mode. For an older game, use Add Multiplayer here or the button in its Game Settings.") { EmptyView() }
+            line("For smooth play", "Ethernet plays best. On Wi-Fi, let Docked pause AirDrop while you play. A slower Mac slows both players, so set its Upscaling to Standard. Keep Connection smoothing off for fighting and racing games.") { EmptyView() }
+            line("Pause AirDrop on Wi-Fi", "Keeps Wi-Fi on your network during friends games. Asks for your password each time.") {
+                Picker("Pause AirDrop on Wi-Fi", selection: $airDrop) { Text("Ask").tag(""); Text("Always").tag("pause"); Text("Never").tag("leave") }.labelsHidden().fixedSize()
+                    .onChange(of: airDrop) { v in if v.isEmpty { UserDefaults.standard.removeObject(forKey: "friends.airDrop") } else { UserDefaults.standard.set(v, forKey: "friends.airDrop") } }
+            }
+            line("Start your own circle", "Run Friends/meeting/setup_meeting.py once with a Cloudflare token. It sets up a free meeting point and saves your pass here. Share the pass only with friends you trust.") {
+                Button("How…") { NSWorkspace.shared.open(URL(string: "https://github.com/Tyrus707/docked/blob/main/Friends/README.md")!) }
+            }
+            Text("Friends you play with can see your internet address, as in any direct online game.").font(.caption).foregroundStyle(.secondary)
+        }.onAppear { Friends.adoptOlder(); ready = Friends.ready; share = Friends.shareable() }
+        .sheet(isPresented: $choosing) { FriendsGamePicker() }
+    }
+    func pick() {
+        let p = NSOpenPanel(); p.canChooseDirectories = false; p.allowsMultipleSelection = false; p.message = "Choose the friends pass (friends.cfg) you were sent."; p.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first   // where AirDrop and Messages put it
+        guard p.runModal() == .OK, let u = p.url else { return }
+        do { try Friends.use(u); note = nil } catch { note = error.localizedDescription }
+        ready = Friends.ready; share = Friends.shareable()
+    }
+}
+
+// Pick an older Switch game to convert again with the friends switch added.
+struct FriendsGamePicker: View {
+    @EnvironmentObject var model: Model
+    @Environment(\.dismiss) var dismiss
+    private var games: [Game] { model.games.filter { $0.rom == nil && !$0.missing && $0.away == nil && !Friends.supported($0.url) } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add Multiplayer to Game").font(.title2.weight(.semibold))
+            Text("Choose a Switch game converted before multiplayer. Docked converts it again, then turns on Play with friends. Its save stays. If Docked can't find the originals, check the Trash before emptying it, or add the game file again; links in Docked's Inputs folder need the original file.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                if games.isEmpty {
+                    Text("Every converted game here already has multiplayer. Turn on Play with friends in a game's Game Settings.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.vertical, 12)
+                } else {
+                    ForEach(games) { g in
+                        Button { choose(g) } label: { HStack { Text(g.name).foregroundStyle(style.text); Spacer(); Image(systemName: "chevron.right").foregroundStyle(.secondary) } }.buttonStyle(.plain)
+                        Divider()
+                    }
+                }
+            }.frame(minHeight: 120, maxHeight: 300)
+            HStack { Spacer(); Button("Cancel") { dismiss() } }
+        }.padding(24).frame(width: 480).background(Backdrop())
+    }
+    func choose(_ g: Game) {
+        dismiss()
+        model.leaveSettings { model.reconvertForFriends(g) }
     }
 }

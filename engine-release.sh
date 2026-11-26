@@ -19,8 +19,11 @@ PUB=$(sed -n 's/.*static let publicKey = "\(.*\)".*/\1/p' Sources/Update.swift)
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 # An engine exactly as committed, as Bundle/make.sh carries it
 lay() { mkdir -p "$2/engine"; $G archive "$1" | tar -xf - -C "$2/engine"; rm -rf "$2/engine/docs/images" "$2/engine/.github"; }
+# Play with friends goes in as Bundle/make.sh puts it in. Older engines in players' hands may or may not have it, so a difference from one is offered only when
+# its tree matches (Engine.swift falls back to the full engine otherwise)
+layf() { lay "$1" "$2"; ./Friends/apply.sh "$2/engine"; }
 pack() { (cd "$1" && COPYFILE_DISABLE=1 tar -cJf "$2" engine*) }   # no AppleDouble files: Docked checks every file
-lay "$PIN" "$W/new"; read TREE FILES <<< "$(python3 -I Bundle/engine_tree.py tree "$W/new/engine")"
+layf "$PIN" "$W/new"; read TREE FILES <<< "$(python3 -I Bundle/engine_tree.py tree "$W/new/engine")"
 C=${PIN:0:12}; pack "$W/new" "$W/engine-$C.tar.xz"
 # Which engines players may have: those recent Docked versions carried, and the one the last engine update gave them
 froms=$(for c in $(git log --format=%H -n 30 -- ENGINE_PIN Sources/Core.swift); do git show "$c:ENGINE_PIN" 2>/dev/null | awk '$1=="commit"{print $2}'; git show "$c:Sources/Core.swift" 2>/dev/null | sed -n 's/^let pinnedEngine = "\(.*\)"/\1/p'; done)
@@ -30,7 +33,8 @@ deltas="[]"
 for F in ${(f)froms}; do
   $G fetch -q --depth 1 https://github.com/seedds/nxnative.git "$F" || { echo "skipping ${F:0:8}: not fetchable"; continue; }
   if ! $G diff --quiet "$F" "$PIN" -- .github/requirements/tools.txt; then echo "The engine wants other Python packages than ${F:0:8} has. Players need a full Docked release for it. Nothing was published."; exit 1; fi
-  lay "$F" "$W/old-$F"; read FT _ <<< "$(python3 -I Bundle/engine_tree.py tree "$W/old-$F/engine")"
+  lay "$F" "$W/old-$F"; ./Friends/apply.sh "$W/old-$F/engine" >/dev/null 2>&1 || { rm -rf "$W/old-$F"; lay "$F" "$W/old-$F"; }   # with Play with friends, as Docked carries engines now
+  read FT _ <<< "$(python3 -I Bundle/engine_tree.py tree "$W/old-$F/engine")"
   mkdir "$W/d-$F"; echo "from ${F:0:8}: $(python3 -I Bundle/engine_tree.py delta "$W/old-$F/engine" "$W/new/engine" "$W/d-$F")"
   N="engine-${F:0:12}-$C.tar.xz"; pack "$W/d-$F" "$W/$N"
   deltas=$(python3 -I -c 'import json,sys,hashlib,os; d=json.loads(sys.argv[1]); f=sys.argv[2]; d.append({"name":os.path.basename(f),"sha256":hashlib.sha256(open(f,"rb").read()).hexdigest(),"bytes":os.path.getsize(f),"from":sys.argv[3],"fromTree":sys.argv[4]}); print(json.dumps(d))' "$deltas" "$W/$N" "$F" "$FT")

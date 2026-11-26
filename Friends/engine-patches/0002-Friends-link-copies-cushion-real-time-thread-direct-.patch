@@ -1,0 +1,444 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 04:29:45 -0500
+Subject: [PATCH 2/8] Friends link: copies, cushion, real-time thread, direct
+ paths, checker
+
+---
+ dm/host/friends_link.c         | 170 ++++++++++++++++++++++++---------
+ dm/host/friends_link.h         |   3 +-
+ dm/host/tests/b_friends_net.c  |  46 +++++++++
+ dm/host/tests/t_friends_link.c |  14 ++-
+ friends_check.c                |  30 ++++++
+ 5 files changed, 216 insertions(+), 47 deletions(-)
+ create mode 100644 dm/host/tests/b_friends_net.c
+ create mode 100644 friends_check.c
+
+diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
+index 3e902358..9c8fdfcd 100644
+--- a/dm/host/friends_link.c
++++ b/dm/host/friends_link.c
+@@ -4,11 +4,14 @@
+ #include <arpa/inet.h>
+ #include <errno.h>
+ #include <fcntl.h>
+-#include <poll.h>
++#include <mach/mach.h>
++#include <mach/mach_time.h>
++#include <mach/thread_policy.h>
+ #include <pthread.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <sys/event.h>
+ #include <sys/socket.h>
+ #include <sys/stat.h>
+ #include <time.h>
+@@ -18,19 +21,28 @@
+ // A nonce is random per run, so a packet recorded in one run means nothing in another; the counter window refuses repeats within a run;
+ // a nonce once replaced is never taken again; a packet bearing this Mac's own nonce as sender is a reflection.
+ enum { T_HELLO = 1, T_WELCOME, T_PING, T_SCAN, T_ROOM, T_JOIN, T_REFUSED, T_SYNC, T_LEAVE, T_KICK, T_DATA, T_MAX };
++enum { RINGS = 2, COPY_MAX = 700, COPIES = 128, HELD = 512, SAMPLES = 256, CUSHION_MAX = 25000, DESTS = 9 };
+ enum { HDR = 32, TAG = 16, RETIRED = 32, LOST_MS = 6000, JOIN_MS = 4000, SCAN_MS = 450 };
++static const uint32_t COPY_AFTER[RINGS] = {5000, 11000};   // µs: past a lost packet, and past a short dropout
+ static const uint8_t MAGIC[4] = {'D', 'S', 'F', '1'};
+ typedef struct {
+     struct sockaddr_in addr; uint64_t nonce, high, window, retired[RETIRED]; unsigned nretired; int up; uint64_t seen, hello_at, welcome_at;
+-    int node; fl_network room; uint64_t room_at;
++    int node; fl_network room; uint64_t room_at; uint64_t echo_t, echo_at; double rtt, rtt_max;
+ } peer;
++// A game packet carries its sender's clock and a number per destination, so a second copy is recognised and an uneven network can be evened out.
++typedef struct { uint32_t src, dst; uint16_t sport, dport; uint32_t seq; uint64_t sent; } data_head;
++typedef struct { int init; uint32_t high; uint64_t bits[4]; } once;
++typedef struct { int init; int64_t base, base_old; uint64_t base_at, last_due; uint32_t ex[SAMPLES]; unsigned n; uint32_t cushion; } flow;
++typedef struct held { struct held *next; uint64_t due; data_head h; size_t n; uint8_t d[]; } held;
++typedef struct { uint64_t due; int peer; uint64_t nonce; size_t n; uint8_t d[24 + COPY_MAX]; } copy;
+ struct friends_link {
+     pthread_mutex_t m; pthread_t th; int fd, stop, threaded; fl_setup set; fl_hooks h; uint64_t nonce, counter; uint8_t mac[6];
+     peer p[FL_PEERS]; int state, reason, host; fl_network net; fl_update upd[8]; uint8_t pass[32]; uint64_t sync_at;
+-    int joining, join_peer, refused; fl_stats st; int dirty;
++    int joining, join_peer, refused; fl_stats st; int dirty, kq;
++    uint32_t seq[DESTS]; once seen[8][DESTS]; flow flows[8]; held *q; int nq; copy copies[RINGS][COPIES]; unsigned copy_r[RINGS], copy_w[RINGS];
+ };
+ typedef struct { uint8_t session[16], pass[32]; fl_user user; int16_t version; uint8_t r[6]; } join_msg;
+-typedef struct { uint32_t src, dst; uint16_t sport, dport; } data_head;
++static uint64_t us(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000; }
+ static uint64_t ms(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000; }
+ static void hmac(const uint8_t key[32], const void *d, size_t n, uint8_t out[32]) { CCHmac(kCCHmacAlgSHA256, key, 32, d, n, out); }
+ static int tag_ok(const uint8_t *a, const uint8_t *b) { uint8_t x = 0; for (int i = 0; i < TAG; i++) x |= a[i] ^ b[i]; return !x; }
+@@ -79,11 +91,20 @@ int fl_load(const char *path, int loop, fl_setup *o, char *why, size_t wl) {
+ // ---- sending (with the lock held) ----
+ static void put(friends_link *f, peer *p, int type, const void *d, size_t n) {
+     if (n > FL_PAYLOAD || f->fd < 0) return;
+-    uint8_t b[HDR + FL_PAYLOAD + TAG] = {0}, t[32]; uint64_t to = type == T_HELLO ? 0 : p->nonce, c = ++f->counter;
++    uint8_t b[HDR + FL_PAYLOAD + TAG], t[32]; memset(b, 0, HDR); uint64_t to = type == T_HELLO ? 0 : p->nonce, c = ++f->counter;
+     memcpy(b, MAGIC, 4); b[4] = (uint8_t)type; memcpy(b + 8, &f->nonce, 8); memcpy(b + 16, &to, 8); memcpy(b + 24, &c, 8); if (n) memcpy(b + HDR, d, n);
+     hmac(f->set.key, b, HDR + n, t); memcpy(b + HDR + n, t, TAG);
+     if (sendto(f->fd, b, HDR + n + TAG, 0, (struct sockaddr *)&p->addr, sizeof p->addr) > 0) f->st.tx++;
+ }
++static void wake(friends_link *f) { struct kevent e; EV_SET(&e, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, NULL); kevent(f->kq, &e, 1, NULL, 0, NULL); }
++static void put_game(friends_link *f, int i, const void *d, size_t n) {   // now, and a second copy a few ms later when it is small: one lost packet is then not felt
++    put(f, &f->p[i], T_DATA, d, n); if (n > sizeof ((copy *)0)->d) return;
++    uint64_t now = us();
++    for (int k = 0; k < RINGS; k++) { if (f->copy_w[k] - f->copy_r[k] >= COPIES) continue; copy *c = &f->copies[k][f->copy_w[k]++ % COPIES]; c->due = now + COPY_AFTER[k]; c->peer = i; c->nonce = f->p[i].nonce; c->n = n; memcpy(c->d, d, n); }
++}
++static void reset_flow(friends_link *f, int node) { memset(&f->flows[node], 0, sizeof(flow)); memset(f->seen[node], 0, sizeof f->seen[node]); }
++static void reset_flows(friends_link *f) { for (int i = 0; i < 8; i++) reset_flow(f, i); memset(f->seq, 0, sizeof f->seq); for (int k = 0; k < RINGS; k++) f->copy_r[k] = f->copy_w[k];
++    while (f->q) { held *h = f->q; f->q = h->next; free(h); } f->nq = 0; }
+ static void changed(friends_link *f) { f->dirty = 1; }
+ static void sync_room(friends_link *f) { for (int i = 0; i < f->set.npeers; i++) if (f->p[i].node > 0) put(f, &f->p[i], T_SYNC, &f->net, sizeof f->net); f->sync_at = ms(); }
+ static void note(friends_link *f, int node, int change) { f->upd[node].change |= (uint8_t)change; }
+@@ -107,7 +128,43 @@ static int net_ok(const fl_network *n) {   // what a friend sends is checked too
+ }
+ 
+ // ---- receiving (with the lock held) ----
+-typedef struct { int have; data_head h; size_t n; uint8_t d[FL_PAYLOAD]; } delivery;
++// This Mac's friend i in the room, known by the identity its handshake proved: -1 when not in it
++static int node_of(friends_link *f, int i) {
++    if (!f->p[i].up) return -1;
++    if (f->state == FL_CREATED) return f->p[i].node > 0 ? f->p[i].node : -1;
++    if (f->state != FL_CONNECTED) return -1;
++    uint8_t mac[6] = {2}; memcpy(mac + 1, &f->p[i].nonce, 5); for (int k = 0; k < 8; k++) if (f->net.nodes[k].connected && !memcmp(f->net.nodes[k].mac, mac, 6)) return k;
++    return -1;
++}
++static int first_time(once *o, uint32_t seq) {
++    if (!o->init) { memset(o, 0, sizeof *o); o->init = 1; o->high = seq; o->bits[0] = 1; return 1; }
++    int32_t ahead = (int32_t)(seq - o->high);
++    if (ahead > 0) {
++        if (ahead >= 256) memset(o->bits, 0, sizeof o->bits);
++        else for (int k = 0; k < ahead; k++) { for (int w = 3; w > 0; w--) o->bits[w] = o->bits[w] << 1 | o->bits[w - 1] >> 63; o->bits[0] <<= 1; }
++        o->bits[0] |= 1; o->high = seq; return 1;
++    }
++    unsigned back = (unsigned)-ahead; if (ahead <= -256 || o->bits[back >> 6] >> (back & 63) & 1) return 0;
++    o->bits[back >> 6] |= 1ull << (back & 63); return 1;
++}
++static int cmp32(const void *a, const void *b) { uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b; return x < y ? -1 : x > y; }
++// When this packet should reach the game: the sender's own spacing, plus a cushion just big enough for how uneven this connection has been (0 on a steady one)
++static uint64_t due_at(friends_link *f, flow *w, uint64_t sent, uint64_t now) {
++    int64_t t = (int64_t)(now - sent), off = 0;
++    if (w->init && (__builtin_sub_overflow(t, w->base, &off) || off > 10000000 || off < -10000000)) memset(w, 0, sizeof *w);   // a clock that jumped, or nonsense: start over
++    if (!w->init) { w->init = 1; w->base = w->base_old = t; w->base_at = now; }
++    if (now - w->base_at > 4000000) { w->base_old = w->base; w->base = t; w->base_at = now; }   // the fastest trip of the last 4 to 8 s; forgets slowly, for clocks that drift
++    if (t < w->base) w->base = t;
++    int64_t base = w->base < w->base_old ? w->base : w->base_old, ex = t - base; if (ex < 0) ex = 0; if (ex > 1000000) ex = 1000000;
++    w->ex[w->n++ % SAMPLES] = (uint32_t)ex;
++    if (w->n >= 30 && w->n % 16 == 0) {
++        uint32_t s[SAMPLES]; unsigned k = w->n < SAMPLES ? w->n : SAMPLES; memcpy(s, w->ex, k * sizeof *s); qsort(s, k, sizeof *s, cmp32); uint32_t want = s[k - 1 - k / 64];
++        if (want > CUSHION_MAX) want = CUSHION_MAX;
++        w->cushion = want > w->cushion ? want : w->cushion - (w->cushion - want > 250 ? 250 : w->cushion - want);   // up at once, down gently
++    }
++    uint64_t due = sent + (uint64_t)base + w->cushion; if (due < now) due = now; if (due > now + CUSHION_MAX) due = now + CUSHION_MAX;
++    (void)f; return due;
++}
+ static int member_of(friends_link *f, uint32_t ip) { for (int i = 0; i < 8; i++) if (f->net.nodes[i].connected && f->net.nodes[i].ip == ip) return i; return -1; }
+ int fl_is_broadcast(uint32_t ip) { return ip == FL_NET + 255 || ip == 0xFFFFFFFFu; }
+ int fl_is_virtual(uint32_t ip) { return (ip & FL_MASK) == FL_NET || ip == 0xFFFFFFFFu; }
+@@ -126,28 +183,34 @@ static void on_join(friends_link *f, peer *p, const join_msg *j) {
+     else if (!memchr(j->user.name, 0, sizeof j->user.name)) why = 5;
+     else { for (int i = 1; i < f->net.max_nodes; i++) if (!f->net.nodes[i].connected) { slot = &f->net.nodes[i]; at = i; break; } if (!slot) why = 6; }
+     if (why) { f->st.refused++; put(f, p, T_REFUSED, &why, 1); return; }
+-    memset(slot, 0, sizeof *slot); slot->ip = FL_NET + 1 + (uint32_t)at; slot->mac[0] = 2; memcpy(slot->mac + 1, &p->nonce, 5); slot->id = (int8_t)at; slot->connected = 1;
++    reset_flow(f, at); memset(slot, 0, sizeof *slot); slot->ip = FL_NET + 1 + (uint32_t)at; slot->mac[0] = 2; memcpy(slot->mac + 1, &p->nonce, 5); slot->id = (int8_t)at; slot->connected = 1;
+     memcpy(slot->name, j->user.name, sizeof slot->name); slot->version = j->version; p->node = at; f->net.node_count++; note(f, at, 1); sync_room(f); changed(f);
+ }
+ static void on_sync(friends_link *f, int i, const fl_network *n) {
+     if (!net_ok(n)) { f->st.bad_packet++; return; }
+     int here = 0; for (int k = 1; k < 8; k++) here |= n->nodes[k].connected && !memcmp(n->nodes[k].mac, f->mac, 6);
+-    if (f->joining && f->join_peer == i && here) { f->net = *n; f->state = FL_CONNECTED; f->host = i; f->reason = 0; f->joining = 0; memset(f->upd, 0, sizeof f->upd); changed(f); return; }
++    if (f->joining && f->join_peer == i && here) { reset_flows(f); f->net = *n; f->state = FL_CONNECTED; f->host = i; f->reason = 0; f->joining = 0; memset(f->upd, 0, sizeof f->upd); changed(f); return; }
+     if (f->state != FL_CONNECTED || f->host != i) return;
+     if (!here || memcmp(n->id.session, f->net.id.session, 16)) { lose_host(f, 5); return; }
+-    if (memcmp(n, &f->net, sizeof *n)) { for (int k = 0; k < 8; k++) if (n->nodes[k].connected != f->net.nodes[k].connected) note(f, k, n->nodes[k].connected ? 1 : 2); f->net = *n; changed(f); }
++    if (memcmp(n, &f->net, sizeof *n)) { for (int k = 0; k < 8; k++) if (n->nodes[k].connected != f->net.nodes[k].connected) { note(f, k, n->nodes[k].connected ? 1 : 2); reset_flow(f, k); } f->net = *n; changed(f); }
+ }
+-static void on_data(friends_link *f, int i, const uint8_t *d, size_t n, delivery *out) {
++static void on_data(friends_link *f, int i, const uint8_t *d, size_t n) {
+     if (n < sizeof(data_head)) { f->st.bad_packet++; return; }
+-    data_head h; memcpy(&h, d, sizeof h); int bc = fl_is_broadcast(h.dst), from = member_of(f, h.src); uint32_t me = own_ip(f);
+-    if (!me || from < 0 || h.src == me || !fl_is_virtual(h.dst) || !h.sport || !h.dport) { f->st.refused++; return; }
+-    if (f->state == FL_CREATED) {
+-        if (f->p[i].node != from) { f->st.refused++; return; }   // only as itself
+-        if (h.dst != me) for (int k = 0; k < f->set.npeers; k++) if (k != i && f->p[k].node > 0 && (bc || f->net.nodes[f->p[k].node].ip == h.dst)) put(f, &f->p[k], T_DATA, d, n);
+-    } else if (f->host != i) { f->st.refused++; return; }
+-    if (bc || h.dst == me) { out->have = 1; out->h = h; out->n = n - sizeof h; memcpy(out->d, d + sizeof h, out->n); }
+-}
+-static void receive(friends_link *f, const uint8_t *b, size_t n, const struct sockaddr_in *from, delivery *out) {
++    data_head h; memcpy(&h, d, sizeof h); int bc = fl_is_broadcast(h.dst), from = member_of(f, h.src), who = node_of(f, i); uint32_t me = own_ip(f);
++    int to = bc ? 8 : (int)(h.dst - FL_NET) - 1;
++    if (!me || from < 0 || h.src == me || !fl_is_virtual(h.dst) || to < 0 || to > 8 || (!bc && to > 7) || !h.sport || !h.dport) { f->st.refused++; return; }
++    // Only as itself; the host alone may pass on what another member sent
++    if (who != from && !(f->state == FL_CONNECTED && f->host == i)) { f->st.refused++; return; }
++    if (!first_time(&f->seen[from][to], h.seq)) { f->st.copies_spare++; return; }
++    if (f->state == FL_CREATED && h.dst != me) for (int k = 0; k < f->set.npeers; k++) if (k != i && f->p[k].node > 0 && (bc || f->net.nodes[f->p[k].node].ip == h.dst)) put_game(f, k, d, n);
++    if (!bc && h.dst != me) return;
++    if (f->nq >= HELD) { f->st.dropped++; return; }
++    held *x = malloc(sizeof *x + n - sizeof h); if (!x) return;
++    uint64_t now = us(); x->h = h; x->n = n - sizeof h; memcpy(x->d, d + sizeof h, x->n); x->due = due_at(f, &f->flows[from], h.sent, now); f->st.game_rx++;
++    held **at = &f->q; while (*at && ((*at)->due < x->due || ((*at)->due == x->due && ((*at)->h.src != h.src || (int32_t)((*at)->h.seq - h.seq) < 0)))) at = &(*at)->next;
++    x->next = *at; *at = x; f->nq++;
++}
++static void receive(friends_link *f, const uint8_t *b, size_t n, const struct sockaddr_in *from) {
+     int i = 0; while (i < f->set.npeers && (f->p[i].addr.sin_addr.s_addr != from->sin_addr.s_addr || f->p[i].addr.sin_port != from->sin_port)) i++;
+     if (i == f->set.npeers) { f->st.bad_source++; return; }
+     if (n < HDR + TAG || n > HDR + FL_PAYLOAD + TAG || memcmp(b, MAGIC, 4) || b[5] || b[6] || b[7] || !b[4] || b[4] >= T_MAX) { f->st.bad_packet++; return; }
+@@ -177,33 +240,42 @@ static void receive(friends_link *f, const uint8_t *b, size_t n, const struct so
+         case T_SYNC: if (dn == sizeof(fl_network)) { fl_network x; memcpy(&x, d, sizeof x); on_sync(f, i, &x); } else f->st.bad_packet++; break;
+         case T_LEAVE: drop_node(f, p); break;
+         case T_KICK: if (f->host == i) lose_host(f, dn == 1 && d[0] == 3 ? 3 : 5); break;
+-        case T_DATA: on_data(f, i, d, dn, out); break;
++        case T_DATA: on_data(f, i, d, dn); break;
++        case T_PING: if (dn == 24) { uint64_t v[3]; memcpy(v, d, 24); uint64_t t = us(); p->echo_t = v[0]; p->echo_at = t; if (v[1] && v[1] <= t && v[2] <= t - v[1] && t - v[1] < 5000000) { double q = (double)(t - v[1] - v[2]) / 1000; p->rtt = p->rtt ? p->rtt * 0.9 + q * 0.1 : q; if (q > p->rtt_max) p->rtt_max = q; } } else if (dn) f->st.bad_packet++; break;
+         default: break;
+     }
+ }
++static void ping(friends_link *f, peer *p) { uint64_t t = us(), v[3] = {t, p->echo_t, p->echo_t ? t - p->echo_at : 0}; put(f, p, T_PING, v, sizeof v); }
+ static void tick(friends_link *f) {
+     uint64_t now = ms();
+     for (int i = 0; i < f->set.npeers; i++) { peer *p = &f->p[i];
+         if (p->up && now - p->seen > LOST_MS) peer_down(f, i);
+-        if (now - p->hello_at >= 1000) { p->hello_at = now; put(f, p, p->up ? T_PING : T_HELLO, NULL, 0); } }
++        if (now - p->hello_at >= (p->up ? 250 : 1000)) { p->hello_at = now; if (p->up) ping(f, p); else put(f, p, T_HELLO, NULL, 0); } }
+     if (f->state == FL_CREATED && now - f->sync_at >= 500) sync_room(f);
+ }
++static void send_copies(friends_link *f, uint64_t now) {
++    for (int k = 0; k < RINGS; k++) for (; f->copy_r[k] != f->copy_w[k]; f->copy_r[k]++) { copy *c = &f->copies[k][f->copy_r[k] % COPIES]; if (c->due > now) break;
++        peer *p = &f->p[c->peer]; if (p->up && p->nonce == c->nonce && (f->state == FL_CREATED || f->state == FL_CONNECTED)) put(f, p, T_DATA, c->d, c->n); }
++}
+ static void *worker(void *a) {
+-    friends_link *f = a; pthread_setname_np("friends link"); delivery *out = malloc(sizeof *out); uint8_t *b = malloc(65536);
+-    while (out && b && !__atomic_load_n(&f->stop, __ATOMIC_ACQUIRE)) {
+-        struct pollfd pf = {f->fd, POLLIN, 0}; int r = poll(&pf, 1, 50);
++    friends_link *f = a; pthread_setname_np("friends link"); pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
++    mach_timebase_info_data_t tb; mach_timebase_info(&tb); double k = 1e3 * tb.denom / tb.numer;   // wakes on time even when the Mac is busy; needs almost no time itself
++    thread_time_constraint_policy_data_t tc = {0, (uint32_t)(200 * k), (uint32_t)(1000 * k), 1}; thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&tc, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
++    uint8_t *b = malloc(65536); uint64_t ticked = 0;
++    while (b && !__atomic_load_n(&f->stop, __ATOMIC_ACQUIRE)) {
++        pthread_mutex_lock(&f->m); uint64_t now = us(), next = now + 20000; if (f->q && f->q->due < next) next = f->q->due; for (int k = 0; k < RINGS; k++) if (f->copy_r[k] != f->copy_w[k] && f->copies[k][f->copy_r[k] % COPIES].due < next) next = f->copies[k][f->copy_r[k] % COPIES].due; pthread_mutex_unlock(&f->m);
++        uint64_t left = next > now ? next - now : 0; struct timespec ts = {0, (long)(left * 1000)}; struct kevent e[2]; kevent(f->kq, NULL, 0, e, 2, &ts);
+         for (int burst = 0; burst < 256; burst++) {
+-            struct sockaddr_in from; socklen_t fl = sizeof from; ssize_t n = r > 0 ? recvfrom(f->fd, b, 65536, MSG_DONTWAIT, (struct sockaddr *)&from, &fl) : -1;
+-            out->have = 0; pthread_mutex_lock(&f->m); if (n >= 0) receive(f, b, (size_t)n, &from, out);
+-            if (n < 0) tick(f);
+-            int ev = f->dirty; f->dirty = 0; pthread_mutex_unlock(&f->m);
+-            if (out->have && f->h.data) f->h.data(f->h.opaque, out->h.src, out->h.sport, out->h.dst, out->h.dport, out->d, out->n);
+-            if (ev && f->h.event) f->h.event(f->h.opaque);
+-            if (n < 0) break;
++            struct sockaddr_in from; socklen_t fl = sizeof from; ssize_t n = recvfrom(f->fd, b, 65536, MSG_DONTWAIT, (struct sockaddr *)&from, &fl); if (n < 0) break;
++            pthread_mutex_lock(&f->m); receive(f, b, (size_t)n, &from); pthread_mutex_unlock(&f->m);
+         }
+-        pthread_mutex_lock(&f->m); tick(f); pthread_mutex_unlock(&f->m);
++        pthread_mutex_lock(&f->m); now = us(); if (now - ticked > 20000) { ticked = now; tick(f); } send_copies(f, now); int ev = f->dirty; f->dirty = 0;
++        held *ready = NULL, **tail = &ready; uint32_t me = own_ip(f); while (f->q && f->q->due <= now + 60) { held *x = f->q; f->q = x->next; f->nq--; x->next = NULL; *tail = x; tail = &x->next; }
++        pthread_mutex_unlock(&f->m);
++        if (ev && f->h.event) f->h.event(f->h.opaque);
++        while (ready) { held *x = ready; ready = x->next; if (me && f->h.data) f->h.data(f->h.opaque, x->h.src, x->h.sport, x->h.dst, x->h.dport, x->d, x->n); free(x); }
+     }
+-    free(out); free(b); return NULL;
++    free(b); return NULL;
+ }
+ 
+ // ---- the game's side ----
+@@ -216,12 +288,14 @@ friends_link *fl_start(const fl_setup *s, const fl_hooks *h) {
+     for (int i = 0; i < s->npeers; i++) f->p[i].addr = s->peers[i];
+     struct sockaddr_in a = {.sin_len = sizeof a, .sin_family = AF_INET, .sin_port = htons(s->port), .sin_addr = s->bind};   // never all adapters
+     f->fd = socket(AF_INET, SOCK_DGRAM, 0);
+-    if (f->fd < 0 || !s->bind.s_addr || bind(f->fd, (struct sockaddr *)&a, sizeof a) || pthread_create(&f->th, NULL, worker, f)) { if (f->fd >= 0) close(f->fd); free(f); return NULL; }
+-    fcntl(f->fd, F_SETFD, FD_CLOEXEC); f->threaded = 1; return f;
++    f->kq = kqueue(); int big = 1 << 20, voice = NET_SERVICE_TYPE_VO; struct kevent ev[2]; EV_SET(&ev[0], 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL); EV_SET(&ev[1], (uintptr_t)f->fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
++    if (f->fd >= 0) { setsockopt(f->fd, SOL_SOCKET, SO_RCVBUF, &big, sizeof big); setsockopt(f->fd, SOL_SOCKET, SO_NET_SERVICE_TYPE, &voice, sizeof voice); fcntl(f->fd, F_SETFD, FD_CLOEXEC); }
++    if (f->fd < 0 || f->kq < 0 || !s->bind.s_addr || bind(f->fd, (struct sockaddr *)&a, sizeof a) || kevent(f->kq, ev, 2, NULL, 0, NULL) || pthread_create(&f->th, NULL, worker, f)) { if (f->fd >= 0) close(f->fd); if (f->kq >= 0) close(f->kq); pthread_mutex_destroy(&f->m); free(f); return NULL; }
++    f->threaded = 1; return f;
+ }
+ void fl_stop(friends_link *f) {
+     if (!f) return;
+-    fl_leave(f, 0); fl_leave(f, 1); __atomic_store_n(&f->stop, 1, __ATOMIC_RELEASE); pthread_join(f->th, NULL); close(f->fd);
++    fl_leave(f, 0); fl_leave(f, 1); __atomic_store_n(&f->stop, 1, __ATOMIC_RELEASE); wake(f); pthread_join(f->th, NULL); close(f->fd); close(f->kq); reset_flows(f);
+     memset(&f->set, 0, sizeof f->set); pthread_mutex_destroy(&f->m); free(f);
+ }
+ int fl_state(friends_link *f) { if (!f) return 0; LOCK; int s = f->state; pthread_mutex_unlock(&f->m); return s; }
+@@ -248,7 +322,7 @@ uint32_t fl_create(friends_link *f, const fl_config *c, const fl_security *s, co
+     n->common.channel = c->channel ? c->channel : 6; n->common.link = 3; n->common.type = 2; n->security_mode = s->mode; n->max_nodes = c->max_nodes; n->node_count = 1; n->version = 3;
+     for (int i = 0; i < 8; i++) n->nodes[i].id = (int8_t)i;
+     n->nodes[0].ip = FL_NET + 1; memcpy(n->nodes[0].mac, f->mac, 6); n->nodes[0].connected = 1; memcpy(n->nodes[0].name, u->name, 33); n->nodes[0].version = c->version;
+-    pass_hash(s, n->id.session, f->pass); memset(f->upd, 0, sizeof f->upd); f->state = FL_CREATED; f->reason = 0; changed(f); UNLOCK(0);
++    reset_flows(f); pass_hash(s, n->id.session, f->pass); memset(f->upd, 0, sizeof f->upd); f->state = FL_CREATED; f->reason = 0; changed(f); UNLOCK(0);
+ }
+ static int matches(const fl_network *n, const fl_filter *q) {
+     if (!q) return 1; uint32_t k = q->flags;
+@@ -262,9 +336,11 @@ static int matches(const fl_network *n, const fl_filter *q) {
+ uint32_t fl_scan(friends_link *f, fl_network *o, int *count, int max, const fl_filter *q) {
+     if (!f) return FL_E_DISABLED; if (!count || max < 0 || (max && !o)) return FL_E_INVALID;
+     *count = 0; LOCK; if (f->state < FL_AP) UNLOCK(FL_E_STATE);
+-    for (int i = 0; i < f->set.npeers; i++) { f->p[i].room_at = 0; if (f->p[i].up) put(f, &f->p[i], T_SCAN, NULL, 0); } pthread_mutex_unlock(&f->m);
+-    for (int t = 0; t < SCAN_MS; t += 15) f->h.sleep_ms(15);
+-    LOCK; for (int i = 0; i < f->set.npeers && *count < max; i++) if (f->p[i].room_at && matches(&f->p[i].room, q)) o[(*count)++] = f->p[i].room; UNLOCK(0);
++    uint64_t began = ms();
++    for (int i = 0; i < f->set.npeers; i++) if (f->p[i].up) put(f, &f->p[i], T_SCAN, NULL, 0);
++    pthread_mutex_unlock(&f->m);
++    for (int t = 0; t < SCAN_MS; t += 15) { f->h.sleep_ms(15); if (t == 150) { LOCK; for (int i = 0; i < f->set.npeers; i++) if (f->p[i].up && f->p[i].room_at < began) put(f, &f->p[i], T_SCAN, NULL, 0); pthread_mutex_unlock(&f->m); } }   // asked twice, in case one is lost
++    LOCK; for (int i = 0; i < f->set.npeers && *count < max; i++) if (f->p[i].up && f->p[i].room_at >= began && f->p[i].room_at && matches(&f->p[i].room, q)) o[(*count)++] = f->p[i].room; UNLOCK(0);
+ }
+ uint32_t fl_connect_session(friends_link *f, const uint8_t session[16], const fl_security *s, const fl_user *u, int version) {
+     if (!f) return FL_E_DISABLED; if (!session || !s || !u || s->size > 64 || !memchr(u->name, 0, sizeof u->name)) return FL_E_INVALID;
+@@ -298,11 +374,15 @@ uint32_t fl_kick(friends_link *f, uint32_t ip) {
+ uint32_t fl_address(friends_link *f) { if (!f) return 0; LOCK; uint32_t a = own_ip(f); pthread_mutex_unlock(&f->m); return a; }
+ int fl_send(friends_link *f, uint16_t sport, uint32_t dst, uint16_t dport, const void *d, size_t n) {
+     if (!f || n > FL_PAYLOAD - sizeof(data_head) || !fl_is_virtual(dst)) return -1;
+-    uint8_t b[FL_PAYLOAD]; LOCK; uint32_t me = own_ip(f); if (!me) { pthread_mutex_unlock(&f->m); return -1; }
+-    data_head h = {me, dst, sport, dport}; memcpy(b, &h, sizeof h); if (n) memcpy(b + sizeof h, d, n); int bc = fl_is_broadcast(dst);
+-    if (f->state == FL_CREATED) { for (int i = 0; i < f->set.npeers; i++) if (f->p[i].node > 0 && (bc || f->net.nodes[f->p[i].node].ip == dst)) put(f, &f->p[i], T_DATA, b, sizeof h + n); }
+-    else if (f->host >= 0) put(f, &f->p[f->host], T_DATA, b, sizeof h + n);
+-    pthread_mutex_unlock(&f->m); return 0;
++    uint8_t b[FL_PAYLOAD]; LOCK; uint32_t me = own_ip(f); int bc = fl_is_broadcast(dst), to = bc ? 8 : (int)(dst - FL_NET) - 1; if (!me || to < 0 || (!bc && to > 7)) { pthread_mutex_unlock(&f->m); return -1; }
++    data_head h = {me, dst, sport, dport, ++f->seq[to], us()}; memcpy(b, &h, sizeof h); if (n) memcpy(b + sizeof h, d, n); n += sizeof h; int sent = 0;
++    for (int i = 0; i < f->set.npeers; i++) { int k = node_of(f, i); if (k >= 0 && (bc || k == to)) { put_game(f, i, b, n); sent = 1; } }   // straight to each friend this Mac can reach
++    if (f->state == FL_CONNECTED && f->host >= 0 && (bc ? f->net.node_count > 2 && node_of(f, f->host) < 0 : !sent)) put_game(f, f->host, b, n);   // the rest through the host
++    wake(f); pthread_mutex_unlock(&f->m); return 0;
+ }
+ int fl_friends_seen(friends_link *f) { if (!f) return 0; LOCK; int c = 0; for (int i = 0; i < f->set.npeers; i++) c += f->p[i].up; pthread_mutex_unlock(&f->m); return c; }
+ fl_stats fl_get_stats(friends_link *f) { fl_stats s = {0}; if (!f) return s; LOCK; s = f->st; pthread_mutex_unlock(&f->m); return s; }
++int fl_quality(friends_link *f, int i, double *rtt, double *rtt_max, double *cushion) {   // friend i: 0 when connected
++    if (!f || i < 0 || i >= f->set.npeers) return -1;
++    LOCK; peer *p = &f->p[i]; int k = node_of(f, i), r = p->up ? 0 : -1; *rtt = p->rtt; *rtt_max = p->rtt_max; p->rtt_max = 0; *cushion = k >= 0 ? f->flows[k].cushion / 1000.0 : 0; pthread_mutex_unlock(&f->m); return r;
++}
+diff --git a/dm/host/friends_link.h b/dm/host/friends_link.h
+index caaf96e7..08003c9d 100644
+--- a/dm/host/friends_link.h
++++ b/dm/host/friends_link.h
+@@ -36,7 +36,7 @@ typedef struct {
+     void (*event)(void *);                                                                                    // state or room changed
+     void (*sleep_ms)(int); void *opaque;
+ } fl_hooks;
+-typedef struct { uint64_t rx, bad_source, bad_packet, bad_tag, replay, refused, tx; } fl_stats;
++typedef struct { uint64_t rx, bad_source, bad_packet, bad_tag, replay, refused, tx, game_rx, copies_spare, dropped; } fl_stats;
+ int fl_load(const char *path, int allow_loopback, fl_setup *out, char *why, size_t whylen);   // 0, or -1 with the reason
+ int fl_derive(const char *code, uint8_t key[32]);
+ int fl_private_ip(uint32_t ip, int allow_loopback);
+@@ -61,3 +61,4 @@ int fl_is_broadcast(uint32_t ip);
+ int fl_send(friends_link *, uint16_t sport, uint32_t dst, uint16_t dport, const void *, size_t);
+ int fl_friends_seen(friends_link *);
+ fl_stats fl_get_stats(friends_link *);
++int fl_quality(friends_link *, int i, double *rtt, double *rtt_max, double *cushion);
+diff --git a/dm/host/tests/b_friends_net.c b/dm/host/tests/b_friends_net.c
+new file mode 100644
+index 00000000..737a0af5
+--- /dev/null
++++ b/dm/host/tests/b_friends_net.c
+@@ -0,0 +1,46 @@
++// Benchmark: 60 packets a second each way through a simulated network (delay, jitter, loss, bursts, reordering). Prints what the game would feel.
++#include "../friends_link.h"
++#include <arpa/inet.h>
++#include <mach/mach.h>
++#include <mach/mach_time.h>
++#include <mach/thread_policy.h>
++#include <math.h>
++#include <poll.h>
++#include <pthread.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/socket.h>
++#include <time.h>
++#include <unistd.h>
++static double us(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e3; }
++static void nap(int m) { struct timespec t = {m / 1000, (m % 1000) * 1000000L}; nanosleep(&t, NULL); }
++static struct sockaddr_in at(int p) { struct sockaddr_in a = {.sin_len = 16, .sin_family = AF_INET, .sin_port = htons((uint16_t)p)}; a.sin_addr.s_addr = htonl(0x7f000001); return a; }
++static void rt(void) { mach_timebase_info_data_t tb; mach_timebase_info(&tb); double k = 1e3 * tb.denom / tb.numer; thread_time_constraint_policy_data_t tc = {0, (uint32_t)(500 * k), (uint32_t)(1500 * k), 1}; thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&tc, THREAD_TIME_CONSTRAINT_POLICY_COUNT); }
++static double late_sim, late_game;
++typedef struct { double delay, jitter, loss, burst, spike; const char *name; } net;
++static net N; static volatile int stop; static unsigned seed = 7; static double U(void) { return rand_r(&seed) / (double)RAND_MAX; }
++typedef struct { double due; size_t n; int dir; uint8_t d[4300]; } pk; enum { Q = 4096 }; static pk *q[Q]; static int base_port;
++static void *proxy(void *a) { (void)a; int f[2]; for (int i = 0; i < 2; i++) { f[i] = socket(AF_INET, SOCK_DGRAM, 0); struct sockaddr_in x = at(base_port + 2 + i); if (bind(f[i], (void *)&x, 16)) { perror("proxy"); exit(1); } }
++    double bad_until[2] = {0}, spike_until = 0, next_spike = us() + 2e6; rt();
++    while (!stop) { struct pollfd p[2] = {{f[0], POLLIN, 0}, {f[1], POLLIN, 0}}; poll(p, 2, 1); double now = us(); if (N.spike > 0 && now > next_spike) { spike_until = now + N.spike * 1000; next_spike = now + 3e6; }
++        for (int i = 0; i < 2; i++) for (;;) { uint8_t b[4300]; ssize_t n = recv(f[i], b, sizeof b, MSG_DONTWAIT); if (n < 0) break;
++            if (now < bad_until[i]) continue; if (U() < N.burst) { bad_until[i] = now + 8000; continue; } if (U() < N.loss) continue;
++            pk *k = malloc(sizeof *k); k->n = (size_t)n; memcpy(k->d, b, (size_t)n); k->dir = i; k->due = now + N.delay * 1000 + N.jitter * 1000 * (U() < 0.9 ? U() * 0.5 : U()); if (now < spike_until) k->due = fmax(k->due, spike_until);
++            int s = 0; while (s < Q && q[s]) s++; if (s < Q) q[s] = k; else free(k); }
++        now = us(); for (;;) { int m = -1; for (int s = 0; s < Q; s++) if (q[s] && q[s]->due <= now && (m < 0 || q[s]->due < q[m]->due)) m = s; if (m < 0) break; late_sim = fmax(late_sim, now - q[m]->due); struct sockaddr_in to = at(base_port + !q[m]->dir); sendto(f[!q[m]->dir], q[m]->d, q[m]->n, 0, (void *)&to, 16); free(q[m]); q[m] = NULL; } }
++    close(f[0]); close(f[1]); for (int s = 0; s < Q; s++) { free(q[s]); q[s] = NULL; } return NULL; }
++enum { MAXP = 4000 }; typedef struct { double sent[MAXP], got[MAXP]; int order, last, dup; } side; static side S[2];
++static void data(void *o, uint32_t s, uint16_t sp, uint32_t d, uint16_t dp, const void *p, size_t n) { (void)s; (void)sp; (void)d; (void)dp; (void)n; side *x = o; int i; memcpy(&i, p, 4); if (i < 0 || i >= MAXP) return; if (x->got[i]) x->dup++; else x->got[i] = us(); if (i < x->last) x->order++; else x->last = i; }
++static int cmp(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
++int main(int ac, char **av) { rt(); int P = ac > 1 ? atoi(av[1]) : 900; net all[] = {{0.3, 0.3, 0, 0, 0, "wired home"}, {2, 4, 0.005, 0.0005, 0, "good Wi-Fi"}, {3, 14, 0.02, 0.003, 60, "poor Wi-Fi"}, {15, 5, 0.01, 0.001, 0, "same city"}, {35, 14, 0.03, 0.004, 0, "far away"}};
++    printf("%-12s %9s %9s %9s %9s %9s %7s %6s %6s\n", "network", "lost %", "delay ms", "p99 ms", "worst ms", "jolts", "late", "order", "dup");
++    for (unsigned k = 0; k < sizeof all / sizeof *all; k++) { N = all[k]; stop = 0; base_port = 22000 + (int)k * 10; pthread_t t; memset(S, 0, sizeof S); pthread_create(&t, NULL, proxy, NULL); nap(50); friends_link *L[2];
++        for (int i = 0; i < 2; i++) { fl_setup s = {.port = (uint16_t)(base_port + i), .npeers = 1}; s.bind.s_addr = htonl(0x7f000001); memset(s.key, 9, 32); s.peers[0] = at(base_port + 2 + i); fl_hooks h = {data, NULL, nap, &S[i]}; L[i] = fl_start(&s, &h); }
++        for (int i = 0; i < 800 && !(fl_friends_seen(L[0]) && fl_friends_seen(L[1])); i++) nap(10);
++        fl_config c = {.max_nodes = 2, .version = 1}; fl_security z = {0}; fl_user u = {"P"}; fl_network n[2]; int cnt = 0; fl_open(L[0], 1); fl_create(L[0], &c, &z, &u, NULL); fl_open(L[1], 0); uint32_t r = 1; for (int i = 0; i < 10 && r; i++) { if (!fl_scan(L[1], n, &cnt, 2, NULL) && cnt) r = fl_connect(L[1], n, &z, &u, 1); }
++        if (r) { printf("%-12s could not connect\n", N.name); } else { double t0 = us(); for (int i = 0; i < P; i++) { double w = t0 + i * 1e6 / 60; while (us() < w - 300) { double left = w - us() - 200; if (left > 0) { struct timespec ts = {0, (long)(left * 1000)}; nanosleep(&ts, NULL); } } while (us() < w) {}
++            late_game = fmax(late_game, us() - w); uint8_t b[180] = {0}; memcpy(b, &i, 4); S[1].sent[i] = us(); fl_send(L[0], 1, FL_NET + 2, 2, b, sizeof b); S[0].sent[i] = us(); fl_send(L[1], 1, FL_NET + 1, 2, b, sizeof b); } nap(500);
++            static double d[2 * MAXP]; int m = 0, lost = 0, jolt = 0, late = 0, warm = P / 5; double sum = 0; for (int x = 0; x < 2; x++) { double prev = 0, med; for (int i = warm; i < P; i++) { if (!S[x].got[i]) { lost++; prev = 0; continue; } d[m] = (S[x].got[i] - S[x].sent[i]) / 1000; sum += d[m]; m++; if (prev && fabs(S[x].got[i] - prev - 1e6 / 60) > 8000) jolt++; prev = S[x].got[i]; } (void)med; } qsort(d, (size_t)m, sizeof *d, cmp); double md = d[m / 2]; for (int i = 0; i < m; i++) if (d[i] > md + 16.7) late++;
++            printf("%-12s %9.2f %9.1f %9.1f %9.1f %9d %7d %6d %6d\n", N.name, 100.0 * lost / (m + lost), sum / m, d[(int)(m * .99)], d[m - 1], jolt, late, S[0].order + S[1].order, S[0].dup + S[1].dup); printf("             (simulator late by up to %.1f ms, sender by %.1f ms)\n", late_sim / 1000, late_game / 1000); late_sim = late_game = 0; }
++        fl_stop(L[0]); fl_stop(L[1]); stop = 1; pthread_join(t, NULL); } return 0; }
+diff --git a/dm/host/tests/t_friends_link.c b/dm/host/tests/t_friends_link.c
+index 02efd1ef..af3536a2 100644
+--- a/dm/host/tests/t_friends_link.c
++++ b/dm/host/tests/t_friends_link.c
+@@ -31,6 +31,7 @@ static size_t forge(uint8_t *b, int type, uint64_t s, uint64_t r, uint64_t c, co
+     memset(b, 0, 32); memcpy(b, "DSF1", 4); b[4] = (uint8_t)type; memcpy(b + 8, &s, 8); memcpy(b + 16, &r, 8); memcpy(b + 24, &c, 8); if (n) memcpy(b + 32, d, n);
+     uint8_t t[32]; CCHmac(kCCHmacAlgSHA256, key, 32, b, 32 + n, t); memcpy(b + 32 + n, t, 16); return 48 + n;
+ }
++void *scanner(void *a) { fl_network n[4]; int k; fl_scan(*(friends_link **)a, n, &k, 4, NULL); return NULL; }
+ static char why[200];
+ static int load(const char *text, int mode, int loop) { char p[] = "/tmp/fl_XXXXXX"; int f = mkstemp(p); (void)!write(f, text, strlen(text)); fchmod(f, (mode_t)mode); close(f); fl_setup s; int r = fl_load(p, loop, &s, why, sizeof why); unlink(p); return r; }
+ int main(void) {
+@@ -68,10 +69,21 @@ int main(void) {
+     // attacker 3 handshakes properly from 21009
+     while (recvfrom(s2, pk, sizeof pk, MSG_DONTWAIT, (void *)&fr, &frl) > 0) ; uint64_t me = 0x1122334455667788, an = 0; nap(250); pn = forge(pk, 1, me, 0, 1, NULL, 0, KEY); shoot(s2, pa, pk, pn); for (int i = 0; i < 100 && !an; i++) { nap(5); ssize_t g; while ((g = recvfrom(s2, pk, sizeof pk, MSG_DONTWAIT, (void *)&fr, &frl)) > 0) if (pk[4] == 2) memcpy(&an, pk + 8, 8); }
+     CK(an != 0, "a listed friend with the code is answered"); CK(fl_friends_seen(a) == 2, "hello alone connects nobody"); pn = forge(pk, 3, me, an, 5, NULL, 0, KEY); shoot(s2, pa, pk, pn); UNTIL(fl_friends_seen(a) == 3, 500); CK(fl_friends_seen(a) == 3, "then connected");
+-    int before = cnt(&A); struct { uint32_t s, d; uint16_t sp, dp; char x[4]; } dm = {FL_NET + 2, FL_NET + 1, 1, 2, "bad"}; uint64_t ctr = 10; pn = forge(pk, 11, me, an, ctr++, &dm, sizeof dm, KEY); shoot(s2, pa, pk, pn); nap(100); CK(cnt(&A) == before, "not in the room: no packets"); 
++    int before = cnt(&A); struct { uint32_t s, d; uint16_t sp, dp; uint32_t seq; uint64_t sent; char x[4]; } dm = {FL_NET + 2, FL_NET + 1, 1, 2, 1, 5, "bad"}; _Static_assert(sizeof dm == 32, ""); uint64_t ctr = 10; pn = forge(pk, 11, me, an, ctr++, &dm, sizeof dm, KEY); shoot(s2, pa, pk, pn); nap(100); CK(cnt(&A) == before, "not in the room: no packets"); 
+     uint8_t jm[72 + 32] = {0}; (void)jm; for (int ty = 4; ty <= 11; ty++) for (size_t z = 0; z < 1400; z += 37) { for (size_t k = 0; k < z; k++) huge[k] = (uint8_t)rand_r(&seed); pn = forge(pk, ty, me, an, ctr++, huge, z, KEY); shoot(s2, pa, pk, pn); if (z % 370 == 0) nap(1); } nap(300); CK(fl_state(a) == FL_CREATED && !fl_info(a, &ni, NULL, 0) && ni.node_count == 3 && fl_state(b) == FL_CONNECTED, "a friend's broken packets change nothing"); CK(cnt(&A) == before, "and reach no game");
+     pn = forge(pk, 11, me, an, 12, &dm, sizeof dm, KEY); st = fl_get_stats(a); shoot(s2, pa, pk, pn); nap(60); CK(fl_get_stats(a).replay == st.replay + 1, "repeat refused"); pn = forge(pk, 3, 0xDEAD, an ^ 1, 1, NULL, 0, KEY); st = fl_get_stats(a); shoot(s2, pa, pk, pn); nap(60); CK(fl_get_stats(a).replay == st.replay + 1, "another run's recording refused"); pn = forge(pk, 3, an, an, 1, NULL, 0, KEY); st = fl_get_stats(a); shoot(s2, pa, pk, pn); nap(60); CK(fl_get_stats(a).replay == st.replay + 1, "reflection refused");
+     pn = forge(pk, 3, me + 1, an, 1, NULL, 0, KEY); shoot(s2, pa, pk, pn); nap(60); pn = forge(pk, 3, me, an, 9999999, NULL, 0, KEY); st = fl_get_stats(a); shoot(s2, pa, pk, pn); nap(60); CK(fl_get_stats(a).replay > st.replay, "a replaced run never returns");
++    // a real member of the room turns hostile: proper handshake, proper password, then lies
++    fl_kick(a, FL_NET + 3); UNTIL(fl_state(c) == FL_STATION, 1000); me = 0x77665544332211; ctr = 1; pn = forge(pk, 3, me, an, ctr++, NULL, 0, KEY); shoot(s2, pa, pk, pn); nap(100);
++    { struct { uint8_t ses[16], ph[32]; fl_user u; int16_t v; uint8_t r[6]; } jm2 = {.u = {"Mallory"}, .v = 7}; _Static_assert(sizeof jm2 == 104, ""); uint8_t pb2[82] = {0}; fl_info(a, &ni, NULL, 0); memcpy(jm2.ses, ni.id.session, 16); memcpy(pb2, ni.id.session, 16); pb2[16] = 4; memcpy(pb2 + 18, "pass", 4); CC_SHA256(pb2, 82, jm2.ph); pn = forge(pk, 6, me, an, ctr++, &jm2, sizeof jm2, KEY); shoot(s2, pa, pk, pn); }
++    UNTIL(!fl_info(a, &ni, NULL, 0) && ni.nodes[2].connected, 1000); CK(ni.nodes[2].connected && !strcmp(ni.nodes[2].name, "Mallory"), "a listed friend joins");
++    before = cnt(&A); int bb = cnt(&B); dm.s = FL_NET + 2; dm.seq = 9; pn = forge(pk, 11, me, an, ctr++, &dm, sizeof dm, KEY); shoot(s2, pa, pk, pn); nap(120); CK(cnt(&A) == before, "cannot speak as another player"); dm.s = FL_NET + 1; pn = forge(pk, 11, me, an, ctr++, &dm, sizeof dm, KEY); shoot(s2, pa, pk, pn); nap(120); CK(cnt(&A) == before, "or as the host");
++    dm.s = FL_NET + 3; dm.seq = 1; pn = forge(pk, 11, me, an, ctr++, &dm, sizeof dm, KEY); shoot(s2, pa, pk, pn); UNTIL(cnt(&A) == before + 1, 500); CK(cnt(&A) == before + 1, "as itself it can"); for (int i = 0; i < 20; i++) { pn = forge(pk, 11, me, an, ctr++, &dm, sizeof dm, KEY); shoot(s2, pa, pk, pn); } nap(100); CK(cnt(&A) == before + 1, "the same packet twice reaches the game once");
++    for (int i = 0; i < 3000; i++) { dm.seq = (uint32_t)rand_r(&seed) << 16 ^ (uint32_t)rand_r(&seed); dm.sent = (uint64_t)rand_r(&seed) << 40 ^ (uint64_t)rand_r(&seed) << 10 ^ (i % 3 ? 0 : UINT64_MAX << 62); dm.d = i % 5 ? FL_NET + (uint32_t)(i % 256) : 0xFFFFFFFF; pn = forge(pk, 11, me, an, ctr++, &dm, sizeof dm, KEY); shoot(s2, pa, pk, pn); if (i % 50 == 0) nap(2); } nap(200);
++    int ga = cnt(&A); double t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e6; fl_send(b, 5, FL_NET + 1, 6, "ok", 2); UNTIL(cnt(&A) > ga, 500); CK(cnt(&A) == ga + 1 && clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e6 - t0 < 60, "lying clocks and numbers do not slow anyone else"); (void)bb; CK(fl_state(a) == FL_CREATED && fl_state(b) == FL_CONNECTED, "room stands");
++    CK(!fl_kick(a, FL_NET + 3), "and can be kicked"); nap(100); before = cnt(&A); dm.s = FL_NET + 3; dm.d = FL_NET + 1; dm.seq = 7; pn = forge(pk, 11, me, an, ctr++, &dm, sizeof dm, KEY); shoot(s2, pa, pk, pn); nap(120); CK(cnt(&A) == before, "then heard no more"); fl_policy(a, 0); CK(!fl_scan(c, nets, &n, 8, NULL) && n == 1 && !fl_connect(c, &nets[0], &sec, &uc, 7), "another friend takes the place");
++    // joining while another thread searches
++    { int fails = 0; for (int i = 0; i < 6; i++) { fl_leave(c, 0); pthread_t th; void *scanner(void *); struct { friends_link *l; } arg = {c}; pthread_create(&th, NULL, scanner, &arg); nap(30 + 60 * i); if (fl_connect(c, &nets[0], &sec, &uc, 7)) fails++; pthread_join(th, NULL); } CK(!fails, "joining while searching"); }
+     // full room, leaving, kicking, closing, a friend vanishing
+     CK(!fl_kick(a, FL_NET + 3), "kick"); UNTIL(fl_state(c) == FL_STATION, 1000); CK(fl_state(c) == FL_STATION && fl_reason(c) == 5, "kicked friend told"); UNTIL(!fl_info(b, &ni, NULL, 0) && ni.node_count == 2, 1500); CK(ni.node_count == 2, "others see it"); CK(!fl_policy(a, 1) && !fl_scan(c, nets, &n, 8, NULL) && n == 1 && fl_connect(c, &nets[0], &sec, &uc, 7) == FL_E_REJECTED, "closed room refuses"); fl_policy(a, 0);
+     CK(!fl_leave(b, 0) && fl_state(b) == FL_STATION, "leave"); UNTIL(!fl_info(a, &ni, NULL, 0) && ni.node_count == 1, 1000); CK(ni.node_count == 1, "host sees it"); CK(!fl_scan(b, nets, &n, 8, NULL) && n == 1 && !fl_connect(b, &nets[0], &sec, &ub, 7), "rejoin"); CK(!fl_leave(a, 1), "host closes"); UNTIL(fl_state(b) == FL_STATION, 1000); CK(fl_state(b) == FL_STATION && fl_reason(b) == 3, "told it closed"); CK(fl_connect(b, &nets[0], &sec, &ub, 7) != 0, "closed room gone");
+diff --git a/friends_check.c b/friends_check.c
+new file mode 100644
+index 00000000..49d6adf7
+--- /dev/null
++++ b/friends_check.c
+@@ -0,0 +1,30 @@
++// Run on both Macs at once, before playing: connects the friends link, sends game-like traffic for 20 seconds and says how it will feel.
++#include "dm/host/friends_link.h"
++#include <arpa/inet.h>
++#include <pthread.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++static void nap(int m) { struct timespec t = {m / 1000, (m % 1000) * 1000000L}; nanosleep(&t, NULL); }
++static pthread_mutex_t M = PTHREAD_MUTEX_INITIALIZER; static int got, jolts; static double last, worst;
++static double now(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e6; }
++static void data(void *o, uint32_t s, uint16_t sp, uint32_t d, uint16_t dp, const void *p, size_t n) { (void)o; (void)s; (void)sp; (void)d; (void)dp; (void)p; (void)n; pthread_mutex_lock(&M); double t = now(); if (last && got > 120) { double g = t - last - 1000.0 / 60; if (g < 0) g = -g; if (g > 8) jolts++; if (g > worst) worst = g; } last = t; got++; pthread_mutex_unlock(&M); }
++int main(int ac, char **av) {
++    char path[1024], why[160]; const char *h = getenv("HOME"); snprintf(path, sizeof path, "%s/Dockside/friends.txt", h ? h : ""); fl_setup s; int loop = ac > 2 && !strcmp(av[2], "--loopback");
++    if (fl_load(ac > 1 ? av[1] : path, loop, &s, why, sizeof why)) { printf("Not set up: %s.\n", why); return 1; }
++    int host = ntohl(s.bind.s_addr) < ntohl(s.peers[0].sin_addr.s_addr) || (s.bind.s_addr == s.peers[0].sin_addr.s_addr && s.port < ntohs(s.peers[0].sin_port)); fl_hooks k = {data, NULL, nap, NULL}; friends_link *l = fl_start(&s, &k);
++    if (!l) { printf("This Mac's address in the friends file isn't connected, or Smash with Friends is open.\n"); return 1; }
++    printf("Looking for your friend (run this on both Macs)...\n"); for (int i = 0; i < 600 && !fl_friends_seen(l); i++) nap(100);
++    if (!fl_friends_seen(l)) { fl_stats t = fl_get_stats(l); printf("No connection after a minute.%s\n", t.bad_tag ? " Your friend codes are different." : t.bad_source ? " Something answered from an address that isn't listed." : " Check both addresses, and that macOS allowed local network access."); fl_stop(l); return 1; }
++    fl_config c = {.max_nodes = 2, .version = 1}; fl_security z = {0}; fl_user u = {"check"}; fl_network n[2]; int cnt = 0; uint32_t r = 1;
++    if (host) { fl_open(l, 1); r = fl_create(l, &c, &z, &u, NULL); for (int i = 0; i < 300; i++) { if (!fl_info(l, n, NULL, 0) && n[0].node_count == 2) break; nap(50); if (i == 299) r = 1; } }
++    else { fl_open(l, 0); for (int i = 0; i < 20 && r; i++) if (!fl_scan(l, n, &cnt, 2, NULL) && cnt) r = fl_connect(l, n, &z, &u, 1); }
++    if (r) { printf("Found your friend but could not open a room.\n"); fl_stop(l); return 1; }
++    printf("Connected. Measuring for 20 seconds...\n"); uint32_t to = host ? FL_NET + 2 : FL_NET + 1; double t0 = now(), sum = 0, hi = 0, cu = 0; int q = 0; fl_stats a = fl_get_stats(l);
++    for (int i = 0; i < 1200; i++) { uint8_t b[180] = {0}; fl_send(l, 1, to, 2, b, sizeof b); if (i % 60 == 59) { double x, m, e; if (!fl_quality(l, 0, &x, &m, &e) && i > 120) { sum += x; q++; if (m > hi) hi = m; if (e > cu) cu = e; } } double left = t0 + (i + 1) * 1000.0 / 60 - now(); if (left > 0) { struct timespec ts = {0, (long)(left * 1e6)}; nanosleep(&ts, NULL); } }
++    nap(400); fl_stats b = fl_get_stats(l); int g = got; double lost = g < 1200 ? (1200 - g) / 12.0 : 0; double rt = q ? sum / q : 0; (void)a;
++    printf("\nRound trip: %.1f ms on average, %.1f ms at worst\nLost: %.2f%% of packets after copies\nSmoothing in use: %.1f ms\nJolts: %d (worst %.0f ms)\nRefused: %llu strangers, %llu wrong code, %llu broken\n\n", rt, hi, lost, cu, jolts, worst, b.bad_source, b.bad_tag, b.bad_packet);
++    printf(lost > 1 || jolts > 60 ? "POOR: expect stutter. Use Ethernet, or move closer to the router.\n" : rt > 60 ? "STEADY BUT DISTANT: playable, with clear delay.\n" : jolts > 12 || rt > 30 ? "FAIR: some delay or the odd hitch. Ethernet would help.\n" : "GOOD: should feel smooth.\n");
++    nap(600); fl_stop(l); return 0;
++}

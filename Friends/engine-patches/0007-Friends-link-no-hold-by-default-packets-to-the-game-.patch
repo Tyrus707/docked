@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tyrus707 <251367762+Tyrus707@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 16:45:31 +0000
+Subject: [PATCH 7/8] Friends link: no hold by default, packets to the game
+ straight from the receiving thread, spare copies 3 and 10 ms later
+
+---
+ dm/games/settings.tsv  |  2 +-
+ dm/host/friends_link.c | 40 +++++++++++++++++++++++++++-------------
+ docs/env_switches.tsv  |  4 ++--
+ 3 files changed, 30 insertions(+), 16 deletions(-)
+
+diff --git a/dm/games/settings.tsv b/dm/games/settings.tsv
+index 85b62246..218facd9 100644
+--- a/dm/games/settings.tsv
++++ b/dm/games/settings.tsv
+@@ -43,4 +43,4 @@ DM_NVN_ENC_THREAD	toggle	-	1|DM_GAME_ENC_THREAD	gfxapi:nvn	Performance	Encode th
+ DM_FPS_HOLD	toggle	on/off	DM_GAME_FPS_HOLD	DM_GAME_FPS_TARGET!=0	Performance	Hold frames when late
+ DM_METAL_HUD	toggle	-	0	always	Performance	Performance HUD
+ DM_FRIENDS	toggle	-	0	platform:mac	Game	Play with friends	Local wireless play reaches your Docked friends over the internet. Friends you play with see this Mac's internet address.	level=basic
+-DM_FRIENDS_CUSHION_MS	choice	0=Off,4=Light,12=Medium,25=Strong	4	platform:mac	Game	Connection smoothing	Holds packets back to even out a bumpy connection, which adds delay. Keep it light for fighting and racing games.	needs=DM_FRIENDS=1
++DM_FRIENDS_CUSHION_MS	choice	0=Off,4=Light,12=Medium,25=Strong	0	platform:mac	Game	Connection smoothing	Holds packets back to even out a bumpy connection, which adds delay. Leave it off for fighting and racing games.	needs=DM_FRIENDS=1
+diff --git a/dm/host/friends_link.c b/dm/host/friends_link.c
+index 3d1f322e..b4953f4a 100644
+--- a/dm/host/friends_link.c
++++ b/dm/host/friends_link.c
+@@ -23,13 +23,14 @@
+ enum { T_HELLO = 1, T_WELCOME, T_PING, T_SCAN, T_ROOM, T_JOIN, T_REFUSED, T_SYNC, T_LEAVE, T_KICK, T_DATA, T_MAX };
+ enum { RINGS = 2, COPY_MAX = 700, COPIES = 128, HELD = 512, SAMPLES = 256, CUSHION_MAX = 25000, DESTS = 9 };
+ // Lockstep games (Smash, Mario Kart) wait every frame for the other Mac's inputs, so every microsecond a packet is held back is a microsecond both games stand still:
+-// it showed as slow motion, on a home network too. The cushion is now 4 ms at most and falls quickly, and only one spare copy is sent, unless the player's
+-// Game Settings ask otherwise (DM_FRIENDS_CUSHION_MS 0 to 25, DM_FRIENDS_COPIES 0 to 2: tolerant games like Animal Crossing can take more of both).
++// it showed as slow motion, on a home network too. Nothing is held back unless the player's Game Settings ask for it (DM_FRIENDS_CUSHION_MS 0 to 25:
++// tolerant games like Animal Crossing can take some), a lost packet's spare copy follows 3 ms later, and a packet reaches the game from the thread that received it.
++// DM_FRIENDS_COPIES 0 to 2 sets how many spare copies go (2: a few hundred bytes a second more, against a whole frame's stall for each lost packet).
+ static uint32_t env_num(const char *name, uint32_t def, uint32_t max) { const char *e = getenv(name); if (!e || !*e) return def; char *x; unsigned long v = strtoul(e, &x, 10); return *x || v > max ? def : (uint32_t)v; }
+-static uint32_t cushion_max(void) { static uint32_t v = UINT32_MAX; if (v == UINT32_MAX) v = env_num("DM_FRIENDS_CUSHION_MS", 4, 25) * 1000; return v; }
+-static int copy_rings(void) { static int v = -1; if (v < 0) v = (int)env_num("DM_FRIENDS_COPIES", 1, RINGS); return v; }
++static uint32_t cushion_max(void) { static uint32_t v = UINT32_MAX; if (v == UINT32_MAX) v = env_num("DM_FRIENDS_CUSHION_MS", 0, 25) * 1000; return v; }
++static int copy_rings(void) { static int v = -1; if (v < 0) v = (int)env_num("DM_FRIENDS_COPIES", RINGS, RINGS); return v; }
+ enum { HDR = 32, TAG = 16, RETIRED = 32, LOST_MS = 6000, JOIN_MS = 4000, SCAN_MS = 450 };
+-static const uint32_t COPY_AFTER[RINGS] = {5000, 11000};   // µs: past a lost packet, and past a short dropout
++static const uint32_t COPY_AFTER[RINGS] = {3000, 10000};   // µs: past a lost packet (sooner is a shorter stall in a lockstep game), and past a short dropout
+ static const uint8_t MAGIC[4] = {'D', 'S', 'F', '1'};
+ typedef struct {
+     struct sockaddr_in addr; int slot, on; uint8_t key[32]; uint64_t nonce, high, window, retired[RETIRED]; unsigned nretired; int up; uint64_t seen, hello_at, welcome_at;
+@@ -42,7 +43,7 @@ typedef struct { int init; int64_t base, base_old; uint64_t base_at, last_due; u
+ typedef struct held { struct held *next; uint64_t due; data_head h; size_t n; uint8_t d[]; } held;
+ typedef struct { uint64_t due; int peer; uint64_t nonce; size_t n; uint8_t d[24 + COPY_MAX]; } copy;
+ struct friends_link {
+-    pthread_mutex_t m; pthread_t th; int fd, stop, threaded; fl_setup set; fl_hooks h; uint64_t nonce, counter; uint8_t mac[6];
++    pthread_mutex_t m, dl; pthread_t th; int fd, stop, threaded; fl_setup set; fl_hooks h; uint64_t nonce, counter; uint8_t mac[6];   // dl: one hand-over to the game at a time, so a friend's packets reach it in order whichever thread brought them
+     peer p[FL_PEERS]; int state, reason, host; fl_network net; fl_update upd[8]; uint8_t pass[32]; uint64_t sync_at;
+     int joining, join_peer, refused; fl_stats st; int dirty, kq;
+     uint32_t seq[DESTS]; once seen[8][DESTS]; flow flows[8]; held *q; int nq; copy copies[RINGS][COPIES]; unsigned copy_r[RINGS], copy_w[RINGS];
+@@ -273,6 +274,12 @@ static void send_copies(friends_link *f, uint64_t now) {
+     for (int k = 0; k < RINGS; k++) for (; f->copy_r[k] != f->copy_w[k]; f->copy_r[k]++) { copy *c = &f->copies[k][f->copy_r[k] % COPIES]; if (c->due > now) break;
+         peer *p = &f->p[c->peer]; if (p->up && p->nonce == c->nonce && (f->state == FL_CREATED || f->state == FL_CONNECTED)) put(f, p, T_DATA, c->d, c->n); }
+ }
++static held *take_ready(friends_link *f, uint64_t now) {   // with the lock held: what is due now, in order
++    held *ready = NULL, **tail = &ready; while (f->q && f->q->due <= now + 60) { held *x = f->q; f->q = x->next; f->nq--; x->next = NULL; *tail = x; tail = &x->next; } return ready;
++}
++static void hand_over(friends_link *f, held *ready, uint32_t me) {   // without the lock, holding dl
++    while (ready) { held *x = ready; ready = x->next; if (me && f->h.data) f->h.data(f->h.opaque, x->h.src, x->h.sport, x->h.dst, x->h.dport, x->d, x->n); free(x); }
++}
+ static void *worker(void *a) {
+     friends_link *f = a; pthread_setname_np("friends link"); pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+     mach_timebase_info_data_t tb; mach_timebase_info(&tb); double k = 1e3 * tb.denom / tb.numer;   // wakes on time even when the Mac is busy; needs almost no time itself
+@@ -285,11 +292,11 @@ static void *worker(void *a) {
+             struct sockaddr_in from; socklen_t fl = sizeof from; ssize_t n = recvfrom(f->fd, b, 65536, MSG_DONTWAIT, (struct sockaddr *)&from, &fl); if (n < 0) break;
+             pthread_mutex_lock(&f->m); receive(f, b, (size_t)n, &from); pthread_mutex_unlock(&f->m);
+         }
+-        pthread_mutex_lock(&f->m); now = us(); if (now - ticked > 20000) { ticked = now; tick(f); } send_copies(f, now); int ev = f->dirty; f->dirty = 0;
+-        held *ready = NULL, **tail = &ready; uint32_t me = own_ip(f); while (f->q && f->q->due <= now + 60) { held *x = f->q; f->q = x->next; f->nq--; x->next = NULL; *tail = x; tail = &x->next; }
++        pthread_mutex_lock(&f->dl); pthread_mutex_lock(&f->m); now = us(); if (now - ticked > 20000) { ticked = now; tick(f); } send_copies(f, now); int ev = f->dirty; f->dirty = 0;
++        uint32_t me = own_ip(f); held *ready = take_ready(f, now);
+         pthread_mutex_unlock(&f->m);
+         if (ev && f->h.event) f->h.event(f->h.opaque);
+-        while (ready) { held *x = ready; ready = x->next; if (me && f->h.data) f->h.data(f->h.opaque, x->h.src, x->h.sport, x->h.dst, x->h.dport, x->d, x->n); free(x); }
++        hand_over(f, ready, me); pthread_mutex_unlock(&f->dl);
+     }
+     free(b); return NULL;
+ }
+@@ -299,7 +306,7 @@ static void *worker(void *a) {
+ #define UNLOCK(x) do { uint32_t r_ = (x); int ev_ = f->dirty; f->dirty = 0; pthread_mutex_unlock(&f->m); if (ev_ && f->h.event) f->h.event(f->h.opaque); return r_; } while (0)
+ friends_link *fl_start(const fl_setup *s, const fl_hooks *h) {
+     friends_link *f = calloc(1, sizeof *f); if (!f) return NULL;
+-    f->set = *s; f->h = *h; f->host = -1; f->state = FL_INIT; pthread_mutex_init(&f->m, NULL);
++    f->set = *s; f->h = *h; f->host = -1; f->state = FL_INIT; pthread_mutex_init(&f->m, NULL); pthread_mutex_init(&f->dl, NULL);
+     do arc4random_buf(&f->nonce, 8); while (!f->nonce); f->mac[0] = 2; memcpy(f->mac + 1, &f->nonce, 5);
+     if (s->net) f->set.npeers = FL_PEERS;
+     for (int i = 0; i < FL_PEERS; i++) { f->p[i].slot = i; if (!s->net && i < s->npeers) { f->p[i].addr = s->peers[i]; f->p[i].on = 1; memcpy(f->p[i].key, s->key, 32); } }
+@@ -307,19 +314,26 @@ friends_link *fl_start(const fl_setup *s, const fl_hooks *h) {
+     f->fd = s->net ? -1 : socket(AF_INET, SOCK_DGRAM, 0);
+     f->kq = kqueue(); int big = 1 << 20, voice = NET_SERVICE_TYPE_VO; struct kevent ev[2]; EV_SET(&ev[0], 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, NULL); EV_SET(&ev[1], (uintptr_t)f->fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+     if (f->fd >= 0) { setsockopt(f->fd, SOL_SOCKET, SO_RCVBUF, &big, sizeof big); setsockopt(f->fd, SOL_SOCKET, SO_NET_SERVICE_TYPE, &voice, sizeof voice); fcntl(f->fd, F_SETFD, FD_CLOEXEC); }
+-    if (f->kq < 0 || (s->net ? kevent(f->kq, ev, 1, NULL, 0, NULL) : f->fd < 0 || !s->bind.s_addr || bind(f->fd, (struct sockaddr *)&a, sizeof a) || kevent(f->kq, ev, 2, NULL, 0, NULL)) || pthread_create(&f->th, NULL, worker, f)) { if (f->fd >= 0) close(f->fd); if (f->kq >= 0) close(f->kq); pthread_mutex_destroy(&f->m); free(f); return NULL; }
++    if (f->kq < 0 || (s->net ? kevent(f->kq, ev, 1, NULL, 0, NULL) : f->fd < 0 || !s->bind.s_addr || bind(f->fd, (struct sockaddr *)&a, sizeof a) || kevent(f->kq, ev, 2, NULL, 0, NULL)) || pthread_create(&f->th, NULL, worker, f)) { if (f->fd >= 0) close(f->fd); if (f->kq >= 0) close(f->kq); pthread_mutex_destroy(&f->m); pthread_mutex_destroy(&f->dl); free(f); return NULL; }
+     f->threaded = 1; return f;
+ }
+ void fl_stop(friends_link *f) {
+     if (!f) return;
+     fl_leave(f, 0); fl_leave(f, 1); __atomic_store_n(&f->stop, 1, __ATOMIC_RELEASE); wake(f); pthread_join(f->th, NULL); if (f->fd >= 0) close(f->fd); close(f->kq); reset_flows(f); memset_s(f->p, sizeof f->p, 0, sizeof f->p);
+-    memset(&f->set, 0, sizeof f->set); pthread_mutex_destroy(&f->m); free(f);
++    memset(&f->set, 0, sizeof f->set); pthread_mutex_destroy(&f->m); pthread_mutex_destroy(&f->dl); free(f);
+ }
+ void fl_slot(friends_link *f, int i, const uint8_t key[32]) {
+     if (!f || !f->set.net || i < 0 || i >= FL_PEERS) return; LOCK; peer_down(f, i); peer *p = &f->p[i]; memset_s(p, sizeof *p, 0, sizeof *p); p->slot = i;
+     if (key) { p->on = 1; memcpy(p->key, key, 32); } wake(f); pthread_mutex_unlock(&f->m);
+ }
+-void fl_packet(friends_link *f, int i, const void *d, size_t n) { if (!f || !f->set.net || i < 0 || i >= FL_PEERS) return; LOCK; if (f->p[i].on) { receive_from(f, i, d, n); wake(f); } pthread_mutex_unlock(&f->m); }
++// What a friend sent over the internet goes to the game from this thread, the moment it is due (with no hold, at once): passing it to the link's own thread first
++// cost a thread wake-up on every packet, and a lockstep game waits for each one
++void fl_packet(friends_link *f, int i, const void *d, size_t n) {
++    if (!f || !f->set.net || i < 0 || i >= FL_PEERS) return;
++    pthread_mutex_lock(&f->dl); LOCK; held *ready = NULL; uint32_t me = 0;
++    if (f->p[i].on) { receive_from(f, i, d, n); me = own_ip(f); ready = take_ready(f, us()); wake(f); }   // the link's thread still keeps time for spare copies and anything held
++    pthread_mutex_unlock(&f->m); hand_over(f, ready, me); pthread_mutex_unlock(&f->dl);
++}
+ int fl_state(friends_link *f) { if (!f) return 0; LOCK; int s = f->state; pthread_mutex_unlock(&f->m); return s; }
+ int fl_reason(friends_link *f) { if (!f) return 0; LOCK; int s = f->reason; pthread_mutex_unlock(&f->m); return s; }
+ uint32_t fl_open(friends_link *f, int ap) { if (!f) return FL_E_DISABLED; LOCK; if (f->state != FL_INIT) UNLOCK(FL_E_STATE); f->state = ap ? FL_AP : FL_STATION; f->reason = 0; changed(f); UNLOCK(0); }
+diff --git a/docs/env_switches.tsv b/docs/env_switches.tsv
+index 0ec2c7c4..5b546a1c 100644
+--- a/docs/env_switches.tsv
++++ b/docs/env_switches.tsv
+@@ -56,8 +56,8 @@ DM_FPS_HOLD	player	`on` / `off` overrides the profile's `fps_hold`: whether late
+ DM_FPS_TARGET	player	Frame-rate cap: `30` or `60`, `40` for a build whose frame step takes ticks of 1/120 s (`FRAME_STEP_120`: Ocarina of Time; 30 elsewhere, on a screen not at a multiple of 120 Hz, in Low Power Mode, or with `DM_PRESENT_LINK=1`) ([40 fps in ticks of 1/120 s](reference/frame-rate.md#40-fps-in-ticks-of-1120-s)), `120` for a game whose profile has `fps_max 120` (60 otherwise), or `0` for the game's own limit; overrides the profile's `fps_target`
+ DM_FRIENDS	player	`=1` turns on the friends link (Docked): Local Wireless reaches the friends in the player's circle, over the internet. Off, nn::ldn stays cut as before
+ DM_FRIENDS_CFG	path	The friends circle file (friends.cfg: meeting point and circle key); default the app's dm/friends.cfg. Docked passes its own
+-DM_FRIENDS_COPIES	diagnostic	`=<0..2>` spare copies the friends link sends of each small game packet, a few ms apart (default 1)
+-DM_FRIENDS_CUSHION_MS	player	`=<0..25>` the most the friends link holds a friend's packet back to even out jitter (default 4). Lockstep games stand still while a packet is held, so keep it small for them
++DM_FRIENDS_COPIES	diagnostic	`=<0..2>` spare copies the friends link sends of each small game packet, 3 and 10 ms later (default 2)
++DM_FRIENDS_CUSHION_MS	player	`=<0..25>` the most the friends link holds a friend's packet back to even out jitter (default 0: none). Lockstep games stand still while a packet is held, so keep it off for them
+ DM_FRIENDS_DIR	path	Folder where the friends link keeps this player's code, name and friends (default ~/Library/Application Support/Docked/Friends)
+ DM_FRIENDS_FILE	path	The home-network friends file (code, this Mac's and the friend's private address) used when there is no friends.cfg (default ~/Dockside/friends.txt)
+ DM_FRIENDS_STUN_PORT	test	Port of the local STUN server the friends tests start (loopback builds only)

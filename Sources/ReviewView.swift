@@ -11,7 +11,7 @@ struct ReviewView: View {
     private var reviewDestination: URL { model.target == .phone ? phoneFolder : model.reviewPlace }
     private var reviewSpace: SpaceEstimate { spaceEstimate(bytes: reviewBytes, destination: reviewDestination) }
     private var destinationName: String { model.target == .phone ? "iPhone and iPad apps" : FileManager.default.displayName(atPath: model.reviewPlace.path) }
-    var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? (model.organized && model.existing == nil ? "Sorts into " : "Saves to ") + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil, model.speed != .full ? model.speed.label : nil].compactMap { $0 }).joined(separator: ", ") }
+    var summary: String { ([model.target == .mac && model.reviewPlace.path != Paths.games.path ? (model.organized && model.existing == nil ? "Sorts into " : "Saves to ") + FileManager.default.displayName(atPath: model.reviewPlace.path) : nil, model.after == .ask || model.forXcode ? nil : model.after.label, model.quick ? "Quick" : nil, model.reviewFriends ? "Multiplayer" : nil, model.speed != .full ? model.speed.label : nil].compactMap { $0 }).joined(separator: ", ") }
     func note(_ t: String, _ s: String, _ warn: Bool) -> some View { Label(t, systemImage: s).foregroundStyle(warn ? style.warn : Color.secondary).font(.callout).fixedSize(horizontal: false, vertical: true) }
 
     // Only a copy in Docked's own folder, or in the chosen folder, is replaced.
@@ -62,6 +62,10 @@ struct ReviewView: View {
             if !model.review.parts.isEmpty { SpaceCheck(estimate: reviewSpace, destination: destinationName) }
             if model.after == .everything, !model.forXcode { note("The original files go to the Trash before you've tried the game. Don't empty it until you have.", "exclamationmark.triangle", true) }
             if let n = model.reviewNote { Label(n, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout).fixedSize(horizontal: false, vertical: true) }
+            if model.target == .mac {
+                Toggle("Enable multiplayer - experimental", isOn: $model.reviewFriends)
+                Text("Adds the friends switch to the finished game and turns Play with friends on. Experimental; you can turn it off in Game Settings.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             Button { withAnimation(still ? nil : .easeOut(duration: 0.15)) { more.toggle() } } label: { HStack(spacing: 6) { Image(systemName: "chevron.right").font(.caption.weight(.bold)).rotationEffect(.degrees(more ? 90 : 0)); Text("More options"); Spacer(); if !more { Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1) } }.contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityValue(more ? "Open" : "Closed")
             if more {
                 VStack(alignment: .leading, spacing: 10) {

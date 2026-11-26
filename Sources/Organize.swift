@@ -114,7 +114,7 @@ enum Organize {
         let part = b.deletingLastPathComponent().appendingPathComponent("." + b.lastPathComponent + ".partial")
         try? fm.removeItem(at: part)
         do { try fm.copyItem(at: a, to: part); try fm.moveItem(at: part, to: b) } catch { try? fm.removeItem(at: part); throw error }
-        if move { try? fm.removeItem(at: a) }
+        if move { LeftBehind.remove(a) }
     }
 
     // Puts a game file, and everything that belongs with it, into the library. Returns where the game file is now.
@@ -130,7 +130,14 @@ enum Organize {
         try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         if mode == .move, sameVolume(here, folder.deletingLastPathComponent()) {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            for f in all { let t = folder.appendingPathComponent(rel(f)); try fm.createDirectory(at: t.deletingLastPathComponent(), withIntermediateDirectories: true); try fm.moveItem(at: f, to: t) }
+            var done: [(URL, URL)] = []   // a set moves whole or not at all: what had moved goes back
+            do { for f in all { let t = folder.appendingPathComponent(rel(f)); try fm.createDirectory(at: t.deletingLastPathComponent(), withIntermediateDirectories: true); try fm.moveItem(at: f, to: t); done.append((f, t)) } }
+            catch {
+                var stuck: [URL] = []
+                for (a, b) in done.reversed() { do { try fm.moveItem(at: b, to: a) } catch { if fm.fileExists(atPath: b.path) { stuck.append(b) } } }
+                if stuck.isEmpty { try? fm.removeItem(at: folder) } else { stuck.forEach(LeftBehind.note) }
+                throw error
+            }
             return folder.appendingPathComponent(rom.lastPathComponent)
         }
         if !sameVolume(here, folder.deletingLastPathComponent()) { try ensureSpace(all.reduce(0) { $0 + folderSize($1) }, at: folder.deletingLastPathComponent()) }
@@ -140,7 +147,7 @@ enum Organize {
             for f in all { let t = part.appendingPathComponent(rel(f)); try fm.createDirectory(at: t.deletingLastPathComponent(), withIntermediateDirectories: true); try fm.copyItem(at: f, to: t) }
             try fm.moveItem(at: part, to: folder)
         } catch { try? fm.removeItem(at: part); throw error }
-        if mode == .move { for f in all { try? fm.removeItem(at: f) } }
+        if mode == .move { for f in all { LeftBehind.remove(f) } }
         return folder.appendingPathComponent(rom.lastPathComponent)
     }
 
@@ -195,14 +202,55 @@ struct Tidy: Identifiable, Equatable {
     var id: String { game.id }
 }
 
+// Originals that were copied but could not be removed afterwards: the game moved, but the room was not freed and two copies exist.
+// Told to the player when the job ends (Model.filing and Model.moving).
+enum LeftBehind {
+    private static let lock = NSLock()
+    private static var list: [URL] = []
+    static func note(_ u: URL) { lock.lock(); list.append(u); lock.unlock() }
+    static func take() -> [URL] { lock.lock(); defer { list = []; lock.unlock() }; return list }
+    static func remove(_ u: URL) { do { try FileManager.default.removeItem(at: u) } catch { if FileManager.default.fileExists(atPath: u.path) { note(u) } } }
+}
+
 // MARK: - Drives
 
-// A path on a disk that comes and goes, such as an SSD: its name, and whether it is here now
-func drive(of path: String) -> (name: String, connected: Bool)? {
+// A path on a disk that comes and goes, such as an SSD: its name, and whether it is here now.
+// Here means the very drive the game was seen on: two drives can share a name ("Untitled", "T7"), and the other one being plugged in is not this one.
+func drive(of path: String, ids: DriveIDs = .shared) -> (name: String, connected: Bool)? {
     let parts = (path as NSString).pathComponents
     guard parts.count > 2, parts[0] == "/", parts[1] == "Volumes" else { return nil }
     let root = "/Volumes/" + parts[2]
-    return (parts[2], FileManager.default.fileExists(atPath: root))
+    return (parts[2], FileManager.default.fileExists(atPath: root) && ids.matches(path))
+}
+
+// Which drive each game on a drive was last seen on, by the drive's own ID (it survives renaming and is never shared)
+final class DriveIDs {
+    static let shared = DriveIDs()
+    private let lock = NSLock(), store: UserDefaults, key = "driveIDs"
+    private var seen: [String: String]
+    let id: (String) -> String?   // a mounted drive's ID, from its folder in /Volumes
+    init(store: UserDefaults = .standard, id: @escaping (String) -> String? = { (try? URL(fileURLWithPath: $0).resourceValues(forKeys: [.volumeUUIDStringKey]))?.volumeUUIDString }) {
+        self.store = store; self.id = id; seen = store.dictionary(forKey: "driveIDs") as? [String: String] ?? [:]
+    }
+    private static func root(_ path: String) -> String? {
+        let p = (path as NSString).pathComponents; return p.count > 2 && p[0] == "/" && p[1] == "Volumes" ? "/Volumes/" + p[2] : nil
+    }
+    // A game found where it should be: remembered with the drive it is on
+    func remember(_ paths: [String]) {
+        var ids: [String: String?] = [:], changed = false
+        lock.lock(); defer { lock.unlock(); if changed { store.set(seen, forKey: key) } }
+        for p in paths { guard let r = Self.root(p) else { continue }
+            if ids[r] == nil { ids[r] = .some(id(r)) }
+            if let u = ids[r] ?? nil, seen[p] != u { seen[p] = u; changed = true }
+        }
+    }
+    // The drive at that name now is the one the game was on (or it was never seen, so it can't be told apart)
+    func matches(_ path: String) -> Bool {
+        guard let r = Self.root(path) else { return true }
+        lock.lock(); let want = seen[path]; lock.unlock()
+        guard let want, let now = id(r) else { return true }
+        return now == want
+    }
 }
 
 // Why a game can't be found, in words

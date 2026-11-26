@@ -18,6 +18,13 @@ struct GameSettingsView: View {
             if model.isRunning(game) { Label("\(game.name) is running. Changes apply the next time it starts.", systemImage: "info.circle").font(.callout).foregroundStyle(style.accent) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if !Friends.supported(game.url) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Play with friends isn't in this game").font(.callout.weight(.semibold)).foregroundStyle(style.text)
+                            Text("This game was converted before multiplayer. Docked can add it by converting it again from the original files; your save stays.").font(.callout).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
+                            Button("Add Multiplayer…") { model.leaveGameSettings { model.reconvertForFriends(game) } }.tint(style.button)
+                        }.padding(12).background(style.tile, in: RoundedRectangle(cornerRadius: 8))
+                    }
                     ForEach(gs.sections, id: \.self) { sec in
                         let rows = gs.settings.filter { $0.section == sec && ($0.basic || more) }
                         if !rows.isEmpty {

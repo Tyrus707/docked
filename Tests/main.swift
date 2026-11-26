@@ -238,10 +238,31 @@ let wd: [String: Any] = ["entities": ["Q1": wdQ1, "Q2": wdQ2, "Q3": wdQ3] as [St
 let pk = MetaLookup.choose(wd, ids: ["Q1", "Q3", "Q2"], name: "Super Metroid (Japan, USA) (En,Ja)")
 check(pk?.meta.item == "Q2" && pk?.meta.year == 1994 && pk?.article == "Super Metroid" && pk?.genre == ["Q343568"] && pk?.developer == ["Q2633052"] && pk?.meta.critic == nil, "the video game of that name, its first year")
 check(MetaLookup.choose(wd, ids: ["Q1", "Q3"], name: "Bananza") == nil && MetaLookup.searchIDs(["search": [["id": "Q2"], ["id": "P31"]]]) == ["Q2"], "no game of that name, no guess")
+let wdSearch: [String: Any] = ["search": [["id": "Q2", "label": "Super Metroid", "description": "1994 video game"], ["id": "P31", "label": "instance of"], ["id": "Q9", "title": "A Name Without a Label"]] as [[String: Any]]]
+check(MetaLookup.choices(wdSearch) == [MetaLookup.Choice(item: "Q2", name: "Super Metroid", detail: "1994 video game"), MetaLookup.Choice(item: "Q9", name: "A Name Without a Label", detail: nil)], "search lines for the metadata picker")
+check(MetaLookup.pick(wd, id: "Q2")?.meta.item == "Q2" && MetaLookup.pick(wd, id: "Q2")?.article == "Super Metroid" && MetaLookup.pick(wd, id: "Q2")?.meta.year == 1994, "a chosen item is read without guessing the name")
+let refreshNow = Date()
+check(MetaLookup.refresh(nil, force: false, now: refreshNow) == .automatic && MetaLookup.refresh(Meta(checked: refreshNow), force: false, now: refreshNow) == .none, "a new game looks itself up; a fresh one is left alone")
+check(MetaLookup.refresh(Meta(item: "Q2", checked: refreshNow, manual: true), force: true, now: refreshNow) == .manual("Q2") && MetaLookup.refresh(Meta(item: "Q2", checked: refreshNow.addingTimeInterval(-31 * 86400), manual: true), force: false, now: refreshNow) == .manual("Q2"), "a chosen match is refreshed by its own item, never by guessing again")
+check(MetaLookup.refresh(Meta(checked: refreshNow.addingTimeInterval(-31 * 86400)), force: false, now: refreshNow) == .automatic, "an ordinary match keeps using Docked's own lookup")
+// the rules the model follows when metadata jobs overlap, and what may be written
+check(!MetaLookup.mayLookUp(false, explicit: false) && MetaLookup.mayLookUp(false, explicit: true) && MetaLookup.mayLookUp(true, explicit: false) && !MetaLookup.mayLookUp(nil, explicit: false), "an explicit lookup runs with automatic lookup off")
+check(!MetaLookup.automaticMayOverwrite(Meta(item: "Q2", checked: refreshNow, manual: true)) && MetaLookup.automaticMayOverwrite(Meta(checked: refreshNow, manual: true)) && MetaLookup.automaticMayOverwrite(Meta(item: "Q2", checked: refreshNow, manual: true), explicit: true), "an automatic result leaves a chosen item alone, repairs a broken one, and obeys Use Automatic Match")
+check(MetaLookup.refresh(Meta(checked: refreshNow.addingTimeInterval(-31 * 86400), manual: true), force: false, now: refreshNow) == .automatic, "a chosen match without an item can recover on the next refresh")
+check(MetaLookup.acceptsAutomatic(Meta(item: "Q2", checked: refreshNow), explicit: true) && !MetaLookup.acceptsAutomatic(Meta(checked: refreshNow), explicit: true) && !MetaLookup.acceptsAutomatic(nil, explicit: true) && MetaLookup.acceptsAutomatic(Meta(checked: refreshNow), explicit: false), "Use Automatic Match needs a match; an empty answer keeps the chosen one")
+var work = MetaLookup.MetaWork()
+let older = work.begin("T1", explicit: false), chosen = work.begin("T1", explicit: true)
+check(work.current("T1", chosen) && !work.current("T1", older) && work.busy("T1"), "a player's pick takes over a title from a running lookup")
+check(!work.end("T1", older) && work.busy("T1") && work.end("T1", chosen) && !work.busy("T1"), "the old lookup is discarded; the pick still writes")
+let one = work.begin("T2", explicit: false), two = work.begin("T2", explicit: false)
+check(work.current("T2", one) && work.current("T2", two) && work.busy("T2") && work.end("T2", one) && work.busy("T2") && work.end("T2", two) && !work.busy("T2"), "two automatic lookups finish without hiding each other")
+let badChecked = try! JSONDecoder().decode(Meta.self, from: Data("{\"critic\":50,\"item\":\"Q7\",\"checked\":\"yesterday\"}".utf8))
+check(badChecked.checked < refreshNow.addingTimeInterval(-30 * 86400) && MetaLookup.refresh(badChecked, force: false, now: refreshNow) == .automatic, "a date that can't be read is stale, not fresh for a month")
 check(MetaLookup.labels(["entities": ["Q8093": ["labels": ["en": ["value": "Nintendo"]]], "Q21039459": ["labels": ["mul": ["value": "OpenCritic"]]]]]) == ["Q8093": "Nintendo", "Q21039459": "OpenCritic"] && MetaLookup.monthly(["items": [["views": 100], ["views": 300]]]) == 200 && MetaLookup.monthly([:]) == nil, "labels and readers a month")
-var lq = LibraryData(); lq.meet(lgs, now: d0); lq.edit("0100000000000000") { $0.meta = Meta(critic: 88, views: 500, year: 2017, genre: "Platform game", checked: d0) }; lq.edit("0400000000004000") { $0.meta = Meta(critic: 95, views: 90, checked: d0) }
+var lq = LibraryData(); lq.meet(lgs, now: d0); lq.edit("0100000000000000") { $0.meta = Meta(critic: 88, views: 500, year: 2017, genre: "Platform game", checked: d0) }; lq.edit("0400000000004000") { $0.meta = Meta(critic: 95, views: 90, checked: d0) }; lq.edit("0400000000004000") { $0.meta?.manual = true }
 check(lq.show(lgs, in: .all, by: .critic).map(\.name).prefix(2) == ["Bananza", "Zelda 10"] && lq.show(lgs, in: .all, by: .popular).first?.name == "Zelda 10" && lq.year(lgs[0]) == 2017 && lq.groups(lgs, by: .genre, sort: .name).first?.title == "Platform game", "critic score, popularity, and Wikidata's year and genre")
-let lqf = tmp.appendingPathComponent("lib/meta.json"); lq.save(lqf); check(LibraryData.load(lqf) == lq, "details saved and read back")
+let lqf = tmp.appendingPathComponent("lib/meta.json"); lq.save(lqf); check(LibraryData.load(lqf) == lq && LibraryData.load(lqf).entry("0400000000004000").meta?.manual == true, "details saved and read back, including a chosen match")
+let oldMeta = try! JSONDecoder().decode(Meta.self, from: Data("{\"critic\":50,\"item\":\"Q7\",\"checked\":0}".utf8)); check(oldMeta.manual == false && oldMeta.critic == 50 && oldMeta.item == "Q7", "details from an older library still open")
 try! Data("{broken".utf8).write(to: lf); check(LibraryData.load(lf) == LibraryData() && (try! fm.contentsOfDirectory(atPath: lf.deletingLastPathComponent().path)).contains { $0.hasPrefix("library-damaged") }, "a damaged file is set aside, not lost"); check(LibraryData.load(tmp.appendingPathComponent("none.json")) == LibraryData(), "no file yet")
 check(playTimeText(30) == "Not played yet" && playTimeText(600) == "10 min played" && playTimeText(5400) == "1.5 hours played" && lastPlayedText(nil) == "Never played" && lastPlayedText(Date()) == "Played today" && lastPlayedText(Date().addingTimeInterval(-86400)) == "Played yesterday", "wording")
 
@@ -363,6 +384,8 @@ q.up(q.waiting[1].id); check(q.waiting.map(\.title) == ["C", "B"], "moved up"); 
 check(q.next { $0.title == "C" ? .wait : .go }?.title == "B" && q.waiting.map(\.title) == ["C"], "one that must wait lets others go"); q.done(); check(q.next { _ in .no("gone") } == nil && q.waiting.isEmpty && q.problems.last == Problem(id: q.problems.last!.id, title: "C", reason: "gone"), "one that cannot start is set aside")
 _ = q.add(job("D")); _ = q.add(job("E")); _ = q.next { _ in .go }; q.stopped(); check(q.paused && q.next { _ in .go } == nil && q.waiting.map(\.title) == ["E"], "stopping pauses the rest"); q.paused = false; check(q.next { _ in .go }?.title == "E", "continues"); q.stopped(); check(!q.paused, "nothing left, nothing paused"); var lone = Queue(); _ = lone.add(job("L")); _ = lone.next { _ in .go }; lone.failed("x"); check(lone.problems.isEmpty, "a lone failure is shown by the conversion itself")
 let qf = tmp.appendingPathComponent("queue/queue.json"); var qs = Queue(); _ = qs.add(job("F")); _ = qs.add(job("G")); _ = qs.next { _ in .go }; qs.save(qf); let ql = Queue.load(qf); check(ql.current == nil && ql.waiting.map(\.title) == ["F", "G"] && ql.paused, "after a crash: back in the queue, paused"); Queue().save(qf); check(!fm.fileExists(atPath: qf.path) && Queue.load(qf) == Queue(), "an empty queue leaves no file"); try! "broken".write(to: qf, atomically: true, encoding: .utf8); check(Queue.load(qf) == Queue(), "a damaged file is not a crash")
+var friendsJob = job("Friends", "0100000000000003"); friendsJob.friends = true
+check((try? JSONDecoder().decode(Job.self, from: JSONEncoder().encode(friendsJob)))?.friends == true && job("Plain").friends == nil, "the friends flag survives the queue file")
 
 // ---- cleaning up ----
 let cg = tmp.appendingPathComponent("cg"), ci = tmp.appendingPathComponent("ci")
@@ -780,12 +803,59 @@ do {
     check(Compat.parse(Data("nope".utf8)).isEmpty && Compat(tier: "Profile only", fps: "", platforms: [], issues: 0, engine: "").label == "Not tested yet", "compat edge cases")
 }
 
+// convert when
+check(convertWait(.now, onPower: false, lowPower: true, hour: 12, idle: 0) == nil && convertWait(.plugged, onPower: false, lowPower: false, hour: 2, idle: 9999) == "Waiting for the power adapter" && convertWait(.plugged, onPower: true, lowPower: true, hour: 2, idle: 0) != nil && convertWait(.plugged, onPower: true, lowPower: false, hour: 12, idle: 0) == nil, "plugged in")
+check(convertWait(.overnight, onPower: true, lowPower: false, hour: 15, idle: 60) == "Waiting for tonight" && convertWait(.overnight, onPower: true, lowPower: false, hour: 23, idle: 0) == nil && convertWait(.overnight, onPower: true, lowPower: false, hour: 6, idle: 0) == nil && convertWait(.overnight, onPower: true, lowPower: false, hour: 15, idle: 1200) == nil, "overnight, or while nobody is using the Mac")
+check(convertWait(.plugged, onPower: true, lowPower: true, hour: 2, idle: 0) == "Waiting for Low Power Mode to turn off" && convertWait(.plugged, onPower: false, lowPower: true, hour: 2, idle: 0) == "Waiting for the power adapter and Low Power Mode to turn off", "Low Power Mode says why it waits")
+var scans = ScanToken(); let olderScan = scans.start(), latestScan = scans.start()
+check(!scans.current(olderScan) && scans.current(latestScan), "a late disk or health look can't overwrite a newer one")
+
+// docked:// links
+check(DockedLink.parse(URL(string: "docked://play?id=0100000000010000")!) == .play(id: "0100000000010000", name: nil) && DockedLink.parse(URL(string: "DOCKED://Resume")!) == .resume && DockedLink.parse(URL(string: "docked://play")!) == nil && DockedLink.parse(URL(string: "https://play?id=1")!) == nil && DockedLink.parse(URL(string: "docked://nope")!) == nil, "links read")
+let linkGames = [Game(url: URL(fileURLWithPath: "/a.app"), name: "Pokémon Legends", titleID: "0100AAAA00000000"), Game(url: URL(fileURLWithPath: "/b.app"), name: "Mario Kart 8 Deluxe", titleID: "0100BBBB00000000"), Game(url: URL(fileURLWithPath: "/c.app"), name: "Mario", titleID: "0100CCCC00000000")]
+check(gameFor(id: "0100bbbb00000000", name: nil, in: linkGames)?.name == "Mario Kart 8 Deluxe" && gameFor(id: nil, name: "mario", in: linkGames)?.name == "Mario" && gameFor(id: nil, name: "kart deluxe", in: linkGames)?.name == "Mario Kart 8 Deluxe" && gameFor(id: nil, name: "pokemon", in: linkGames)?.name == "Pokémon Legends" && gameFor(id: nil, name: "zelda", in: linkGames) == nil, "the game a link means")
+check(DockedLink.play("0100BBBB00000000") == "docked://play?id=0100BBBB00000000", "a game's link")
+
+// retro games online
+do {
+    var n: UInt8 = 0; let inv = Invite.make(game: "Super Game") { n &+= 7; return n }
+    check(Invite.valid(inv.room) && inv.key.count == 10 && DockedLink.parse(URL(string: inv.link)!) == .join(inv), "an invite goes through its own link: \(inv.link)")
+    check(DockedLink.parse(URL(string: "docked://join?room=evil;rm&key=x&game=y")!) == nil, "only Docked's own room names")
+    let injected = "docked://join?room=Docked-ABC&key=x%0Anetplay_nickname%20%3D%20%22evil%22&game=y"
+    check(DockedLink.parse(URL(string: injected)!) == nil && RetroArch.line("netplay_password", "x\nnetplay_nickname = \"evil\"") == "netplay_password = \"xnetplay_nickname = evil\"\n", "a crafted join link adds no RetroArch setting")
+    let lobbyList = Data(#"[{"fields":{"username":"Other","ip":"1.1.1.1","port":55435}},{"fields":{"username":"Docked-ABC","ip":"2.2.2.2","port":55435,"mitm_ip":"3.3.3.3","mitm_port":55001,"mitm_session":"s1"}},{"username":"Docked-DIR","ip":"4.4.4.4","port":"55435","mitm_ip":""}]"#.utf8)
+    check(Netplay.room(lobbyList, named: "Docked-ABC") == Netplay.Room(ip: "3.3.3.3", port: 55001, session: "s1") && Netplay.room(lobbyList, named: "Docked-DIR") == Netplay.Room(ip: "4.4.4.4", port: 55435, session: nil) && Netplay.room(lobbyList, named: "Nobody") == nil && Netplay.room(Data("x".utf8), named: "a") == nil, "the host's room in the lobby")
+    check(Netplay.arguments(.join(inv, Netplay.Room(ip: "3.3.3.3", port: 55001, session: "s1"))) == ["--connect", "3.3.3.3", "--port", "55001", "--mitm-session", "s1"] && Netplay.arguments(.host(inv)) == ["--host"] && Netplay.lines(.host(inv)).contains("netplay_password = \"\(inv.key)\""), "RetroArch told how to meet")
+}
+
+// library health
+do {
+    let nowhere = URL(fileURLWithPath: "/nope/Gone.app")
+    let h = healthOf(app: nowhere, titleID: "0100000000010000", name: "Gone", engine: "old", active: "new", kept: false, hasOriginals: true, compat: Compat(tier: "Doesn't run yet", fps: "", platforms: [], issues: 0, engine: ""), verify: { _ in true }, friends: { _ in false })
+    check(h.problems.count == 1 && h.better.count == 2 && h.reports.count == 1 && h.canRebuild && h.fixable && !h.good, "a game short of a part, older engine, no friends, reported not running")
+    let k = healthOf(app: nowhere, titleID: "x", name: "K", engine: nil, active: "new", kept: true, hasOriginals: true, compat: nil, verify: { _ in true }, friends: { _ in true })
+    check(!k.canRebuild && k.better.isEmpty, "a kept build is never rebuilt, and an unknown engine isn't called old")
+    var fine = h; fine.problems = []; fine.better = []; fine.reports = []
+    check(healthSummary([fine, fine]) == "All 2 converted games look good." && healthSummary([fine, h]) == "1 looks good. 1 needs attention." && healthSummary([]).hasPrefix("There are no"), "health in words")
+    var reported = h; reported.problems = []; reported.better = []
+    check(!reported.good && !reported.fixable && healthSummary([reported]) == "1 has a report from players.", "a player's report is not a rebuild reason")
+}
+
 // artwork: where it is, and what no game uses
 do {
     let ex: Set<String> = ["/g/a", "/g"]
     check(deletedFile("/g/b", exists: { ex.contains($0) }) && !deletedFile("/g/a", exists: { ex.contains($0) }), "a file gone from a folder that is still there was deleted")
     check(!deletedFile("/moved/b", exists: { ex.contains($0) }), "a whole folder gone may have moved: kept as missing")
     check(!deletedFile("/Volumes/NoSuchDriveHere/Games/x.sfc", exists: { _ in false }), "a drive that isn't connected: never deleted")
+    // two drives with one name: the other one plugged in is not this one, so its games are not deleted
+    let vol = "/Volumes/" + (((try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []).first { !$0.hasPrefix(".") } ?? "X")   // any drive that is mounted
+    var driveNow = "A"; let dIDs = DriveIDs(store: UserDefaults(suiteName: "docked-drives-\(UUID())")!, id: { _ in driveNow })
+    let onA = vol + "/Games/Switch/Game.app", there: Set<String> = [vol + "/Games/Switch", vol]
+    dIDs.remember([onA, "/Users/me/x.app"]); check(dIDs.matches(onA) && dIDs.matches("/Users/me/x.app") && dIDs.matches(vol + "/never/seen.app"), "the drive a game was seen on")
+    driveNow = "B"; check(!dIDs.matches(onA) && !deletedFile(onA, exists: { there.contains($0) }, ids: dIDs), "another drive with the same name: the game is away, not deleted")
+    driveNow = "A"; check(deletedFile(onA, exists: { there.contains($0) }, ids: dIDs) == FileManager.default.fileExists(atPath: vol), "its own drive, and it isn't there: deleted")
+    let dl = DiskLook.take(dirs: [], apps: [], removed: [], roms: ["/nope/a.sfc", NSTemporaryDirectory()], offloaded: [], ids: dIDs)
+    check(!dl.exists("/nope/a.sfc") && dl.known.contains("/nope") && dl.exists(NSTemporaryDirectory()) && dl.apps.isEmpty, "the library's look at the disk, taken once")
     check(artStem("snes:abc/1") == "snes-abc-1", "art named for its game")
     let a = Artwork.tile("snes:abc", from: "k1"), b = Artwork.tile("snes:abc", from: "k2")
     check(a != b && a.lastPathComponent.hasPrefix("snes-abc~") && Artwork.tile("snes:abc", from: "k1") == a, "made cover named for its art")
@@ -839,6 +909,36 @@ do {
     let j = JSONEncoder(); j.dateEncodingStrategy = .iso8601; let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
     check((try? d.decode(LibraryData.self, from: j.encode(l)))?.offloaded["/g/A.app"] == "/c/A.app", "where an offloaded game is, is saved")
     l.removeApp("/g/A.app"); check(l.offloaded.isEmpty, "a game taken out of the library forgets where it was offloaded")
+    try? fm.removeItem(at: base)
+}
+
+// Play with friends: the pass Docked keeps, and which games have the friends link
+do {
+    let key = Data(repeating: 7, count: 32).base64EncodedString()
+    check(Friends.parse("meet=wss://docked-meeting.example.workers.dev/meet\ncircle=\(key)\n") == Friends.Pass(meet: "wss://docked-meeting.example.workers.dev/meet", circle: Data(repeating: 7, count: 32)), "a friends pass is read")
+    check(Friends.parse("meet=https://example.com/meet\ncircle=\(key)\n") == nil, "a pass must use a secure WebSocket")
+    check(Friends.parse("meet=wss://example.com/meet\ncircle=c2hvcnQ=\n") == nil, "a pass needs a 32-byte circle key")
+    check(Friends.parse("circle=\(key)\n") == nil, "a pass needs a meeting point")
+    let fm = FileManager.default, base = fm.temporaryDirectory.appendingPathComponent("friends-\(UUID().uuidString)"), dm = base.appendingPathComponent("New.app/Contents/Resources/dm")
+    try? fm.createDirectory(at: dm, withIntermediateDirectories: true)
+    try? Data(#"{"schema":1,"settings":[{"env":"DM_FRIENDS","kind":"toggle"}]}"#.utf8).write(to: dm.appendingPathComponent("launcher.json"))
+    check(Friends.supported(base.appendingPathComponent("New.app")), "a game converted with friends offers it")
+    check(!Friends.supported(base.appendingPathComponent("Old.app")), "an older game does not")
+    let ready = base.appendingPathComponent("Ready.app"), plist = ready.appendingPathComponent("Contents/Info.plist"), rd = ready.appendingPathComponent("Contents/Resources/dm")
+    try? fm.createDirectory(at: rd, withIntermediateDirectories: true)
+    NSDictionary(dictionary: ["CFBundleIdentifier": "local.docked.friends.test.\(UUID().uuidString)"]).write(to: plist, atomically: true)
+    try? Data(#"{"schema":1,"settings":[{"env":"DM_FRIENDS","kind":"toggle","section":"Game","label":"Play with friends","default":"0","on":"1","off":"0"}]}"#.utf8).write(to: rd.appendingPathComponent("launcher.json"))
+    check(Friends.enable(on: ready) && Friends.on(ready), "multiplayer is switched on in the game's own settings")
+    check(!Friends.enable(on: base.appendingPathComponent("Old.app")), "an older game cannot be switched on")
+    // An older game can still have readable settings. That is the one that gets the Add Multiplayer row.
+    let older = base.appendingPathComponent("OldSettings.app"), od = older.appendingPathComponent("Contents/Resources/dm")
+    try? fm.createDirectory(at: od, withIntermediateDirectories: true)
+    NSDictionary(dictionary: ["CFBundleIdentifier": "local.docked.friends.old.\(UUID().uuidString)"]).write(to: older.appendingPathComponent("Contents/Info.plist"), atomically: true)
+    try? Data(#"{"schema":1,"settings":[{"env":"DM_OPMODE","kind":"choice","section":"Game","label":"Mode","default":"0","options":[["0","Single"],["1","Double"]]}]}"#.utf8).write(to: od.appendingPathComponent("launcher.json"))
+    check(GameSettings(app: older) != nil && !Friends.supported(older), "an older game with settings still needs Add Multiplayer")
+    check(!Friends.enable(on: older), "a game without the switch cannot be turned on")
+    let missing = Friends.missingOriginals("Old Game")
+    check(missing.contains("Old Game") && missing.contains("Trash") && missing.contains("Inputs") && missing.contains("save stays"), "missing originals explain the Trash and the links in Inputs")
     try? fm.removeItem(at: base)
 }
 
