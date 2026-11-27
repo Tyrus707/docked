@@ -216,6 +216,16 @@ enum SMM2Archive {
         return data
     }
 
+    // The archive has no pictures (the thumbnails were dropped because of their
+    // size). The public image server has them when it is up; a failure here is
+    // never an error for the player — the drawn course map takes its place.
+    static func thumbnail(dataID id: UInt32) -> Data? {
+        let code = SMM2CourseID.courseID(id).filter { $0 != "-" }
+        guard let url = URL(string: "\(liveBase)/level_thumbnail/\(code)"),
+              let data = try? get(url), SMM2CoursePreview.isRealImage(data) else { return nil }
+        return data
+    }
+
     private static func fetch(path: String, extra: [URLQueryItem]) throws -> SMM2Search {
         guard var parts = URLComponents(string: base + path) else { throw SMM2Error.badArchive }
         parts.queryItems = [

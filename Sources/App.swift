@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Menu("Add Update or DLC") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.addTo(g) } } }.disabled(model.games.isEmpty)
                 Button("Clean Up…") { model.cleanUp(nil) }
                 Button("Check Library Health…") { model.checkHealth() }.disabled(!model.games.contains { $0.rom == nil })
+                Button("Super Mario Maker 2 Course Browser…") { model.openCourseBrowserForSMM2() }.disabled(!model.games.contains { $0.rom == nil && $0.titleID.uppercased() == smm2TitleID && !$0.missing })
                 Menu("Move Game to Folder") { ForEach(model.games.filter { $0.rom == nil }) { g in Button(g.name) { model.moveGame(g) } } }.disabled(model.games.isEmpty)
             }
             CommandGroup(after: .sidebar) { Button(model.couch ? "Leave Couch Mode" : "Couch Mode") { model.toggleCouch() }.keyboardShortcut("b", modifiers: [.command, .shift]).disabled(model.games.isEmpty && !model.couch) }
@@ -59,7 +60,9 @@ final class Model: ObservableObject {
     @Published var notice: Notice?     // a quiet word in the tray (Tray.swift)
     @Published var activity: [ActivityEntry] = []   // what happened this session, in the tray's Activity list
     @Published var vaultGame: Game?    // the game whose Save Vault sheet is open
-    @Published var courseBrowserGame: Game?   // the converted SMM2 game whose Course Browser sheet is open
+    @Published var courseBrowserGame: Game?   // the converted SMM2 game whose floating Course Browser is open
+    @Published var smm2Queue: SMM2Queue?      // a course waiting for the game to close; never written while it runs
+    @Published var smm2QueueNote = ""         // what happened to that queue, shown in the browser
     @Published var showSetup = false
     @Published var showHelp = false
     @Published var showReleaseNotes = false
@@ -390,14 +393,16 @@ final class Model: ObservableObject {
         tracker.countedUntil = { [weak self] id in self?.library.entry(id).lastPlayed }
         AppDelegate.leaving = { [weak self] in self?.streaming.stop(); self?.tracker.flush(); self?.saveNow() }
         tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack(); self?.checkCrash(id, since: a) }
-        tracker.changed = { [weak self] in guard let s = self else { return }; s.runningIDs = s.tracker.running; s.themeUpdate() }
+        tracker.changed = { [weak self] in guard let s = self else { return }; s.runningIDs = s.tracker.running; s.themeUpdate(); s.applySMM2QueueIfReady() }
         tracker.start()
     }
 
     // ---- while a game plays, Docked steps aside; when the last game closes, the library is back in front ----
     @Published var hideWhilePlaying = UserDefaults.standard.object(forKey: "hideWhilePlaying") as? Bool ?? true { didSet { UserDefaults.standard.set(hideWhilePlaying, forKey: "hideWhilePlaying") } }
     private var asideForGame = false
-    func stepAside() { guard hideWhilePlaying else { return }; asideForGame = true; NSApp.hide(nil) }
+    // A queued course needs Docked awake to notice the game closing. The panel
+    // keeps it awake; without one, the library still steps out of the way.
+    func stepAside() { guard hideWhilePlaying, courseBrowserGame == nil else { return }; asideForGame = true; NSApp.hide(nil) }
     private func comeBack() {
         guard asideForGame, tracker.running.isEmpty else { return }
         asideForGame = false
@@ -1237,7 +1242,6 @@ struct ContentView: View {
         .sheet(item: $model.editing) { SmartEditor(s: $0) }
         .sheet(item: $model.tuning) { g in if let gs = GameSettings(app: g.url) { GameSettingsView(game: g, gs: gs) } }
         .sheet(item: $model.vaultGame) { SaveVaultView(game: $0) }
-        .sheet(item: $model.courseBrowserGame) { CourseBrowserView(game: $0) }
         .sheet(isPresented: .init(get: { model.cleaning != nil }, set: { if !$0 { model.cleaning = nil } })) { CleanUpView() }
         .alert("Docked", isPresented: .init(get: { model.message != nil && !model.couch }, set: { if !$0 { model.message = nil } })) { Button("OK") {} } message: { Text(model.message ?? "") }
         .confirmationDialog("Move \(deleting?.name ?? "") to the Trash?", isPresented: .init(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { g in

@@ -1,6 +1,8 @@
+import CoreGraphics
 import CryptoKit
 import Foundation
 import ImageIO
+import zlib
 var passed = 0, failed = 0
 func check(_ ok: Bool, _ what: String) { if ok { passed += 1 } else { failed += 1; print("FAIL:", what) } }
 func fails2(_ what: String, _ f: () throws -> Void) { do { try f(); check(false, what) } catch { check(error is RetroError, what) } }
@@ -1110,7 +1112,71 @@ do {
        let found = try? SMM2Archive.parse(answer), let archived = found.courses.first,
        let written = try? SMM2Injector.prepare(archived), let decoded = try? SMM2Crypto.decrypt(written) {
         check(written.count == SMM2Crypto.fileSize && decoded.count == SMM2Crypto.decryptedSize, "an archive course becomes a real course file")
+        if let realMap = SMM2CoursePreview.map(for: archived) {
+            check(realMap.isUsable && realMap.bounds.right > realMap.bounds.left, "a real archive course has a usable drawn preview")
+        } else { check(false, "a real archive course has a usable drawn preview") }
     }
+
+    // ---- course previews and the in-game queue ----
+    func put16(_ d: inout Data, _ at: Int, _ v: UInt16) { for i in 0..<2 { d[at + i] = UInt8(truncatingIfNeeded: v >> UInt16(8 * i)) } }
+    func put32(_ d: inout Data, _ at: Int, _ v: UInt32) { for i in 0..<4 { d[at + i] = UInt8(truncatingIfNeeded: v >> UInt32(8 * i)) } }
+    func courseBytes() -> Data {
+        var d = Data(repeating: 0, count: SMM2Crypto.decryptedSize)
+        put16(&d, 0, 3)                     // start Y
+        put16(&d, 1, 7)                     // goal Y
+        put16(&d, 2, 42)                    // goal X
+        let a = 0x200
+        d[a] = 6                            // Snow theme
+        d[a + 3] = 0                        // side view
+        put32(&d, a + 0x08, 60); put32(&d, a + 0x0C, 30); put32(&d, a + 0x10, 0); put32(&d, a + 0x14, 20)
+        put32(&d, a + 0x1C, 2)              // objects
+        put32(&d, a + 0x3C, 3)              // ground tiles
+        let ground = a + 0x247A4
+        for i in 0..<3 { d[ground + i * 4] = UInt8(10 + i); d[ground + i * 4 + 1] = UInt8(11 + i); d[ground + i * 4 + 2] = 7 }
+        let obj = a + 0x48
+        put32(&d, obj, 15); put32(&d, obj + 0x20, 28)
+        put16(&d, obj + 4, 12); put16(&d, obj + 0x24, 9)
+        d[obj + 0x0A] = 2; d[obj + 0x0B] = 1
+        d[obj + 0x2A] = 3; d[obj + 0x2B] = 2
+        put16(&d, obj + 0x18, 0x1234); put16(&d, obj + 0x38, 0x5678)
+        return d
+    }
+    let drawn = courseBytes()
+    let map = SMM2CourseMap.parse(drawn)
+    check(map.start.y == 3 && map.goal.x == 42 && map.goal.y == 7, "the preview marks the real start and goal")
+    check(map.tiles.count == 3 && map.tiles[0].x == 10 && map.tiles[2].y == 13 && map.tiles[0].kind == 7, "the preview reads the real ground tiles")
+    check(map.objects.count == 2 && map.objects[0].x == 15 && map.objects[0].y == 12 && map.objects[1].width == 3 && map.objects[1].kind == 0x5678, "the preview reads real object shapes")
+    check(map.theme == 6 && map.bounds.right == 60 && map.bounds.bottom == 20 && map.isUsable, "the preview keeps the theme and course bounds")
+    check(!SMM2CourseMap.parse(Data([1, 2, 3])).isUsable && !SMM2CourseMap.parse(Data(repeating: 0, count: SMM2Crypto.decryptedSize)).isUsable, "a short or empty course has no usable preview")
+    var wild = drawn; put32(&wild, 0x200 + 0x3C, 100_000); put32(&wild, 0x200 + 0x1C, 100_000)
+    check(SMM2CourseMap.parse(wild).tiles.count <= 4000 && SMM2CourseMap.parse(wild).objects.count <= 2600, "insane tile counts cannot flood the preview")
+
+    let bcdCourse = SMM2Course(dataID: 3000004, name: "Local", levelData: try! SMM2Crypto.encrypt(drawn), isBcdFile: true)
+    check((try? SMM2CoursePreview.plainData(for: bcdCourse)) == drawn && SMM2CoursePreview.map(for: bcdCourse)?.objects.count == 2, "a live course file becomes a real drawn map")
+    var zipped = Data(repeating: 0, count: drawn.count + drawn.count / 100 + 64)
+    var zippedLength: uLong = 0
+    zipped.withUnsafeMutableBytes { out in
+        drawn.withUnsafeBytes { input in
+            zippedLength = uLong(out.count)
+            _ = compress2(out.baseAddress!.assumingMemoryBound(to: Bytef.self), &zippedLength, input.baseAddress!.assumingMemoryBound(to: Bytef.self), uLong(drawn.count), 6)
+        }
+    }
+    zipped.count = Int(zippedLength)
+    let archived = SMM2Course(dataID: 3000004, name: "Archived", levelData: zipped)
+    check((try? SMM2CoursePreview.plainData(for: archived)) == drawn && SMM2CoursePreview.map(for: archived)?.tiles.count == 3, "an archive course becomes a real drawn map")
+    check(!SMM2CoursePreview.isRealImage(Data("not a picture".utf8)) && SMM2CoursePreview.isRealImage(Data([0xFF, 0xD8, 0xFF, 0xE0, 0, 16])) && SMM2CoursePreview.isRealImage(Data([0x89, 0x50, 0x4E, 0x47])), "only real thumbnails count as images")
+
+    let q = SMM2Queue(course: archived, slot: 125, titleID: "01009B90006DC000")
+    check(q.slot == 125 && q.titleID.uppercased() == smm2TitleID && q.course.dataID == archived.dataID && q.matches(smm2TitleID.lowercased()), "a queued course keeps its slot and game")
+    check(!SMM2Queue(course: archived, slot: 60, titleID: smm2TitleID).isValid, "a My Courses slot is never queued")
+    check(q.canApply(gameRunning: false, gameOpen: false, populatedSlots: [125]), "a queue is ready once the game is closed and its slot still exists")
+    check(!q.canApply(gameRunning: true, gameOpen: false, populatedSlots: [125]), "a queue waits while the game runs")
+    check(!q.canApply(gameRunning: false, gameOpen: true, populatedSlots: [125]), "a queue waits while the game is still open on disk")
+    check(!q.canApply(gameRunning: false, gameOpen: false, populatedSlots: []), "a queue is dropped if its slot disappears")
+    let room = SMM2OverlayLayout.frame(game: CGRect(x: 100, y: 80, width: 1200, height: 800), panel: CGSize(width: 900, height: 600), screen: CGRect(x: 0, y: 0, width: 1440, height: 900))
+    check(room.width == 900 && room.height == 600 && room.minX >= 100 && room.maxX <= 1300 && room.minY >= 80 && room.maxY <= 880, "the browser fits inside a normal game window")
+    let tiny = SMM2OverlayLayout.frame(game: CGRect(x: 200, y: 200, width: 400, height: 300), panel: CGSize(width: 900, height: 600), screen: CGRect(x: 0, y: 0, width: 1440, height: 900))
+    check(tiny.width <= 1440 && tiny.height <= 900 && abs(tiny.midX - 400) < 1 && abs(tiny.midY - 350) < 1, "a small game window gets a centred panel that still fits the screen")
 }
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
