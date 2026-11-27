@@ -33,8 +33,6 @@
 	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>NSAudioCaptureUsageDescription</key>
-	<string>Docked's TV streaming sends this Mac's sound to your TV.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Docked looks for your TV, iPad or other Mac on the same network when you stream games.</string>
 </dict>

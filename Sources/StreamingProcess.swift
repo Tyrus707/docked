@@ -1,30 +1,44 @@
-import Foundation
+import AppKit
 
 protocol StreamProcessLike: AnyObject {
     var onExit: ((Int32) -> Void)? { get set }
     func terminate()
 }
 
-final class StreamProcess: StreamProcessLike {
-    private let process = Process()
+// Sunshine started through Launch Services, as its own app, so macOS asks about Screen Recording and system audio
+// for Sunshine (signed by LizardByte, the same app across Docked updates). Started as Docked's child, macOS asked
+// Docked, and an ad-hoc signed update looked like a new app: the permission was lost and Moonlight got error 503.
+final class StreamApp: StreamProcessLike {
+    private var app: NSRunningApplication?
+    private var watch: NSKeyValueObservation?
+    private var ending = false
     var onExit: ((Int32) -> Void)?
 
-    init(executable: URL, arguments: [String]) throws {
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+    init(bundle: URL, arguments: [String]) throws {
+        guard FileManager.default.fileExists(atPath: bundle.appendingPathComponent("Contents/MacOS/Sunshine").path) else {
             throw StreamingError.text("Sunshine isn't ready to start.")
         }
-        process.executableURL = executable
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        process.qualityOfService = .userInteractive   // the encoder runs ahead of conversions and covers, for less delay
-        // The supervisor lives on the main thread, so its news of an exit does too.
-        process.terminationHandler = { [weak self] p in DispatchQueue.main.async { self?.onExit?(p.terminationStatus) } }
-        try process.run()
+        let c = NSWorkspace.OpenConfiguration()
+        c.arguments = arguments
+        c.activates = false
+        c.hides = true
+        c.addsToRecentItems = false
+        c.createsNewApplicationInstance = true   // its own copy, even if the player's own Sunshine is open
+        NSWorkspace.shared.openApplication(at: bundle, configuration: c) { [weak self] app, error in
+            DispatchQueue.main.async {
+                guard let self else { app?.terminate(); return }
+                guard let app, error == nil else { self.onExit?(1); return }
+                if self.ending { app.terminate(); return }
+                self.app = app
+                self.watch = app.observe(\.isTerminated, options: [.new]) { [weak self] a, _ in
+                    guard a.isTerminated else { return }
+                    DispatchQueue.main.async { guard let self else { return }; self.watch = nil; self.onExit?(self.ending ? 0 : 1) }
+                }
+            }
+        }
     }
 
-    func terminate() { if process.isRunning { process.terminate() } }
+    func terminate() { ending = true; if let a = app, !a.isTerminated { a.terminate() } }
 }
 
 // A small supervisor: three restarts for a crash, then a quiet, friendly stop. Tests give it a fake launch.
@@ -58,7 +72,7 @@ final class SunshineSupervisor {
         do {
             let p: StreamProcessLike
             if let launch { p = try launch() }
-            else { p = try StreamProcess(executable: executable, arguments: [config.path]) }
+            else { p = try StreamApp(bundle: executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent(), arguments: [config.path]) }
             current = p
             p.onExit = { [weak self, weak p] code in if let p { self?.exited(p, code) } }
             onState(.running, "Running")
