@@ -973,6 +973,10 @@ check(cfg.contains("file_state = \(StreamingPaths.state.path)") && cfg.contains(
 check(StreamingConfig.text(quality: .balanced, audioSink: "BlackHole 2ch").contains("audio_sink = BlackHole 2ch") && !cfg.contains("audio_sink ="), "a chosen sound device goes in audio_sink; automatic leaves it out")
 check(StreamingSound.sink(chosen: "", devices: { ["BlackHole 2ch"] }) == nil && StreamingSound.sink(chosen: "Loopback", devices: { ["Loopback"] }) == "Loopback" && StreamingSound.sink(chosen: "Gone", devices: { ["Loopback"] }) == nil, "automatic sound needs no add-on; a chosen device is used while it's there")
 
+Keychain.set("tok-1", service: "Docked Test", account: "token")
+check(Keychain.string(service: "Docked Test", account: "token") == "tok-1" && ((try? fm.attributesOfItem(atPath: Keychain.file.path))?[.posixPermissions] as? Int) == 0o600, "secrets survive an update in a private file")
+Keychain.set(nil, service: "Docked Test", account: "token")
+check(Keychain.string(service: "Docked Test", account: "token") == nil, "a signed-out secret is gone")
 let tvGame = Game(url: tmp.appendingPathComponent("stream/TV Game.app"), name: "TV Game", titleID: "0100ABCDEF")
 let artURL = tmp.appendingPathComponent("stream/art.png")
 let appList = StreamingApps.make(games: [tvGame], every: true, imageFor: { _ in artURL })
