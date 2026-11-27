@@ -18,6 +18,7 @@ final class StreamProcess: StreamProcessLike {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
+        process.qualityOfService = .userInteractive   // the encoder runs ahead of conversions and covers, for less delay
         // The supervisor lives on the main thread, so its news of an exit does too.
         process.terminationHandler = { [weak self] p in DispatchQueue.main.async { self?.onExit?(p.terminationStatus) } }
         try process.run()
