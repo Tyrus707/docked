@@ -9,6 +9,11 @@ struct SaveMenu: View {
     var body: some View {
         let d = GameData(game.titleID), list = d.list()
         Menu("Saves") {
+            if game.rom == nil && game.titleID.uppercased() == smm2TitleID {
+                Button("Course Browser…") { model.openCourseBrowser(game) }
+                    .disabled(game.missing || !d.hasSave || model.isOpen(game) || model.isRunning(game))
+                    .help("Find a public Super Mario Maker 2 course and put it in an existing Coursebot slot. The game must be closed.")
+            }
             Button("Save Vault…") { model.openVault(game) }
             Button("Back Up Now") { model.backUpSave(game) }.disabled(!d.hasSave)
             Menu("Restore a Backup") {

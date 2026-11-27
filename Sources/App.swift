@@ -59,6 +59,7 @@ final class Model: ObservableObject {
     @Published var notice: Notice?     // a quiet word in the tray (Tray.swift)
     @Published var activity: [ActivityEntry] = []   // what happened this session, in the tray's Activity list
     @Published var vaultGame: Game?    // the game whose Save Vault sheet is open
+    @Published var courseBrowserGame: Game?   // the converted SMM2 game whose Course Browser sheet is open
     @Published var showSetup = false
     @Published var showHelp = false
     @Published var showReleaseNotes = false
@@ -707,7 +708,7 @@ final class Model: ObservableObject {
     @Published var showSettings = false
     @Published var showStreamingWelcome = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showStreamingWelcome || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil || editingMeta != nil || health != nil || tuning != nil || vaultGame != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showStreamingWelcome || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil || editingMeta != nil || health != nil || tuning != nil || vaultGame != nil || courseBrowserGame != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
     func setStreaming(_ on: Bool) {
         guard on != streaming.on else { return }
@@ -1236,6 +1237,7 @@ struct ContentView: View {
         .sheet(item: $model.editing) { SmartEditor(s: $0) }
         .sheet(item: $model.tuning) { g in if let gs = GameSettings(app: g.url) { GameSettingsView(game: g, gs: gs) } }
         .sheet(item: $model.vaultGame) { SaveVaultView(game: $0) }
+        .sheet(item: $model.courseBrowserGame) { CourseBrowserView(game: $0) }
         .sheet(isPresented: .init(get: { model.cleaning != nil }, set: { if !$0 { model.cleaning = nil } })) { CleanUpView() }
         .alert("Docked", isPresented: .init(get: { model.message != nil && !model.couch }, set: { if !$0 { model.message = nil } })) { Button("OK") {} } message: { Text(model.message ?? "") }
         .confirmationDialog("Move \(deleting?.name ?? "") to the Trash?", isPresented: .init(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), presenting: deleting) { g in

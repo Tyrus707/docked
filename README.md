@@ -26,6 +26,8 @@ One library, from NES to Switch. Free, open source, quick to open.</p>
 
 **Your library on the big screen.** Turn on Streaming in Settings › TV and Docked quietly sets up Sunshine. Install Moonlight on your TV, iPad or another Mac, pick this Mac and type the PIN. Your games and Couch Mode appear there, with your covers and play time. Pair a controller with this Mac by Bluetooth for the quickest input.
 
+**Super Mario Maker 2 courses, without the servers.** In a converted game's **Saves › Course Browser**, find a public course by name or ID and place it in an existing Downloaded Course slot. Docked backs up the save first and changes only that course file — no sign-in, no Nintendo connection, nothing uploaded. The game keeps the slot's old thumbnail, title, maker and play stats, because those live in separate files.
+
 ## See it
 
 <p align="center">

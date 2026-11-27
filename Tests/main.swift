@@ -1060,4 +1060,57 @@ check(!watcher.running && starts == 6, "a deliberate stop does not restart")
 watcher.start(); let oldSun = made.last!; watcher.stop(); watcher.start(); oldSun.die(15)
 check(watcher.running && starts == 8, "the old Sunshine exiting after a restart leaves the new one alone")
 
+// ---- Super Mario Maker 2 course browser ----
+do {
+    for (id, code): (UInt32, String) in [(3000004, "4RF-XV8-WCG"), (6635842, "2J5-3K2-Y9G"), (60665284, "HWV-VLH-WCG"), (3141051, "VG9-K10-X4G")] {
+        check(SMM2CourseID.courseID(id) == code && SMM2CourseID.dataID(code) == id, "course \(id) has ID \(code)")
+    }
+    check(SMM2CourseID.dataID("4rfxv8wcg") == 3000004 && SMM2CourseID.tidy("4RFXV8WCG") == "4RF-XV8-WCG", "course IDs are read with or without dashes")
+    check(SMM2CourseID.dataID("AAAAAAAAA") == nil && SMM2CourseID.dataID("4RF-XV8-WC") == nil && SMM2CourseID.dataID("4RF-IV8-WCG") == nil && SMM2CourseID.dataID("HWV-VLH-WCH") == nil, "bad characters and bad checksums are refused")
+
+    let row: [String: Any] = ["data_id": 3000004, "name": "A Course", "uploaded": 1561644329, "uploader_pid": "Maker", "description": "Try it", "gamestyle": 1, "theme": 2, "difficulty": 1, "likes": 12, "level_data": "eJzLSM3JyVdIzi8tKk5VKM8vykkBAEKWBw4="]
+    let course = SMM2Course(row: row)
+    check(course?.courseID == "4RF-XV8-WCG" && course?.name == "A Course" && course?.author == "Maker" && course?.style == "Super Mario Bros. 3" && course?.theme == "Castle" && course?.difficulty == "Normal" && course?.likes == 12, "an archive row becomes a course")
+    check(course?.levelData != nil && SMM2Course(row: ["data_id": 0]) == nil && SMM2Course(row: ["name": "No ID"]) == nil, "a row needs an ID and keeps its level data")
+    check(SMM2Course.themes[4] == "Underwater" && SMM2Course.themes[9] == "Forest" && SMM2Course.difficulties[3] == "Super expert", "the archive's names are in the right order")
+
+    let zlibData = Data([120, 156, 203, 72, 205, 201, 201, 87, 72, 206, 47, 45, 42, 78, 85, 40, 207, 47, 202, 73, 1, 0, 66, 150, 7, 14])
+    let gz = Data([0x1f, 0x8b, 0x08, 0x00, 0xde, 0xb3, 0x09, 0x6b, 0x00, 0x03, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0x48, 0xce, 0x2f, 0x2d, 0x2a, 0x4e, 0x55, 0x28, 0xcf, 0x2f, 0xca, 0x49, 0x01, 0x00, 0x21, 0xbf, 0x28, 0xb2, 0x12, 0x00, 0x00, 0x00])
+    check((try? SMM2Gzip.decompress(zlibData)) == Data("hello course world".utf8), "zlib course data opens")
+    check((try? SMM2Gzip.decompress(gz)) == Data("hello course world".utf8), "gzip course data opens too")
+    do { _ = try SMM2Gzip.decompress(Data([1, 2, 3])); check(false, "a broken course is refused") } catch { check(true, "a broken course is refused") }
+
+    let answer = #"{"features":[],"rows":[{"row_idx":0,"row":{"data_id":3000004,"name":"Archived"},"truncated_cells":[]}],"num_rows_total":1,"num_rows_per_page":1,"partial":false}"#.data(using: .utf8)!
+    let parsed = try! SMM2Archive.parse(answer)
+    check(parsed.courses.count == 1 && parsed.courses[0].courseID == "4RF-XV8-WCG" && parsed.total == 1 && !parsed.partial, "an archive answer becomes a course list")
+    let unsure = #"{"rows":[],"num_rows_total":0,"partial":true}"#.data(using: .utf8)!
+    check((try! SMM2Archive.parse(unsure)).partial, "a partial archive answer is marked as unsure")
+
+    let save = tmp.appendingPathComponent("smm2/save"); _ = mk("smm2/save/course_data_120.bcd", "a"); _ = mk("smm2/save/course_data_125.bcd", "b"); _ = mk("smm2/save/course_data_060.bcd", "mine")
+    check(SMM2Slots.populated(in: save) == [120, 125], "only downloaded slots that already hold a course are offered")
+    check(SMM2Slots.dataFile(121, in: save).lastPathComponent == "course_data_121.bcd" && SMM2Slots.replayFile(121, in: save).lastPathComponent == "course_replay_121.dat" && SMM2Slots.thumbFile(121, in: save).lastPathComponent == "course_thumb_121.btl", "a slot's three files")
+
+    let plain = Data((0..<SMM2Crypto.decryptedSize).map { UInt8(truncatingIfNeeded: ($0 &* 7) ^ ($0 >> 5)) })
+    let file = try! SMM2Crypto.encrypt(plain)
+    check(SMM2Crypto.looksLikeCourseFile(file) && file.count == SMM2Crypto.fileSize && (try! SMM2Crypto.decrypt(file)) == plain, "a course file encrypts and decrypts unchanged")
+    var damaged = file; damaged[damaged.count - 1] ^= 1
+    do { _ = try SMM2Crypto.decrypt(damaged); check(false, "a damaged course file is refused") } catch { check(true, "a damaged course file is refused") }
+    let live = SMM2Course(dataID: 3000004, name: "Live", levelData: file, isBcdFile: true)
+    check((try! SMM2Injector.prepare(live)) == file, "a live course file is ready to write")
+    do { try SMM2Injector.write(file, to: save, slot: 121); check(false, "an empty slot is not used") } catch { check(true, "an empty slot is not used") }
+    try! SMM2Injector.write(file, to: save, slot: 120)
+    check((try? Data(contentsOf: SMM2Slots.dataFile(120, in: save))) == file && (try? fm.contentsOfDirectory(atPath: save.path))?.filter { $0.contains(".tmp") }.isEmpty == true, "only that one course file is replaced, with no temporary left behind")
+
+    if let path = ProcessInfo.processInfo.environment["SMM2_BCD"], let sample = try? Data(contentsOf: URL(fileURLWithPath: path)), SMM2Crypto.looksLikeCourseFile(sample) {
+        if let decoded = try? SMM2Crypto.decrypt(sample), let again = try? SMM2Crypto.encrypt(decoded), let round = try? SMM2Crypto.decrypt(again) {
+            check(decoded.count == SMM2Crypto.decryptedSize && round == decoded, "a real course file decrypts and re-encrypts unchanged")
+        } else { check(false, "a real course file decrypts and re-encrypts unchanged") }
+    }
+    if let path = ProcessInfo.processInfo.environment["SMM2_JSON"], let answer = try? Data(contentsOf: URL(fileURLWithPath: path)),
+       let found = try? SMM2Archive.parse(answer), let archived = found.courses.first,
+       let written = try? SMM2Injector.prepare(archived), let decoded = try? SMM2Crypto.decrypt(written) {
+        check(written.count == SMM2Crypto.fileSize && decoded.count == SMM2Crypto.decryptedSize, "an archive course becomes a real course file")
+    }
+}
+
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
