@@ -972,7 +972,8 @@ check(cfg.contains("port = \(StreamingPaths.port)") && cfg.contains(StreamingPat
 check(cfg.contains("file_state = \(StreamingPaths.state.path)") && cfg.contains("cert = ") && cfg.contains("pkey = ") && cfg.contains("vt_software = disabled"), "its own paired devices and certificate, apart from any other Sunshine, and only the hardware encoder")
 check(StreamingConfig.text(quality: .balanced, audioSink: "BlackHole 2ch").contains("audio_sink = BlackHole 2ch") && !cfg.contains("audio_sink ="), "sound comes from a loopback device when there is one")
 let ownConf = tmp.appendingPathComponent("stream-own.conf"); try? "port = 1\naudio_sink = Mine 16ch\n".write(to: ownConf, atomically: true, encoding: .utf8)
-check(StreamingSound.sink(own: ownConf, devices: { [] }) == "Mine 16ch" && StreamingSound.sink(own: tmp.appendingPathComponent("none"), devices: { ["Speakers", "BlackHole 16ch", "BlackHole 2ch"] }) == "BlackHole 2ch" && StreamingSound.sink(own: tmp.appendingPathComponent("none"), devices: { ["Speakers"] }) == nil, "the player's own sound device, else BlackHole")
+check(StreamingSound.sink(chosen: "", own: ownConf, devices: { [] }) == "Mine 16ch" && StreamingSound.sink(chosen: "", own: tmp.appendingPathComponent("none"), devices: { ["Speakers", "BlackHole 16ch", "BlackHole 2ch"] }) == "BlackHole 2ch" && StreamingSound.sink(chosen: "", own: tmp.appendingPathComponent("none"), devices: { ["Speakers"] }) == nil, "the player's own sound device, else BlackHole")
+check(StreamingSound.sink(chosen: "Loopback", own: ownConf, devices: { ["Loopback", "BlackHole 2ch"] }) == "Loopback" && StreamingSound.sink(chosen: "Gone", own: tmp.appendingPathComponent("none"), devices: { ["BlackHole 2ch"] }) == "BlackHole 2ch", "a chosen sound device wins while it's there")
 
 let tvGame = Game(url: tmp.appendingPathComponent("stream/TV Game.app"), name: "TV Game", titleID: "0100ABCDEF")
 let artURL = tmp.appendingPathComponent("stream/art.png")

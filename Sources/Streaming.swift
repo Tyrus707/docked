@@ -237,32 +237,69 @@ enum StreamingFiles {
     """
 }
 
-// The sound device Sunshine listens to: the one the player's own Sunshine used, else a BlackHole device on this Mac.
+// The sound on the TV. macOS can't share its output, so Sunshine listens to a loopback device (BlackHole),
+// and while a stream plays Docked points the Mac's sound output at that device, then puts it back.
+// "chosen" is the player's pick in Settings › TV; empty means automatic.
 enum StreamingSound {
-    static func sink(own: URL = URL(fileURLWithPath: NSHomeDirectory() + "/.config/sunshine/sunshine.conf"), devices: () -> [String] = inputDevices) -> String? {
+    static var chosen: String { UserDefaults.standard.string(forKey: "streaming.sound") ?? "" }
+
+    static func sink(chosen: String = chosen, own: URL = URL(fileURLWithPath: NSHomeDirectory() + "/.config/sunshine/sunshine.conf"),
+                     devices: () -> [String] = { allDevices().filter(\.input).map(\.name) }) -> String? {
+        let names = devices()
+        if !chosen.isEmpty, !chosen.contains("\n"), names.contains(chosen) { return chosen }
         if let text = try? String(contentsOf: own, encoding: .utf8) {
             for line in text.split(whereSeparator: \.isNewline) {
                 let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-                if parts.count == 2, parts[0] == "audio_sink", !parts[1].isEmpty, !parts[1].contains("\n") { return parts[1] }
+                if parts.count == 2, parts[0] == "audio_sink", !parts[1].isEmpty { return parts[1] }
             }
         }
-        let names = devices()
         return names.first { $0 == "BlackHole 2ch" } ?? names.first { $0.localizedCaseInsensitiveContains("BlackHole") }
     }
 
-    static func inputDevices() -> [String] {
-        var a = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    // While streaming, this Mac plays its sound into the device Sunshine listens to, so it reaches the TV.
+    private static var before: AudioDeviceID?
+    static func toTV() {
+        guard let name = sink(), let d = allDevices().first(where: { $0.name == name && $0.output }), let now = defaultOutput(), now != d.id else { return }
+        if before == nil { before = now }
+        setDefaultOutput(d.id)
+    }
+    static func back() {
+        guard let b = before else { return }
+        before = nil
+        if allDevices().contains(where: { $0.id == b }) { setDefaultOutput(b) }
+    }
+
+    struct Device { let id: AudioDeviceID; let name: String; let input: Bool; let output: Bool }
+    private static func address(_ s: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: s, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    }
+    static func allDevices() -> [Device] {
+        var a = address(kAudioHardwarePropertyDevices)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size) == noErr else { return [] }
         var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size, &ids) == noErr else { return [] }
         return ids.compactMap { id in
-            var n = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            var n = address(kAudioObjectPropertyName)
             var name: Unmanaged<CFString>?
             var s = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             guard AudioObjectGetPropertyData(id, &n, 0, nil, &s, &name) == noErr, let v = name?.takeRetainedValue() else { return nil }
-            return v as String
+            func has(_ scope: AudioObjectPropertyScope) -> Bool {
+                var o = address(kAudioDevicePropertyStreams, scope); var size: UInt32 = 0
+                return AudioObjectGetPropertyDataSize(id, &o, 0, nil, &size) == noErr && size > 0
+            }
+            return Device(id: id, name: v as String, input: has(kAudioObjectPropertyScopeInput), output: has(kAudioObjectPropertyScopeOutput))
         }
+    }
+    private static func defaultOutput() -> AudioDeviceID? {
+        var a = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var id = AudioDeviceID(0); var s = UInt32(MemoryLayout<AudioDeviceID>.size)
+        return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &s, &id) == noErr && id != 0 ? id : nil
+    }
+    private static func setDefaultOutput(_ id: AudioDeviceID) {
+        var a = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var v = id
+        _ = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, UInt32(MemoryLayout<AudioDeviceID>.size), &v)
     }
 }
 
@@ -304,6 +341,9 @@ final class Streaming: ObservableObject {
     }
     @Published var everyGame = UserDefaults.standard.bool(forKey: "streaming.everyGame") {
         didSet { UserDefaults.standard.set(everyGame, forKey: "streaming.everyGame"); libraryChanged(games) }
+    }
+    @Published var sound = StreamingSound.chosen {
+        didSet { UserDefaults.standard.set(sound, forKey: "streaming.sound"); if on { restart() } }   // Sunshine reads its sound device only as it starts
     }
     @Published private(set) var status: StreamingStatus = .stopped
     @Published private(set) var detail = "Off"
@@ -394,6 +434,7 @@ final class Streaming: ObservableObject {
     }
 
     func stop() {
+        StreamingSound.back()   // the Mac's own sound, if a stream had it
         generation += 1
         starting = false
         installProgress = nil

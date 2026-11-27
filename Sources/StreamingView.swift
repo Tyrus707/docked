@@ -34,6 +34,12 @@ struct TVSettings: View {
             settingsRow("Every game in Moonlight", "Off, Moonlight shows one Docked tile that opens Couch Mode. On, each game gets its own tile too.") {
                 Toggle("Every game in Moonlight", isOn: $stream.everyGame).labelsHidden().toggleStyle(.switch).tint(style.button)
             }
+            settingsRow("Sound", "Automatic plays the sound on the TV through BlackHole. Pick another device Sunshine should listen to only if you route sound your own way.") {
+                Picker("Sound", selection: $stream.sound) {
+                    Text("On the TV (automatic)").tag("")
+                    ForEach(StreamingSound.allDevices().filter(\.input).map(\.name).filter { !$0.isEmpty }, id: \.self) { Text($0).tag($0) }
+                }.labelsHidden().fixedSize()
+            }
             Divider()
             ForEach(StreamingPermission.allCases) { p in
                 settingsRow(p.title, p.text) {

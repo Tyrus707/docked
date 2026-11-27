@@ -49,12 +49,13 @@ extension Model {
     func tvLink(_ r: TVRequest) {
         let tv = TVDisplay.shared
         guard r.start else {
-            tv.stop()
+            tv.stop(); StreamingSound.back()
             if tv.madeCouch { tv.madeCouch = false; leaveCouch() }
             return
         }
         let ready = { try? Data().write(to: StreamingPaths.ready) }   // tv.sh stops waiting; Sunshine starts the picture
         guard streaming.on else { ready(); return }
+        StreamingSound.toTV()
         tv.start(width: r.width, height: r.height, fps: r.fps) { [weak self] in
             ready()
             guard let self else { return }
