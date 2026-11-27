@@ -18,12 +18,18 @@ enum StreamingInstall {
         return FileManager.default.isExecutableFile(atPath: exe.path) ? exe : nil
     }
 
+    // An existing Sunshine is only reused if it is really Sunshine and its signature still checks out.
+    static func signed(_ app: URL) -> Bool {
+        guard executable(in: app) != nil, Bundle(url: app)?.bundleIdentifier == bundleID else { return false }
+        return run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], timeout: 300).code == 0
+    }
+
     static func installedApp() -> URL? {
         var choices: [URL?] = [NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)]
         let fm = FileManager.default
         let apps = [URL(fileURLWithPath: "/Applications/Sunshine.app"), fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Sunshine.app")]
         choices += apps
-        return choices.compactMap { $0 }.first { executable(in: $0) != nil }
+        return choices.compactMap { $0 }.first { signed($0) }
     }
 
     static func isHex(_ s: String, count: Int = 64) -> Bool {
@@ -46,7 +52,7 @@ enum StreamingInstall {
 
     static func ensure(progress: @escaping (String, Double?) -> Void = { _, _ in }) throws -> URL {
         if let app = installedApp() { return app }
-        if executable(in: StreamingPaths.app) != nil { return StreamingPaths.app }
+        if signed(StreamingPaths.app) { return StreamingPaths.app }
 
         let fm = FileManager.default
         try fm.createDirectory(at: StreamingPaths.base, withIntermediateDirectories: true)
@@ -76,10 +82,10 @@ enum StreamingInstall {
         let copy = work.appendingPathComponent("Sunshine.app")
         let copied = run("/usr/bin/ditto", [mount.appendingPathComponent("Sunshine.app").path, copy.path], timeout: 600).code == 0
         run("/usr/bin/hdiutil", ["detach", "-force", mount.path], timeout: 60)
-        guard copied, let exe = executable(in: copy) else {
+        guard copied, executable(in: copy) != nil else {
             throw StreamingError.text("Sunshine wasn't where Docked expected it in the download.")
         }
-        guard run("/usr/bin/codesign", ["--verify", "--deep", "--strict", exe.path], timeout: 300).code == 0 else {
+        guard signed(copy) else {
             throw StreamingError.text("Sunshine's signature didn't check out, so it wasn't used.")
         }
         try? fm.removeItem(at: StreamingPaths.app)

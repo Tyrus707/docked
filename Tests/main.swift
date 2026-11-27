@@ -967,7 +967,7 @@ do {
 let cfg = StreamingConfig.text(quality: .saver)
 check(cfg.contains("encoder = videotoolbox") && cfg.contains("vt_realtime = enabled") && cfg.contains("hevc_mode = 2") && cfg.contains("av1_mode = 0"), "Sunshine uses VideoToolbox, HEVC and capable AV1")
 check(cfg.contains("max_bitrate = 8000") && StreamingConfig.text(quality: .native).contains("max_bitrate = 0"), "quality chooses Sunshine's bitrate")
-check(cfg.contains("min_log_level = warning") && cfg.contains("upnp = enabled") && cfg.contains("origin_web_ui_allowed = lan") && cfg.contains("B-frames"), "quiet, reachable and no B-frames")
+check(cfg.contains("min_log_level = warning") && cfg.contains("upnp = disabled") && cfg.contains("origin_web_ui_allowed = pc") && cfg.contains("B-frames"), "quiet, local only and no B-frames")
 check(cfg.contains("port = \(StreamingPaths.port)") && cfg.contains(StreamingPaths.apps.path) && cfg.contains(StreamingPaths.credentials.path), "Docked's own port, apps and credentials")
 check(cfg.contains("file_state = \(StreamingPaths.state.path)") && cfg.contains("cert = ") && cfg.contains("pkey = ") && !cfg.contains("vt_software"), "its own paired devices and certificate, apart from any other Sunshine")
 
@@ -983,6 +983,15 @@ do {
     try StreamingFiles.prepare(quality: .balanced, games: [tvGame])
     check(fm.fileExists(atPath: StreamingPaths.config.path) && fm.fileExists(atPath: StreamingPaths.apps.path), "Docked writes Sunshine's files")
 } catch { check(false, "writing Sunshine's files: \(error)") }
+do {
+    try StreamingCredentials.write(credentials: ("docked-test", "test-password"))
+    let j = try JSONSerialization.jsonObject(with: Data(contentsOf: StreamingPaths.credentials)) as? [String: String]
+    let salt = j?["salt"] ?? "", hash = j?["password"] ?? ""
+    let want = Array(SHA256.hash(data: Data("test-password\(salt)".utf8))).reversed().map { String(format: "%02X", $0) }.joined()
+    let mode = try fm.attributesOfItem(atPath: StreamingPaths.credentials.path)[.posixPermissions] as? Int
+    check(j?["username"] == "docked-test" && salt.count == 16 && hash == want && mode == 0o600,
+          "Sunshine gets a private salted hash, not a password in a process list")
+} catch { check(false, "writing Sunshine's credentials: \(error)") }
 
 let releaseJSON = #"""
 {"tag_name":"v2026.914.233613","prerelease":false,"assets":[{"name":"Sunshine-macOS-arm64.dmg","browser_download_url":"https://github.com/SunshineStream/Sunshine/releases/download/v2026.914.233613/Sunshine-macOS-arm64.dmg","digest":"sha256:795f03a389c5726f9a7b15f501dc1ddf204b442cae565859ac83aae027a9e07c"}]}

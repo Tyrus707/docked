@@ -1,9 +1,8 @@
-import CoreGraphics
 import Foundation
 
 enum StreamingPermissionState { case allowed, asked, unknown }
 
-// Only the permissions Docked itself needs. A controller pairs straight to the Mac by Bluetooth,
+// TV streaming needs these permissions. A controller pairs straight to the Mac by Bluetooth,
 // so there is no Accessibility prompt and no extra hop for its input.
 enum StreamingPermission: String, CaseIterable, Identifiable {
     case screen, local
@@ -17,28 +16,17 @@ enum StreamingPermission: String, CaseIterable, Identifiable {
     }
     var text: String {
         switch self {
-        case .screen: return "Lets Moonlight see what's on this Mac. Docked asks only when you turn Streaming on; no password or Terminal."
-        case .local: return "Lets this Mac find your TV, iPad or another Mac on your network. Ethernet or 5 GHz Wi-Fi works best."
+        case .screen: return "Lets Moonlight see what's on this Mac. Sunshine asks for this when it first starts; if no prompt appears, allow it in System Settings › Privacy & Security › Screen Recording."
+        case .local: return "Lets this Mac find your TV, iPad or another Mac on your network. macOS may ask when Sunshine first looks for devices. Ethernet or 5 GHz Wi-Fi works best."
         }
     }
-    var button: String {
-        switch self {
-        case .screen: return "Allow Screen"
-        case .local: return "Got it"
-        }
-    }
+    var button: String { "Got it" }
     private var key: String { "streaming.permission.\(rawValue)" }
 
+    // Docked cannot read another app's permission, so this only records that the note was shown.
     var state: StreamingPermissionState {
-        if self == .screen, CGPreflightScreenCaptureAccess() { return .allowed }
-        return UserDefaults.standard.bool(forKey: key) ? .asked : .unknown
+        UserDefaults.standard.bool(forKey: key) ? .asked : .unknown
     }
 
-    func ask() {
-        switch self {
-        case .screen: _ = CGRequestScreenCaptureAccess()
-        case .local: break   // macOS asks when Sunshine first looks for devices; the usage note is in Info.plist
-        }
-        UserDefaults.standard.set(true, forKey: key)
-    }
+    func ask() { UserDefaults.standard.set(true, forKey: key) }
 }

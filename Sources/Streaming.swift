@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CryptoKit
 import Foundation
 
 // Phase 1: Docked runs its own, private Sunshine and hands Moonlight a list of Docked links.
@@ -35,6 +36,7 @@ enum StreamingPaths {
     static var config: URL { base.appendingPathComponent("sunshine.conf") }
     static var apps: URL { base.appendingPathComponent("apps.json") }
     static var credentials: URL { base.appendingPathComponent("credentials.json") }
+    static var certificate: URL { base.appendingPathComponent("credentials/cacert.pem") }
     static var log: URL { base.appendingPathComponent("sunshine.log") }
     static var state: URL { base.appendingPathComponent("sunshine_state.json") }
     static var art: URL { base.appendingPathComponent("Artwork") }
@@ -80,8 +82,9 @@ enum StreamingConfig {
         # Sunshine never uses B-frames with VideoToolbox, so there is nothing to turn on here.
         min_log_level = warning
         system_tray = disabled
-        upnp = enabled
-        origin_web_ui_allowed = lan
+        # Streaming stays on this network; Docked does not open ports on the router.
+        upnp = disabled
+        origin_web_ui_allowed = pc
         port = \(StreamingPaths.port)
         file_apps = \(StreamingPaths.apps.path)
         credentials_file = \(StreamingPaths.credentials.path)
@@ -184,9 +187,12 @@ enum StreamingFiles {
     }
 }
 
-// Sunshine's own Web UI password. Only the hash it makes lives in its config folder; the pair we use is in the Keychain.
+// Sunshine's own Web UI password. Only a salted hash lives on disk; the pair we use is in the Keychain.
+// Written here instead of with Sunshine's --creds flag, so the password never appears in a process list.
 enum StreamingCredentials {
     static let service = "Docked TV Streaming"
+    private static let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!%&()=-")
+
     static func ensure() -> (user: String, password: String) {
         func kept(_ account: String, _ make: () -> String) -> String {
             if let v = Keychain.string(service: service, account: account) { return v }
@@ -194,6 +200,19 @@ enum StreamingCredentials {
         }
         let hex = { UUID().uuidString.replacingOccurrences(of: "-", with: "") }
         return (kept("user") { "docked-" + hex() }, kept("password") { hex() + hex() })
+    }
+
+    // Matches Sunshine's credentials file: username, a 16-character salt, and hex(SHA-256(password + salt)).
+    static func write(credentials supplied: (user: String, password: String)? = nil) throws {
+        let c = supplied ?? ensure()
+        let salt = String((0..<16).map { _ in alphabet[Int.random(in: 0..<alphabet.count)] })
+        // Sunshine prints the digest bytes in reverse, as uppercase hex. Match it exactly.
+        let digest = Array(SHA256.hash(data: Data((c.password + salt).utf8)))
+        let hash = digest.reversed().map { String(format: "%02X", $0) }.joined()
+        let file: [String: Any] = ["username": c.user, "salt": salt, "password": hash]
+        let data = try JSONSerialization.data(withJSONObject: file, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: StreamingPaths.credentials, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: StreamingPaths.credentials.path)
     }
 }
 
@@ -281,9 +300,7 @@ final class Streaming: ObservableObject {
             }
             say("Writing TV settings…", status: .installing)
             try StreamingFiles.prepare(quality: quality, games: games)
-            let c = StreamingCredentials.ensure()
-            let r = run(exe.path, [StreamingPaths.config.path, "--creds", c.user, c.password], timeout: 30)
-            guard r.code == 0 else { throw StreamingError.text("Sunshine wouldn't accept its settings. Try again in a moment.") }
+            try StreamingCredentials.write()
             DispatchQueue.main.async {
                 guard self.generation == token else { return }
                 self.installProgress = nil

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 struct StreamingPairing: Codable, Equatable, Identifiable {
     var id: String
@@ -46,7 +47,7 @@ enum StreamingAPI {
         r.setValue("Basic \(auth)", forHTTPHeaderField: "Authorization")   // no Origin or Referer: Sunshine allows local API calls
         if let body { r.httpBody = try? JSONSerialization.data(withJSONObject: body) }
 
-        let session = URLSession(configuration: .ephemeral, delegate: LocalTrust(), delegateQueue: nil)
+        let session = URLSession(configuration: .ephemeral, delegate: LocalTrust(certificate: StreamingAPI.certificate()), delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         let done = DispatchSemaphore(value: 0)
         var got: Data?, reply: URLResponse?, failed: Error?
@@ -78,16 +79,39 @@ enum StreamingAPI {
     static func unpair(user: String, password: String, uuid: String) throws -> Bool {
         flag(try call(user: user, password: password, path: "api/clients/unpair", body: ["uuid": uuid]))
     }
+
+    // The certificate Sunshine made for its own Web UI. Only that certificate is trusted on loopback.
+    static func certificate() -> Data? {
+        guard let pem = try? String(contentsOf: StreamingPaths.certificate, encoding: .utf8) else { return nil }
+        let body = pem.split(whereSeparator: \.isNewline).filter { !$0.hasPrefix("-----") }.joined()
+        guard let der = Data(base64Encoded: body), SecCertificateCreateWithData(nil, der as CFData) != nil else { return nil }
+        return der
+    }
 }
 
-// Sunshine's Web UI uses a certificate it makes for itself. Trust it only on this Mac's loopback address.
+// Sunshine's Web UI uses a certificate it makes for itself. Trust only that one, only on this Mac's loopback address.
 private final class LocalTrust: NSObject, URLSessionDelegate {
+    private let certificate: Data?
+
+    init(certificate: Data?) { self.certificate = certificate }
+
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               ["localhost", "127.0.0.1"].contains(challenge.protectionSpace.host),
-              let trust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.performDefaultHandling, nil)
+              let expected = certificate, let trust = challenge.protectionSpace.serverTrust,
+              let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let first = chain.first else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        let data = SecCertificateCopyData(first)
+        guard let bytes = CFDataGetBytePtr(data) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        let served = Data(bytes: bytes, count: CFDataGetLength(data))
+        guard served == expected else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))

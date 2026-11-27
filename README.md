@@ -42,7 +42,7 @@ One library, from NES to Switch. Free, open source, quick to open.</p>
 
 ## Play on any screen
 
-In **Settings › TV**, switch Streaming on. The first time, Docked downloads the newest stable [Sunshine](https://github.com/SunshineStream/Sunshine) release, checks GitHub's checksum, and keeps it in its own hidden folder — nothing is added to Applications or asked to run in Terminal. It uses VideoToolbox on this Mac, with HEVC where the TV supports it, H.264 as the fallback, and AV1 when the hardware can do it.
+In **Settings › TV**, switch Streaming on. Docked uses a signed Sunshine already on this Mac if there is one; otherwise it downloads the newest stable [Sunshine](https://github.com/SunshineStream/Sunshine) release, checks GitHub's checksum and signature, and keeps it in its own hidden folder — nothing is added to Applications or asked to run in Terminal. Streaming stays on your network; Docked does not open ports on your router. It uses VideoToolbox on this Mac, with HEVC where the TV supports it, H.264 as the fallback, and AV1 when the hardware can do it.
 
 Install [Moonlight](https://moonlight-stream.org/) on your TV, iPad or another Mac. It finds this Mac on the same network. Choose the Mac, read out the four-digit PIN, and approve it in **Settings › TV**. Pick **Pixel-perfect**, **Balanced** or **Data saver** there. Ethernet or 5 GHz Wi-Fi gives the steadiest picture. Docked stops the stream when you quit, and restarts it up to three times if it ever stops unexpectedly.
 
