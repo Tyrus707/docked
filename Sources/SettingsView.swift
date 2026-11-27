@@ -13,7 +13,7 @@ struct SettingsSheet: View {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
             ScrollView {
-                Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tv: TVSettings(stream: model.streaming); case .tools: tools } }
+                Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .switchGames: SwitchDefaults(); case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tv: TVSettings(stream: model.streaming); case .tools: tools } }
                     .frame(maxWidth: .infinity, alignment: .topLeading).padding(.leading, 2).padding(.trailing, 14).padding(.vertical, 4)
             }.frame(height: 470)
             Divider()
@@ -138,6 +138,59 @@ struct ThemeSwatch: View {
 }
 
 // Other consoles: RetroAchievements, retro looks and controllers
+// Default settings for every Switch game. A game follows them for anything not chosen in its own Game Settings.
+struct SwitchDefaults: View {
+    @EnvironmentObject var model: Model
+    @State private var list: [LaunchSetting]?
+    @State private var more = false
+    @State private var tick = 0
+    private var apps: [URL] { model.games.filter { $0.rom == nil && !$0.missing && $0.away == nil }.map(\.url) }
+    var body: some View {
+        let _ = tick
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Your settings for every Switch game. A game follows them unless you change that setting in its own Game Settings, which always wins.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let list {
+                if list.isEmpty { Text("Convert a Switch game first. Its settings show up here.").font(.callout).foregroundStyle(.secondary) }
+                ForEach(list.reduce(into: [String]()) { if !$0.contains($1.section) { $0.append($1.section) } }, id: \.self) { sec in
+                    let rows = list.filter { $0.section == sec && ($0.basic || more) }
+                    if !rows.isEmpty {
+                        Text(sec).font(.callout.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
+                        ForEach(rows) { s in settingsRow(s.label, s.note) { control(s).disabled(!applies(s, list)) } }
+                    }
+                }
+                HStack {
+                    if list.contains(where: { !$0.basic }) { Button(more ? "Fewer Settings" : "Advanced Settings") { more.toggle() } }
+                    Spacer()
+                    Button("Reset to Tested Defaults") { GameDefaults.all = [:]; tick += 1 }.disabled(GameDefaults.all.isEmpty).help("Every game goes back to the settings it was tested with, apart from the ones you chose for a game.")
+                }
+            } else { ProgressView().controlSize(.small) }
+        }
+        .onAppear { let a = apps; DispatchQueue.global(qos: .userInitiated).async { let l = GameDefaults.catalog(a); DispatchQueue.main.async { list = l } } }
+        .onDisappear { let a = apps; DispatchQueue.global(qos: .utility).async { GameDefaults.sync(a) } }   // copied into each game, so it sees them even opened outside Docked
+    }
+    func applies(_ s: LaunchSetting, _ list: [LaunchSetting]) -> Bool {
+        guard let n = s.needs, let i = n.firstIndex(of: "="), let o = list.first(where: { $0.env == String(n[..<i]) }) else { return true }
+        return GameDefaults.value(o) == String(n[n.index(after: i)...])
+    }
+    @ViewBuilder func control(_ s: LaunchSetting) -> some View {
+        let v = GameDefaults.value(s)
+        switch s.kind {
+        case .choice:
+            Picker(s.label, selection: Binding(get: { v }, set: { GameDefaults.set(s, $0); tick += 1 })) {
+                ForEach(s.options ?? [], id: \.self) { o in Text(o.count > 1 ? o[1] : o.first ?? "").tag(o.first ?? "") }
+            }.labelsHidden().fixedSize()
+        case .toggle:
+            Toggle(s.label, isOn: Binding(get: { v == (s.on ?? "1") }, set: { GameDefaults.set(s, $0 ? s.on ?? "1" : s.off ?? "0"); tick += 1 })).labelsHidden().toggleStyle(.switch).tint(style.button)
+        case .range:
+            let lo = s.min ?? 0, hi = Swift.max(s.max ?? 1, lo + (s.step ?? 0.1))
+            HStack(spacing: 8) {
+                Slider(value: Binding(get: { Swift.min(hi, Swift.max(lo, Double(v) ?? lo)) }, set: { GameDefaults.set(s, s.text($0)); tick += 1 }), in: lo...hi, step: s.step ?? 0.1).frame(width: 150).tint(style.accent).accessibilityLabel(s.label)
+                Text(s.text(Double(v) ?? lo)).monospacedDigit().foregroundStyle(.secondary).frame(width: 36, alignment: .trailing)
+            }
+        }
+    }
+}
+
 struct RetroSettings: View {
     @EnvironmentObject var model: Model
     @State private var user = ""

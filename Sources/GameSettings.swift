@@ -58,9 +58,25 @@ struct GameSettings {
 
     var sections: [String] { settings.reduce(into: [String]()) { if !$0.contains($1.section) { $0.append($1.section) } } }
 
-    func value(_ s: LaunchSetting) -> String { fixed[s.env] ?? saved.string(forKey: Self.prefix + s.env) ?? s.default }
+    // What the game uses when you chose nothing for it: your default for every Switch game, or the tested one
+    func base(_ s: LaunchSetting) -> String { GameDefaults.all[s.env].flatMap { allowed(s, $0) ? $0 : nil } ?? s.default }
+    func value(_ s: LaunchSetting) -> String { fixed[s.env] ?? own(s) ?? base(s) }
     func isFixed(_ s: LaunchSetting) -> Bool { fixed[s.env] != nil }
-    func isSaved(_ s: LaunchSetting) -> Bool { saved.string(forKey: Self.prefix + s.env) != nil }
+    // A choice made for this game alone, here or in its own window. One Docked copied in from your defaults isn't.
+    func own(_ s: LaunchSetting) -> String? {
+        guard let v = saved.string(forKey: Self.prefix + s.env) else { return nil }
+        return inherited[s.env] == v ? nil : v
+    }
+    func isSaved(_ s: LaunchSetting) -> Bool { own(s) != nil }
+    func allowed(_ s: LaunchSetting, _ v: String) -> Bool {
+        guard v.utf8.count <= 256 else { return false }
+        if s.kind == .choice, let o = s.options { return o.contains { $0.first == v } }
+        return true
+    }
+
+    // The values Docked copied into the game's preferences from your defaults, so the game sees them even when opened outside Docked
+    static let inheritedKey = "docked.inherited"
+    private var inherited: [String: String] { saved.dictionary(forKey: Self.inheritedKey) as? [String: String] ?? [:] }
 
     // A setting that only matters when another is on, e.g. rumble strength needs rumble
     func applies(_ s: LaunchSetting) -> Bool {
@@ -71,13 +87,43 @@ struct GameSettings {
     }
 
     func set(_ s: LaunchSetting, _ v: String) {
-        guard !isFixed(s), v.utf8.count <= 256 else { return }
-        if s.kind == .choice, let o = s.options, !o.contains(where: { $0.first == v }) { return }
-        // Only a choice that differs from the tested default is kept, so a later build's better default reaches the player (nxnative docs/frontends.md)
-        if v == s.default { saved.removeObject(forKey: Self.prefix + s.env) } else { saved.set(v, forKey: Self.prefix + s.env) }
+        guard !isFixed(s), allowed(s, v) else { return }
+        if v == base(s) { saved.removeObject(forKey: Self.prefix + s.env); inherit(s) }   // back to following your defaults
+        else { saved.set(v, forKey: Self.prefix + s.env); var i = inherited; i[s.env] = nil; saved.set(i, forKey: Self.inheritedKey) }
     }
 
-    // Back to the settings the game was tested with, like the window's own Reset button. Other choices it keeps (microphone, save sync) stay.
-    func reset() { for s in settings { saved.removeObject(forKey: Self.prefix + s.env) } }
-    var changed: Bool { settings.contains { isSaved($0) && value($0) != $0.default } }
+    // Back to your defaults (or the tested ones), like the window's own Reset button. Other choices it keeps (microphone, save sync) stay.
+    func reset() { for s in settings where !isFixed(s) { saved.removeObject(forKey: Self.prefix + s.env); inherit(s) } }
+    var changed: Bool { settings.contains { own($0).map { v in v != base($0) } ?? false } }
+
+    // Copies your current defaults into every setting you didn't choose for this game. Only a value that differs from the
+    // tested default is kept, so a later build's better default reaches the player (nxnative docs/frontends.md).
+    func sync() { for s in settings where !isFixed(s) && own(s) == nil { inherit(s) } }
+    private func inherit(_ s: LaunchSetting) {
+        var i = inherited; let v = base(s)
+        if v == s.default { saved.removeObject(forKey: Self.prefix + s.env); i[s.env] = nil }
+        else { saved.set(v, forKey: Self.prefix + s.env); i[s.env] = v }
+        saved.set(i, forKey: Self.inheritedKey)
+    }
+}
+
+// Your settings for every Switch game, kept in Docked's own preferences. A game follows them for anything you didn't choose for it alone.
+enum GameDefaults {
+    static var store = UserDefaults.standard   // the tests use their own
+    static let key = "gameDefaults"
+    static let skip: Set<String> = ["DM_FRIENDS"]   // Play with friends is turned on game by game, in Friends
+    static var all: [String: String] {
+        get { store.dictionary(forKey: key) as? [String: String] ?? [:] }
+        set { store.set(newValue, forKey: key) }
+    }
+    static func set(_ s: LaunchSetting, _ v: String) { var a = all; a[s.env] = v == s.default ? nil : String(v.prefix(256)); all = a }
+    static func value(_ s: LaunchSetting) -> String { all[s.env] ?? s.default }
+
+    // Every setting your converted games offer, in the order they first appear; a game's env.txt can't fix a default for all
+    static func catalog(_ apps: [URL]) -> [LaunchSetting] {
+        var seen = Set<String>(), out: [LaunchSetting] = []
+        for a in apps { for s in GameSettings(app: a)?.settings ?? [] where !skip.contains(s.env) && seen.insert(s.env).inserted { out.append(s) } }
+        return out
+    }
+    static func sync(_ apps: [URL]) { for a in apps { GameSettings(app: a)?.sync() } }
 }
