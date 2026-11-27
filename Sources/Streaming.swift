@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreAudio
 import CryptoKit
 import Foundation
 
@@ -40,6 +41,8 @@ enum StreamingPaths {
     static var log: URL { base.appendingPathComponent("sunshine.log") }
     static var state: URL { base.appendingPathComponent("sunshine_state.json") }
     static var art: URL { base.appendingPathComponent("Artwork") }
+    static var script: URL { base.appendingPathComponent("tv.sh") }
+    static var ready: URL { base.appendingPathComponent("tv-ready") }
     static let port = 48089
     static var webUI: URL { URL(string: "https://127.0.0.1:\(port + 1)")! }
 }
@@ -71,11 +74,14 @@ enum StreamingQuality: String, CaseIterable {
 
 // Sunshine's own settings file. B-frames are not a setting here: its VideoToolbox path always sets max_b_frames to 0.
 enum StreamingConfig {
-    static func text(quality: StreamingQuality) -> String {
+    static func text(quality: StreamingQuality, audioSink: String? = nil) -> String {
         """
         # Written by Docked. Change it in Settings › TV, not here.
         encoder = videotoolbox
         vt_realtime = enabled
+        # Always the Mac's video engine: a software fallback adds a lot of delay.
+        vt_software = disabled
+        \(audioSink.map { "# The sound Sunshine sends. macOS has no way to share its output, so this is a loopback device like BlackHole.\naudio_sink = \($0)" } ?? "# No loopback sound device (like BlackHole) on this Mac, so the stream has no sound.")
         hevc_mode = 2
         av1_mode = 0
         max_bitrate = \(quality.maxBitrate)
@@ -104,15 +110,24 @@ struct StreamingAppEntry: Codable, Equatable {
     var cmd: String
     var imagePath: String?
     var workingDir: String?
-    var autoDetach: Bool   // `open` returns at once; this tells Sunshine the game is still running
+    var autoDetach: Bool
     var output: String?
+    var prep: [StreamingPrep]? = nil
 
     enum CodingKeys: String, CodingKey {
         case name, cmd, output
+        case prep = "prep-cmd"
         case autoDetach = "auto-detach"
         case imagePath = "image-path"
         case workingDir = "working-dir"
     }
+}
+
+// Run by Sunshine as the stream starts ("do") and as the player quits it in Moonlight ("undo").
+struct StreamingPrep: Codable, Equatable {
+    var start: String
+    var undo: String
+    enum CodingKeys: String, CodingKey { case start = "do", undo }
 }
 
 struct StreamingAppList: Codable, Equatable {
@@ -121,30 +136,34 @@ struct StreamingAppList: Codable, Equatable {
 }
 
 enum StreamingApps {
-    static let couchName = "Couch Mode"
+    static let couchName = "Docked"
 
-    static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-    static func open(_ link: String) -> String { "/usr/bin/open " + quote(link) }
+    // Sunshine splits a command at spaces and only understands double quotes, and it runs it without a shell.
+    // So every entry runs tv.sh (its path has a space, in "Application Support") with plain words after it.
+    // The game is started by Docked itself once the TV-sized screen is ready, never by Sunshine.
+    static func script(_ words: String) -> String { "/bin/sh \"" + StreamingPaths.script.path + "\" " + words }
+    static func prep(_ what: String) -> [StreamingPrep] { [StreamingPrep(start: script("start " + what), undo: script("end"))] }
+    static func word(_ id: String) -> String { id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "" }
 
-    static func make(games: [Game], imageFor: (Game) -> URL?) -> StreamingAppList {
-        var list = [StreamingAppEntry(name: couchName, cmd: open("docked://couch"), imagePath: nil,
-                                      workingDir: nil, autoDetach: true, output: nil)]
-        for g in games where !g.missing && g.away == nil {
-            list.append(StreamingAppEntry(name: g.name, cmd: open(DockedLink.play(g.titleID)),
-                                          imagePath: imageFor(g)?.path, workingDir: nil, autoDetach: true, output: nil))
+    // Just Docked (Couch Mode) unless the player asks for every game too, so Moonlight's list is one tidy tile.
+    static func make(games: [Game], every: Bool, imageFor: (Game) -> URL?, icon: URL? = nil) -> StreamingAppList {
+        var list = [StreamingAppEntry(name: couchName, cmd: "", imagePath: icon?.path, workingDir: nil, autoDetach: true, output: nil, prep: prep("couch 1"))]
+        if every {
+            for g in games where !g.missing && g.away == nil && !word(g.titleID).isEmpty {
+                list.append(StreamingAppEntry(name: g.name, cmd: "", imagePath: imageFor(g)?.path, workingDir: nil, autoDetach: true, output: nil,
+                                              prep: prep("play " + word(g.titleID))))
+            }
         }
         return StreamingAppList(env: [:], apps: list)
     }
 
     // Cover art is copied into Sunshine's own folder as a real PNG, never linked from the library.
     // Sunshine reads this file again each time Moonlight asks for the list, so it never needs a restart.
-    @discardableResult static func write(games: [Game]) throws -> StreamingAppList {
+    @discardableResult static func write(games: [Game], every: Bool = UserDefaults.standard.bool(forKey: "streaming.everyGame")) throws -> StreamingAppList {
         try FileManager.default.createDirectory(at: StreamingPaths.art, withIntermediateDirectories: true)
         var pictures: [String: URL] = [:]
-        for g in games where !g.missing && g.away == nil {
-            if let u = StreamingArt.png(for: g) { pictures[g.id] = u }
-        }
-        let list = make(games: games) { pictures[$0.id] }
+        if every { for g in games where !g.missing && g.away == nil { if let u = StreamingArt.png(for: g) { pictures[g.id] = u } } }
+        let list = make(games: games, every: every, imageFor: { pictures[$0.id] }, icon: StreamingArt.docked())
         let j = JSONEncoder(); j.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try j.encode(list)
         if (try? Data(contentsOf: StreamingPaths.apps)) != data { try data.write(to: StreamingPaths.apps, options: .atomic) }
@@ -175,6 +194,17 @@ enum StreamingArt {
         return to
     }
 
+    // Docked's own icon, for its tile in Moonlight
+    static func docked() -> URL? {
+        let to = StreamingPaths.art.appendingPathComponent("docked.png")
+        if FileManager.default.fileExists(atPath: to.path) { return to }
+        let icon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        icon.size = NSSize(width: 512, height: 512)
+        guard let tiff = icon.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let data = rep.representation(using: .png, properties: [:]), (try? data.write(to: to, options: .atomic)) != nil else { return nil }
+        return to
+    }
+
     private static func modified(_ u: URL) -> Date? { (try? u.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate }
 }
 
@@ -183,7 +213,93 @@ enum StreamingFiles {
         let fm = FileManager.default
         try fm.createDirectory(at: StreamingPaths.base.appendingPathComponent("credentials"), withIntermediateDirectories: true)
         try StreamingApps.write(games: games)
-        try Data(StreamingConfig.text(quality: quality).utf8).write(to: StreamingPaths.config, options: .atomic)
+        try Data(script.utf8).write(to: StreamingPaths.script, options: .atomic)
+        try Data(StreamingConfig.text(quality: quality, audioSink: StreamingSound.sink()).utf8).write(to: StreamingPaths.config, options: .atomic)
+    }
+
+    // Sunshine runs this with the TV's size in its environment. "start" asks Docked for a screen that size
+    // and waits for it (up to 5 s), because Sunshine looks at the screen as soon as this returns.
+    static let script = """
+    #!/bin/sh
+    # Written by Docked. Sunshine runs it as a stream starts and ends.
+    dir=$(dirname "$0")
+    case "$1" in
+    start)
+      rm -f "$dir/tv-ready"
+      /usr/bin/open "docked://tv?w=${SUNSHINE_CLIENT_WIDTH:-0}&h=${SUNSHINE_CLIENT_HEIGHT:-0}&fps=${SUNSHINE_CLIENT_FPS:-60}&$2=$3"
+      i=0
+      while [ ! -e "$dir/tv-ready" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done ;;
+    end)
+      /usr/bin/open -g "docked://tv?end=1" ;;
+    esac
+    exit 0
+
+    """
+}
+
+// The sound on the TV. macOS can't share its output, so Sunshine listens to a loopback device (BlackHole),
+// and while a stream plays Docked points the Mac's sound output at that device, then puts it back.
+// "chosen" is the player's pick in Settings › TV; empty means automatic.
+enum StreamingSound {
+    static var chosen: String { UserDefaults.standard.string(forKey: "streaming.sound") ?? "" }
+
+    static func sink(chosen: String = chosen, own: URL = URL(fileURLWithPath: NSHomeDirectory() + "/.config/sunshine/sunshine.conf"),
+                     devices: () -> [String] = { allDevices().filter(\.input).map(\.name) }) -> String? {
+        let names = devices()
+        if !chosen.isEmpty, !chosen.contains("\n"), names.contains(chosen) { return chosen }
+        if let text = try? String(contentsOf: own, encoding: .utf8) {
+            for line in text.split(whereSeparator: \.isNewline) {
+                let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                if parts.count == 2, parts[0] == "audio_sink", !parts[1].isEmpty { return parts[1] }
+            }
+        }
+        return names.first { $0 == "BlackHole 2ch" } ?? names.first { $0.localizedCaseInsensitiveContains("BlackHole") }
+    }
+
+    // While streaming, this Mac plays its sound into the device Sunshine listens to, so it reaches the TV.
+    private static var before: AudioDeviceID?
+    static func toTV() {
+        guard let name = sink(), let d = allDevices().first(where: { $0.name == name && $0.output }), let now = defaultOutput(), now != d.id else { return }
+        if before == nil { before = now }
+        setDefaultOutput(d.id)
+    }
+    static func back() {
+        guard let b = before else { return }
+        before = nil
+        if allDevices().contains(where: { $0.id == b }) { setDefaultOutput(b) }
+    }
+
+    struct Device { let id: AudioDeviceID; let name: String; let input: Bool; let output: Bool }
+    private static func address(_ s: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: s, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+    }
+    static func allDevices() -> [Device] {
+        var a = address(kAudioHardwarePropertyDevices)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size) == noErr else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &size, &ids) == noErr else { return [] }
+        return ids.compactMap { id in
+            var n = address(kAudioObjectPropertyName)
+            var name: Unmanaged<CFString>?
+            var s = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectGetPropertyData(id, &n, 0, nil, &s, &name) == noErr, let v = name?.takeRetainedValue() else { return nil }
+            func has(_ scope: AudioObjectPropertyScope) -> Bool {
+                var o = address(kAudioDevicePropertyStreams, scope); var size: UInt32 = 0
+                return AudioObjectGetPropertyDataSize(id, &o, 0, nil, &size) == noErr && size > 0
+            }
+            return Device(id: id, name: v as String, input: has(kAudioObjectPropertyScopeInput), output: has(kAudioObjectPropertyScopeOutput))
+        }
+    }
+    private static func defaultOutput() -> AudioDeviceID? {
+        var a = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var id = AudioDeviceID(0); var s = UInt32(MemoryLayout<AudioDeviceID>.size)
+        return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, &s, &id) == noErr && id != 0 ? id : nil
+    }
+    private static func setDefaultOutput(_ id: AudioDeviceID) {
+        var a = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var v = id
+        _ = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &a, 0, nil, UInt32(MemoryLayout<AudioDeviceID>.size), &v)
     }
 }
 
@@ -222,6 +338,12 @@ final class Streaming: ObservableObject {
     }
     @Published var quality = StreamingQuality(rawValue: UserDefaults.standard.string(forKey: "streaming.quality") ?? "") ?? .balanced {
         didSet { UserDefaults.standard.set(quality.rawValue, forKey: "streaming.quality") }
+    }
+    @Published var everyGame = UserDefaults.standard.bool(forKey: "streaming.everyGame") {
+        didSet { UserDefaults.standard.set(everyGame, forKey: "streaming.everyGame"); libraryChanged(games) }
+    }
+    @Published var sound = StreamingSound.chosen {
+        didSet { UserDefaults.standard.set(sound, forKey: "streaming.sound"); if on { restart() } }   // Sunshine reads its sound device only as it starts
     }
     @Published private(set) var status: StreamingStatus = .stopped
     @Published private(set) var detail = "Off"
@@ -312,6 +434,7 @@ final class Streaming: ObservableObject {
     }
 
     func stop() {
+        StreamingSound.back()   // the Mac's own sound, if a stream had it
         generation += 1
         starting = false
         installProgress = nil

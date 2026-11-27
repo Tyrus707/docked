@@ -31,6 +31,15 @@ struct TVSettings: View {
                     ForEach(StreamingQuality.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.labelsHidden().fixedSize()
             }
+            settingsRow("Every game in Moonlight", "Off, Moonlight shows one Docked tile that opens Couch Mode. On, each game gets its own tile too.") {
+                Toggle("Every game in Moonlight", isOn: $stream.everyGame).labelsHidden().toggleStyle(.switch).tint(style.button)
+            }
+            settingsRow("Sound", "Automatic plays the sound on the TV through BlackHole. Pick another device Sunshine should listen to only if you route sound your own way.") {
+                Picker("Sound", selection: $stream.sound) {
+                    Text("On the TV (automatic)").tag("")
+                    ForEach(StreamingSound.allDevices().filter(\.input).map(\.name).filter { !$0.isEmpty }, id: \.self) { Text($0).tag($0) }
+                }.labelsHidden().fixedSize()
+            }
             Divider()
             ForEach(StreamingPermission.allCases) { p in
                 settingsRow(p.title, p.text) {
@@ -70,7 +79,7 @@ struct TVSettings: View {
                 }
             }
             Divider()
-            settingsRow("A good connection", "Use Ethernet, or 5 GHz Wi-Fi if you can. Keep the TV and this Mac on the same network; Moonlight finds Docked by name.") {
+            settingsRow("A good connection", "Use Ethernet, or 5 GHz Wi-Fi if you can, and turn on your TV's Game Mode. While you play, Docked gives this Mac a screen the TV's exact size, so there are no side bars and nothing is scaled.") {
                 Button("How to Pair…") { model.leaveSettings { model.showStreamingWelcome = true } }
             }
             settingsRow("Sunshine's log", "The most recent messages from the streaming host, if something goes wrong.") {
@@ -97,7 +106,7 @@ struct StreamingWelcome: View {
             step("1", "Install Moonlight", "On your TV, iPad or other Mac, install Moonlight from moonlight-stream.org. It's free and open source.")
             step("2", "Pick this Mac", "Streaming is on. Docked sets up its own copy of Sunshine quietly, then Moonlight will see this Mac on your network. If macOS asks about Screen Recording or Local Network, each has a short note in Settings › TV.")
             step("3", "Type the PIN", "Moonlight shows a four-digit PIN while it pairs. Come back to Settings › TV, choose the device and type the PIN. Docked approves it there.")
-            Text("Pair a controller with this Mac by Bluetooth for the quickest input. This first version streams the picture; system sound is still on the way.")
+            Text("Pair a controller with this Mac by Bluetooth for the quickest input. For sound, set this Mac's output to BlackHole; Settings › TV has the note.")
                 .font(.caption).foregroundStyle(style.soft)
             HStack {
                 Button("Moonlight's Site") { NSWorkspace.shared.open(URL(string: "https://moonlight-stream.org/")!) }

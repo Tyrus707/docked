@@ -35,10 +35,41 @@ extension Model {
         case .couch: if !couch { toggleCouch() }
         case .health: checkHealth()
         case let .join(i): joinOnline(i)
+        case let .tv(r): tvLink(r)
         }
     }
     func copyLink(_ g: Game) {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(DockedLink.play(g.titleID), forType: .string)
         tell("Link copied. In Shortcuts, use Open URLs with it to start \(g.name) from anywhere.")
+    }
+}
+
+// A TV stream starting or ending (TVDisplay.swift)
+extension Model {
+    func tvLink(_ r: TVRequest) {
+        let tv = TVDisplay.shared
+        guard r.start else {
+            tv.stop(); StreamingSound.back()
+            if tv.madeCouch { tv.madeCouch = false; leaveCouch() }
+            return
+        }
+        let ready = { try? Data().write(to: StreamingPaths.ready) }   // tv.sh stops waiting; Sunshine starts the picture
+        guard streaming.on else { ready(); return }
+        StreamingSound.toTV()
+        tv.start(width: r.width, height: r.height, fps: r.fps) { [weak self] in
+            ready()
+            guard let self else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            if let id = r.play {
+                if let g = gameFor(id: id, name: nil, in: games), !g.missing { select(g); play(g) }
+                else { tell("That game isn't in your library now.", good: false) }
+            } else if r.couch, !couch {
+                // Full screen goes on the TV-sized screen, once it is the main one
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    guard let self, !self.couch else { return }
+                    self.enterCouch(); tv.madeCouch = self.couch
+                }
+            }
+        }
     }
 }

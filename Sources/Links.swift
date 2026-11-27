@@ -1,10 +1,10 @@
 import Foundation
 
 // docked:// links, for Shortcuts, Raycast, Alfred, a Stream Deck or a Dock folder:
-//   docked://play?id=<title ID>   docked://play?name=<words in the game's name>   docked://resume   docked://couch   docked://health
+//   docked://play?id=<title ID>   docked://play?name=<words in the game's name>   docked://resume   docked://couch   docked://health   docked://tv?w=&h=&fps=&couch=1 (from TV streaming)
 //   docked://join?room=<room>&key=<password>&game=<name>   a friend's invite to a retro game online (Netplay.swift)
 enum DockedLink: Equatable {
-    case play(id: String?, name: String?), resume, couch, health, join(Invite)
+    case play(id: String?, name: String?), resume, couch, health, join(Invite), tv(TVRequest)
     static func parse(_ u: URL) -> DockedLink? {
         guard u.scheme?.lowercased() == "docked", let c = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return nil }
         let what = (c.host ?? c.path.split(separator: "/").first.map(String.init) ?? "").lowercased()
@@ -14,6 +14,13 @@ enum DockedLink: Equatable {
         case "resume": return .resume
         case "couch": return .couch
         case "health": return .health
+        case "tv":   // from tv.sh, as a TV stream starts or ends (TVDisplay.swift)
+            if q("end") != nil { return .tv(TVRequest(start: false)) }
+            let n = { (k: String) in Int(q(k) ?? "") ?? 0 }
+            var r = TVRequest(start: true, width: n("w"), height: n("h"), fps: n("fps") == 0 ? 60 : n("fps"))
+            if let id = q("play") { guard id.count <= 64, id.allSatisfy({ $0.isLetter || $0.isNumber || "-_.".contains($0) }) else { return nil }; r.play = id }
+            r.couch = q("couch") != nil
+            return .tv(r)
         case "join": guard let r = q("room"), let k = q("key"), let g = q("game"), Invite.valid(r), k.configSafe, g.configClean, k.count <= 64 else { return nil }; return .join(Invite(room: r, key: k, game: g))
         default: return nil
         }
