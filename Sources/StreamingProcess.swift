@@ -38,7 +38,13 @@ final class StreamApp: StreamProcessLike {
         }
     }
 
-    func terminate() { ending = true; if let a = app, !a.isTerminated { a.terminate() } }
+    // Asked to quit, then made to if it hasn't in 2 seconds, so a stopped Sunshine never keeps the port
+    func terminate() {
+        ending = true
+        guard let a = app, !a.isTerminated else { return }
+        a.terminate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if !a.isTerminated { a.forceTerminate() } }
+    }
 }
 
 // A small supervisor: three restarts for a crash, then a quiet, friendly stop. Tests give it a fake launch.

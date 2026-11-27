@@ -6,7 +6,11 @@ import Security
 // and Docked is ad-hoc signed, so after every update the old item was out of reach and the player had to sign in again.
 // The token is also what RetroArch reads from its own settings while a game plays, so a private file loses nothing.
 enum Keychain {
-    static var file: URL { Paths.root.appendingPathComponent("Secrets.json") }
+    // In Application Support, away from the library folder that Finder, scripts and assistants browse
+    static var file: URL {
+        ProcessInfo.processInfo.environment["DOCKED_ROOT"] != nil ? Paths.root.appendingPathComponent("Secrets.json")
+            : URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Docked/Secrets.json")
+    }
 
     static func string(service: String, account: String) -> String? {
         if let v = load()[key(service, account)] { return v }
@@ -34,12 +38,12 @@ enum Keychain {
         return j
     }
     private static func save(_ all: [String: String]) {
-        let fm = FileManager.default
-        try? fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fm = FileManager.default, dir = file.deletingLastPathComponent()
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         guard let d = try? JSONSerialization.data(withJSONObject: all, options: [.sortedKeys]) else { return }
-        // made private before anything is written to it
-        if !fm.fileExists(atPath: file.path) { fm.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
-        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        try? d.write(to: file)   // not atomic, so the private permissions on the file stay
+        // A private new file, then swapped in, so a crash mid-save never loses every sign-in
+        let tmp = dir.appendingPathComponent(".Secrets-\(UUID().uuidString).json")
+        guard fm.createFile(atPath: tmp.path, contents: d, attributes: [.posixPermissions: 0o600]) else { return }
+        if rename(tmp.path, file.path) != 0 { try? fm.removeItem(at: tmp) }
     }
 }
