@@ -29,7 +29,7 @@ struct SaveVaultView: View {
             }
             Divider()
             if backups.isEmpty {
-                Label("No saved copies yet. Docked makes one before converting, updating Docked, offloading or moving this game to the Trash.", systemImage: "clock")
+                Label("No saved copies yet. Docked makes one before converting, offloading or moving this game to the Trash, and keeps the newest 3.", systemImage: "clock")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
                 ScrollView {

@@ -74,9 +74,9 @@ final class Model: ObservableObject {
     @Published var section = Section.home
     @Published var search = "" { didSet { if search != oldValue { memo = Memo() } } }
     // Each shelf's games, sorted, and each section's count, worked out once until the games or the library change: a big library is never sorted again just to redraw
-    private struct Memo { var shown: [ShownKey: [Game]] = [:]; var counts: [Section: Int] = [:] }
-    private struct ShownKey: Hashable { let section: Section, by: SortBy }
-    private var memo = Memo()
+    struct Memo { fileprivate var shown: [ShownKey: [Game]] = [:]; fileprivate var counts: [Section: Int] = [:]; var couch: [CouchShelf]? }
+    fileprivate struct ShownKey: Hashable { let section: Section, by: SortBy }
+    var memo = Memo()   // let go whenever the games, the library or the search change
     // Saved a moment after the last change, off the main thread, and at once when Docked quits: a thousand covers found in a row is one write, not a thousand
     private var saveLater: DispatchWorkItem?
     private static let saver = DispatchQueue(label: "library-save", qos: .utility)
@@ -219,7 +219,7 @@ final class Model: ObservableObject {
     func dropped(_ urls: [URL], on g: Game) { if urls.count == 1, pictureTypes.contains(urls[0].pathExtension.lowercased()) { setArt(g, urls[0]) } else if urls.count == 1, soundTypes.contains(urls[0].pathExtension.lowercased()) { setTheme(g, urls[0]) } else { add(urls) } }
     let covers: NSCache<NSString, NSImage> = { let c = NSCache<NSString, NSImage>(); c.totalCostLimit = 220 << 20; return c }()   // about 500 covers; the rest load again from disk
     private var making = Set<String>()
-    @Published private var coverTick = 0
+    @Published private(set) var coverTick = 0
     private var tickSoon = false
     // Made or loaded in the background the first time it is wanted; the tile waits with a plain one.
     func cover(_ g: Game) -> NSImage? {
@@ -918,7 +918,7 @@ final class Model: ObservableObject {
         retry?.cancel(); retry = nil
         guard !builder.running, moving == nil, !removing, !installing, !queue.paused, !engineBusy, !checkingGame else { return }
         guard ready else { if !checks.isEmpty, !queue.waiting.isEmpty { queue.paused = true }; return }
-        let now = convertOnce; convertOnce = false   // Convert Now starts this batch without changing the saved choice
+        let now = convertOnce; if queue.waiting.isEmpty { convertOnce = false }   // Convert Now carries on until everything waiting has started; the saved choice stays as it is
         if !queue.waiting.isEmpty, let why = now ? nil : Power.shared.wait(convertWhen) {   // looked at again every 5 minutes, and at once when the power changes
             convertWaiting = why; let w = DispatchWorkItem { [weak self] in self?.startNext() }; retry = w; DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: w); return
         }
@@ -1003,7 +1003,6 @@ final class Model: ObservableObject {
     private func arrive(_ o: Arrive.Offer) {
         let n = NSAlert(); n.messageText = Arrive.title(o); n.informativeText = Arrive.text(o); if case .update = o { n.addButton(withTitle: "Update and Reopen") } else { n.addButton(withTitle: "Move and Reopen") }; n.addButton(withTitle: "Not Now")
         guard n.runModal() == .alertFirstButtonReturn else { UserDefaults.standard.set(appVersion, forKey: "stayedPut"); return }
-        snapshotSaves("before update")
         updating = true
         // The older one may be open, and converting: it asks before it stops
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").filter { $0.processIdentifier != getpid() }; others.forEach { $0.activate(options: []); $0.terminate() }
@@ -1016,7 +1015,6 @@ final class Model: ObservableObject {
     func installUpdate(_ v: String) {
         guard !updating else { return }
         guard !builder.running, moving == nil, !removing, !installing, !engineBusy, !checkingGame else { tell("Docked can update once it has finished its current job.", good: false); return }
-        snapshotSaves("before update")
         updating = true
         Update.fetch(v) { r in
             switch r {
@@ -1058,7 +1056,6 @@ final class Model: ObservableObject {
         guard !engineBusy, let signed = engineSigned else { return }
         let (m, s) = signed
         guard engineFree else { tell("Docked can update its engine once it has finished its current job.", good: false); return }
-        snapshotSaves("before engine update")
         engineBusy = true; let day = engine?.when.map(engineDay)
         DispatchQueue.global(qos: .userInitiated).async {
             let r = Result { try Engine.prepare(manifest: m, sig: s) }
@@ -1176,7 +1173,7 @@ final class Model: ObservableObject {
         do {
             try FileManager.default.trashItem(at: u, resultingItemURL: nil)
             library.removeApp(u.path)
-            logActivity("Moved a game to the Trash", detail: saved ? "Its save was kept in the Save Vault first." : "Docked checked its save before moving it.")
+            logActivity("Moved a game to the Trash", detail: saved ? "Its save was kept in the Save Vault first." : nil)
         } catch { message = error.localizedDescription }
         reload()
     }
@@ -1404,11 +1401,9 @@ extension View { @ViewBuilder func fromBottom() -> some View { if #available(mac
 struct SetupView: View {
     @EnvironmentObject var model: Model
     @Environment(\.dismiss) var dismiss
-    @State private var copied: String?
     private let tick = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
     private var first: URL? { model.waitingSwitch.first }   // the Switch game that brought this up, if one did
     private var keysFound: Bool { findKeys(model.keys) != nil }
-    private var room: SpaceEstimate { SpaceEstimate(need: 10_000_000_000, free: freeSpace(), destinationFree: nil, destinationNeed: nil) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1424,39 +1419,15 @@ struct SetupView: View {
                 Text("Setup").font(.title2.weight(.semibold))
                 Text("These are needed once. Where there's a command, copy it, paste it into Terminal and press Return.").foregroundStyle(.secondary)
             }
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(model.checks) { c in
-                    HStack(alignment: .firstTextBaseline) {
-                        Image(systemName: c.ok ? "checkmark.circle.fill" : "circle").foregroundStyle(c.ok ? style.ok : Color.secondary)
-                            .accessibilityLabel(c.ok ? "Done" : "Not done")
-                        VStack(alignment: .leading) { Text(c.title); Text(c.detail).font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                        if !c.ok, c.installs {
-                            if model.installing { ProgressView().controlSize(.small) }
-                            Button(model.installing ? "Installing…" : "Install") { model.install() }.disabled(model.installing)
-                        }
-                        if !c.ok, !c.fix.isEmpty {
-                            Button(copied == c.id ? "Copied" : "Copy Command") {
-                                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(c.fix, forType: .string); copied = c.id
-                            }
-                        }
-                    }
-                }
-                if first != nil {
-                    HStack(alignment: .firstTextBaseline) {
-                        Image(systemName: keysFound ? "checkmark.circle.fill" : "circle").foregroundStyle(keysFound ? style.ok : Color.secondary).accessibilityLabel(keysFound ? "Done" : "Not done")
-                        VStack(alignment: .leading) { Text("Your prod.keys file"); Text(keysFound ? "Found. Docked only remembers where it is." : "Copied from your own Switch. Not needed for .nup files or dump folders.").font(.caption).foregroundStyle(.secondary) }
-                        Spacer()
-                        Button(keysFound ? "Change…" : "Choose…") { _ = model.pickKeys() }
-                    }
-                }
-            }.padding(first == nil ? 0 : 12).background(first == nil ? Color.clear : style.tile, in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Setup Check", systemImage: "checkmark.seal").font(.callout.weight(.semibold)).foregroundStyle(style.text)
-                SpaceCheck(estimate: room, compact: true)
-                Text(model.waitingSwitch.isEmpty ? "Converting needs about 10 GB of work space, plus twice the size of each game." : "\(model.waitingSwitch.count) \(model.waitingSwitch.count == 1 ? "game is" : "games are") waiting. Each needs about twice its size plus 10 GB of work space.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            SetupChecklist(note: model.waitingSwitch.isEmpty ? "Converting needs about 10 GB of work space, plus twice the size of each game." : "\(model.waitingSwitch.count) \(model.waitingSwitch.count == 1 ? "game is" : "games are") waiting. Each needs about twice its size plus 10 GB of work space.")
+            if first != nil {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: keysFound ? "checkmark.circle.fill" : "circle").foregroundStyle(keysFound ? style.ok : Color.secondary).accessibilityLabel(keysFound ? "Done" : "Not done")
+                    VStack(alignment: .leading) { Text("Your prod.keys file"); Text(keysFound ? "Found. Docked only remembers where it is." : "Copied from your own Switch. Not needed for .nup files or dump folders.").font(.caption).foregroundStyle(.secondary) }
+                    Spacer()
+                    Button(keysFound ? "Change…" : "Choose…") { _ = model.pickKeys() }
+                }.padding(12).background(style.tile, in: RoundedRectangle(cornerRadius: 10))
             }
-            if let p = model.installProblem { Label(p, systemImage: "exclamationmark.circle").foregroundStyle(style.danger).font(.callout) }
             if first != nil { Label("Your game is kept here. Once everything is ready, Docked picks up where you left off, so you can close this and keep playing.", systemImage: "clock").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 if model.checking { ProgressView().controlSize(.small) }

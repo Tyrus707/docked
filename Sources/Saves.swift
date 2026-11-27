@@ -42,14 +42,13 @@ extension Model {
     @discardableResult func snapshotSave(_ g: Game, _ why: String, quiet: Bool = false) -> URL? {
         guard g.rom == nil else { return nil }   // a save can still be here when its game's drive is away
         do {
-            guard let u = try GameData(g.titleID).backUp(label: "Docked \(why)") else { return nil }
-            if !quiet { logActivity("Saved \(g.name)'s progress", detail: "A dated copy was kept before \(why).") }
+            let d = GameData(g.titleID)
+            guard let u = try d.backUp(label: "Docked \(why)") else { return nil }
+            if !quiet { logActivity("Saved \(g.name)'s progress", detail: "A dated copy was kept \(why).") }
             return u
-        } catch { logActivity("Couldn't save a copy of \(g.name)'s progress", detail: "Before \(why). \(error.localizedDescription)", warn: true); return nil }
+        } catch { logActivity("Couldn't save a copy of \(g.name)'s progress", detail: "Docked tried to keep one \(why). \(error.localizedDescription)", warn: true); return nil }
     }
 
-    // For changes to Docked itself: only games that have a save are copied.
-    func snapshotSaves(_ why: String) { for g in games where g.rom == nil && GameData(g.titleID).hasSave { snapshotSave(g, why) } }
 
     func backUpSave(_ g: Game) {
         guard GameData(g.titleID).hasSave else { tell("\(g.name) has no save yet.", good: false); return }
@@ -87,7 +86,7 @@ extension Model {
         guard let src = GameData.saveIn(u) else { message = "That folder has no save in it."; return }
         let when = ((try? src.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()).formatted(date: .abbreviated, time: .shortened)
         let a = NSAlert(); a.messageText = "Use this save for \(g.name)?"
-        a.informativeText = "From \(when), \(ByteCountFormatter.string(fromByteCount: GameData.size(src), countStyle: .file)). Docked backs up the save you have now first, so you can go back to it."
+        a.informativeText = "From \(when), \(byteText(GameData.size(src))). Docked backs up the save you have now first, so you can go back to it."
         a.addButton(withTitle: "Use This Save"); a.addButton(withTitle: "Cancel")
         guard a.runModal() == .alertFirstButtonReturn else { return }
         do { try GameData(g.titleID).restore(src); tell("\(g.name) will start from that save."); logActivity("Restored \(g.name)'s save", detail: "Used the copy from \(when). The save you had was kept first.") }

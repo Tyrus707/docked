@@ -36,7 +36,7 @@ struct ReviewView: View {
                             Text(p.kind == .unknown ? "File" : p.kind.rawValue).font(.caption.weight(.semibold)).frame(width: 56, alignment: .leading)
                             Text(p.label).lineLimit(1).truncationMode(.head).help(p.url.lastPathComponent)
                             Spacer()
-                            Text(ByteCountFormatter.string(fromByteCount: p.bytes, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                            Text(byteText(p.bytes)).font(.caption).foregroundStyle(.secondary)
                             Button { model.review.parts.removeAll { $0.id == p.id } } label: { Image(systemName: "xmark.circle.fill") }
                                 .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Remove \(p.url.lastPathComponent)")
                         }.padding(.vertical, 6).padding(.horizontal, 10)

@@ -22,7 +22,7 @@ enum OffloadError: LocalizedError, Equatable {
         case .gone(let w): return "It isn't in \(w) any more."
         case .stalled(let w): return "\(w) stopped sending it. Check your internet connection and try again."
         case let .split(folder, why): return "\(why) Some of its files couldn't come back and are still in \(folder). Move them back beside the game to play it."
-        case let .room(need, free): return "It needs \(ByteCountFormatter.string(fromByteCount: need, countStyle: .file)) free on this Mac, and there is \(ByteCountFormatter.string(fromByteCount: free, countStyle: .file))."
+        case let .room(need, free): return "It needs \(byteText(need)) free on this Mac, and there is \(byteText(free))."
         }
     }
 }
@@ -63,13 +63,6 @@ enum Offload {
         if !sameVolume(away, dir) { try Organize.ensureSpace(items.reduce(0) { $0 + folderSize($1) }, at: dir) }
         for i in items { try Organize.transfer(i, to: dir.appendingPathComponent(i.lastPathComponent), move: true) }
         try? fm.removeItem(at: away)
-    }
-
-    // Free space on the disk a path is on, from the nearest folder that exists
-    static func free(at u: URL) -> Int64 {
-        var d = u; while !FileManager.default.fileExists(atPath: d.path), d.pathComponents.count > 1 { d.deleteLastPathComponent() }
-        let v = try? d.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
-        return v?.volumeAvailableCapacityForImportantUsage ?? Int64(v?.volumeAvailableCapacity ?? 0)
     }
 }
 

@@ -5,7 +5,8 @@ struct SettingsSheet: View {
     @EnvironmentObject var builder: Builder
     @Environment(\.dismiss) var dismiss
     enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", friends = "Friends", tv = "TV", tools = "Setup" }
-    @State private var tab = Tab.general
+    static var start = Tab.general   // set just before opening, to land on one tab
+    @State private var tab = SettingsSheet.start
     private let phoneGames = xcodeGames()
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -74,14 +75,9 @@ struct SettingsSheet: View {
         if now != nil, let p = Engine.installed(Engine.previous) { line("Kept engine", "From \(engineDay(p.date)). Switch to it if a game converts worse with the one in use. You can switch back.") { Button("Switch") { model.leaveSettings { model.engineBack() } }.disabled(model.engineBusy) } }
     }
     @ViewBuilder var tools: some View {
-        let free = freeSpace()
         VStack(spacing: 14) {
             line("This Mac", cannotConvert() ?? (model.ready ? "Ready to convert Switch games." : model.checks.isEmpty ? "Checking…" : "\(model.checks.filter { !$0.ok }.count) to do: \(nextCheck(model.checks)?.title ?? "")")) { Button("Details…") { model.leaveSettings { model.recheck(); model.showSetup = true } } }
-            line("Room to convert", "\(byteText(free)) free. Converting needs about \(byteText(10_000_000_000)) of work space, plus twice each game's size.") {
-                Image(systemName: free >= 10_000_000_000 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(free >= 10_000_000_000 ? style.ok : style.warn)
-                    .accessibilityLabel(free >= 10_000_000_000 ? "Enough room" : "Not enough room")
-            }
+            SpaceCheck(estimate: spaceEstimate(bytes: 0), compact: true)
             if model.carriesEngine { engineRows }
             line("Setup guide", "One step at a time, from the beginning.") { Button("Open Guide…") { model.leaveSettings { model.recheck(); model.showGuide = true } } }
             line("Other consoles", RetroArch.installed ? "RetroArch \(RetroArch.installedVersion ?? "") is set up inside Docked." : "Docked sets up RetroArch the first time you add one of their games.") { Button("Consoles…") { model.leaveSettings { model.showConsoles = true } } }
@@ -154,11 +150,11 @@ struct RetroSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let u = Cheevos.user, Cheevos.signedIn {
-                line("RetroAchievements", "Signed in as \(u). Unlocks pop up while you play.") { Button("Sign Out") { Cheevos.signOut(); model.objectWillChange.send() } }
+                line("RetroAchievements", "Signed in as \(u). Unlocks pop up while you play.") { Button("Sign Out") { Cheevos.signOut(); CheevoStore.shared.forget(); model.objectWillChange.send() } }
                 line("Hardcore", "No save states, rewind or cheats, and unlocks count as hardcore. From the next game you start.") { Toggle("Hardcore", isOn: .init(get: { Cheevos.hardcore }, set: { Cheevos.hardcore = $0; model.objectWillChange.send() })).labelsHidden().toggleStyle(.switch).tint(style.button) }
-                line("Progress in Docked", Cheevos.hasWebKey ? "Shown on each game's page and in Couch Mode." : "Paste the Web API key from your RetroAchievements settings page to see it on each game.") {
+                line("Progress in Docked", Cheevos.hasWebKey ? "On each game's page, on its tile, and under Achievements in the sidebar." : "Paste the Web API key from your RetroAchievements settings page to see your achievements in Docked.") {
                     if Cheevos.hasWebKey { Button("Refresh") { model.refreshCheevos(force: true) } }
-                    else { SecureField("Web API key", text: $key).frame(width: 150); Button("Save") { Cheevos.setWebKey(key); key = ""; model.refreshCheevos(force: true) }.disabled(key.isEmpty) }
+                    else { SecureField("Web API key", text: $key).frame(width: 150); Button("Save") { Cheevos.setWebKey(key); key = ""; CheevoStore.shared.recheck(); model.refreshCheevos(force: true) }.disabled(key.isEmpty) }
                 }
             } else {
                 line("RetroAchievements", "Earn achievements in retro games with your free retroachievements.org account. Docked keeps only a sign-in token, in your Keychain.") { Button("Create Account…") { NSWorkspace.shared.open(URL(string: "https://retroachievements.org/createaccount")!) } }
@@ -191,7 +187,7 @@ struct RetroSettings: View {
             let r = Result { try Cheevos.signIn(user: u, password: p, webKey: k) }
             DispatchQueue.main.async {
                 busy = false; password = ""
-                switch r { case .success: key = ""; model.objectWillChange.send(); model.refreshCheevos(force: true); case .failure(let e): note = e.localizedDescription }
+                switch r { case .success: key = ""; CheevoStore.shared.recheck(); model.objectWillChange.send(); model.refreshCheevos(force: true); case .failure(let e): note = e.localizedDescription }
             }
         }
     }

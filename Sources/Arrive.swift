@@ -8,7 +8,7 @@ enum Arrive {
     static var places: [URL] { [URL(fileURLWithPath: "/Applications"), URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications")] }
     private static func real(_ u: URL) -> String { var b = [CChar](repeating: 0, count: Int(PATH_MAX)); return realpath(u.path, &b) != nil ? String(cString: b) : u.standardizedFileURL.path }
     private static func isFolder(_ u: URL) -> Bool { var s = stat(); return lstat(u.path, &s) == 0 && s.st_mode & S_IFMT == S_IFDIR }
-    private static func info(_ app: URL) -> [String: Any] { NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")) as? [String: Any] ?? [:] }
+    private static func info(_ app: URL) -> [String: Any] { appInfo(app) as? [String: Any] ?? [:] }
     static func version(_ app: URL) -> String? { info(app)["CFBundleShortVersionString"] as? String }
     private static func hasTools(_ app: URL) -> Bool { FileManager.default.fileExists(atPath: app.appendingPathComponent("Contents/Resources/tools.tar.xz").path) }
 
