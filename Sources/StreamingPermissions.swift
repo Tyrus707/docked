@@ -19,8 +19,8 @@ enum StreamingPermission: String, CaseIterable, Identifiable {
         switch self {
         case .screen: return "Lets Moonlight see what's on this Mac. Sunshine asks for this when it first starts; if no prompt appears, allow it in System Settings › Privacy & Security › Screen Recording."
         case .local: return "Lets this Mac find your TV, iPad or another Mac on your network. macOS may ask when Sunshine first looks for devices. Ethernet or 5 GHz Wi-Fi works best."
-        case .sound: return StreamingSound.sink().map { "While you stream, this Mac's sound goes to the TV through \($0), then comes back here. Allow Microphone if macOS asks; that's how Sunshine hears it." }
-            ?? "For sound on the TV, install BlackHole 2ch (free, from existential.audio), then turn Streaming off and on. Docked does the rest."
+        case .sound: return StreamingSound.sink().map { "While you stream, this Mac's sound goes through \($0), then comes back here." }
+            ?? "Sunshine sends this Mac's own sound to the TV, with nothing to install. The first time, macOS asks to let it record system audio; allow it."
         }
     }
     var button: String { "Got it" }

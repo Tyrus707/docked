@@ -34,7 +34,7 @@ struct TVSettings: View {
             settingsRow("Every game in Moonlight", "Off, Moonlight shows one Docked tile that opens Couch Mode. On, each game gets its own tile too.") {
                 Toggle("Every game in Moonlight", isOn: $stream.everyGame).labelsHidden().toggleStyle(.switch).tint(style.button)
             }
-            settingsRow("Sound", "Automatic plays the sound on the TV through BlackHole. Pick another device Sunshine should listen to only if you route sound your own way.") {
+            settingsRow("Sound", "Automatic sends this Mac's own sound to the TV, with nothing to install. Pick a device only if you route sound your own way.") {
                 Picker("Sound", selection: $stream.sound) {
                     Text("On the TV (automatic)").tag("")
                     ForEach(StreamingSound.allDevices().filter(\.input).map(\.name).filter { !$0.isEmpty }, id: \.self) { Text($0).tag($0) }
@@ -106,7 +106,7 @@ struct StreamingWelcome: View {
             step("1", "Install Moonlight", "On your TV, iPad or other Mac, install Moonlight from moonlight-stream.org. It's free and open source.")
             step("2", "Pick this Mac", "Streaming is on. Docked sets up its own copy of Sunshine quietly, then Moonlight will see this Mac on your network. If macOS asks about Screen Recording or Local Network, each has a short note in Settings › TV.")
             step("3", "Type the PIN", "Moonlight shows a four-digit PIN while it pairs. Come back to Settings › TV, choose the device and type the PIN. Docked approves it there.")
-            Text("Pair a controller with this Mac by Bluetooth for the quickest input. For sound, set this Mac's output to BlackHole; Settings › TV has the note.")
+            Text("Pair a controller with this Mac by Bluetooth for the quickest input. Sound comes along too; allow it the first time macOS asks.")
                 .font(.caption).foregroundStyle(style.soft)
             HStack {
                 Button("Moonlight's Site") { NSWorkspace.shared.open(URL(string: "https://moonlight-stream.org/")!) }

@@ -81,7 +81,7 @@ enum StreamingConfig {
         vt_realtime = enabled
         # Always the Mac's video engine: a software fallback adds a lot of delay.
         vt_software = disabled
-        \(audioSink.map { "# The sound Sunshine sends. macOS has no way to share its output, so this is a loopback device like BlackHole.\naudio_sink = \($0)" } ?? "# No loopback sound device (like BlackHole) on this Mac, so the stream has no sound.")
+        \(audioSink.map { "# The sound device the player chose in Settings › TV.\naudio_sink = \($0)" } ?? "# No audio_sink: Sunshine records the Mac's own sound (a Core Audio tap, macOS 14.2 and later). Nothing to install.")
         hevc_mode = 2
         av1_mode = 0
         max_bitrate = \(quality.maxBitrate)
@@ -237,23 +237,15 @@ enum StreamingFiles {
     """
 }
 
-// The sound on the TV. macOS can't share its output, so Sunshine listens to a loopback device (BlackHole),
-// and while a stream plays Docked points the Mac's sound output at that device, then puts it back.
-// "chosen" is the player's pick in Settings › TV; empty means automatic.
+// The sound on the TV. Automatic (the default) leaves audio_sink out, so Sunshine records whatever this Mac plays
+// itself, with nothing to install. A device picked in Settings › TV is for players who route sound their own way;
+// then, while a stream plays, Docked points the Mac's sound output at it and puts it back afterwards.
 enum StreamingSound {
     static var chosen: String { UserDefaults.standard.string(forKey: "streaming.sound") ?? "" }
 
-    static func sink(chosen: String = chosen, own: URL = URL(fileURLWithPath: NSHomeDirectory() + "/.config/sunshine/sunshine.conf"),
-                     devices: () -> [String] = { allDevices().filter(\.input).map(\.name) }) -> String? {
-        let names = devices()
-        if !chosen.isEmpty, !chosen.contains("\n"), names.contains(chosen) { return chosen }
-        if let text = try? String(contentsOf: own, encoding: .utf8) {
-            for line in text.split(whereSeparator: \.isNewline) {
-                let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-                if parts.count == 2, parts[0] == "audio_sink", !parts[1].isEmpty { return parts[1] }
-            }
-        }
-        return names.first { $0 == "BlackHole 2ch" } ?? names.first { $0.localizedCaseInsensitiveContains("BlackHole") }
+    static func sink(chosen: String = chosen, devices: () -> [String] = { allDevices().filter(\.input).map(\.name) }) -> String? {
+        guard !chosen.isEmpty, !chosen.contains("\n"), devices().contains(chosen) else { return nil }
+        return chosen
     }
 
     // While streaming, this Mac plays its sound into the device Sunshine listens to, so it reaches the TV.
