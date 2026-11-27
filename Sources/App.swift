@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var leaving: () -> Void = {}
     static var waiting: () -> Int = { 0 }
     func applicationWillFinishLaunching(_ n: Notification) { Style.apply() }
-    func applicationWillTerminate(_ n: Notification) { Self.leaving(); Friends.forgetShared() }
+    func applicationWillTerminate(_ n: Notification) { Self.leaving(); Friends.forgetShared(); Streamer.shared.stop() }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { !(Self.builder?.running ?? false) && !Self.moving() }
     func applicationShouldTerminate(_ s: NSApplication) -> NSApplication.TerminateReply {
         if Self.moving() { let a = NSAlert(); a.messageText = "A game is being moved."; a.informativeText = "Quit Docked when it has finished."; a.runModal(); return .terminateCancel }
@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 final class Model: ObservableObject {
-    @Published var games: [Game] = [] { didSet { memo = Memo() } }
+    @Published var games: [Game] = [] { didSet { memo = Memo(); streamFollow() } }
     @Published var checks: [Check] = []
     @Published var checking = false
     @Published var message: String?   // an alert, for a problem the player must act on
@@ -957,6 +957,18 @@ final class Model: ObservableObject {
         return Array(library.show(l, in: .all, by: .recent).prefix { library.entry($0.titleID).lastPlayed != nil }.prefix(max(n, 1)))   // one line of the grid, so it moves like one
     }
     var sections: [Section] { [.home, .all, .favorites] + consolesShown.map { .console($0.id) } + [.status(.playing), .status(.finished), .status(.aside), .status(.none)] + library.collections.map { .collection($0) } + library.smart.map { .smart($0) } }
+    // ---- TV streaming (Stream.swift): the list Moonlight shows follows the library, and streaming comes back on with Docked ----
+    private var streamWork: DispatchWorkItem?
+    @Published var streamNote: String?
+    func streamFollow() {
+        guard Stream.wanted else { return }
+        streamWork?.cancel()
+        let list = games, w = DispatchWorkItem { [weak self] in
+            let r = Result { try Streamer.shared.start(games: list) { Covers.tile(id: $0.titleID, rom: $0.rom, app: $0.url) } }
+            DispatchQueue.main.async { if case let .failure(e) = r { self?.streamNote = e.localizedDescription } else { self?.streamNote = nil } }
+        }
+        streamWork = w; DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5, execute: w)
+    }
     // ---- Couch Mode (Couch.swift) ----
     @Published var couch = false
     @Published var couchSpot = CouchSpot()

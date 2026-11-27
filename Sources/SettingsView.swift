@@ -4,7 +4,7 @@ struct SettingsSheet: View {
     @EnvironmentObject var model: Model
     @EnvironmentObject var builder: Builder
     @Environment(\.dismiss) var dismiss
-    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", friends = "Friends", tools = "Setup" }
+    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", friends = "Friends", tv = "TV", tools = "Setup" }
     static var start = Tab.general   // set just before opening, to land on one tab
     @State private var tab = SettingsSheet.start
     private let phoneGames = xcodeGames()
@@ -13,7 +13,7 @@ struct SettingsSheet: View {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
             ScrollView {
-                Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tools: tools } }
+                Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tv: TVSettings(); case .tools: tools } }
                     .frame(maxWidth: .infinity, alignment: .topLeading).padding(.leading, 2).padding(.trailing, 14).padding(.vertical, 4)
             }.frame(height: 470)
             Divider()
@@ -257,5 +257,41 @@ struct FriendsGamePicker: View {
     func choose(_ g: Game) {
         dismiss()
         model.leaveSettings { model.reconvertForFriends(g) }
+    }
+}
+
+// Play on any screen: Moonlight on a TV, iPad, Apple TV or another Mac shows Couch Mode and every game (Stream.swift)
+struct TVSettings: View {
+    @EnvironmentObject var model: Model
+    @State private var on = Stream.wanted
+    @State private var have = Stream.sunshine() != nil
+    @State private var picture = Stream.picture
+    @State private var pin = ""
+    @State private var note: String?
+    @State private var busy: String?
+    func line<C: View>(_ t: String, _ d: String, @ViewBuilder _ c: () -> C) -> some View { settingsRow(t, d, c) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            line("Play on any screen", "Stream games from this Mac to a TV, iPad, Apple TV or another Mac in the house, with the free Moonlight app. Moonlight lists Couch Mode and every game.") {
+                Toggle("Play on any screen", isOn: $on).labelsHidden().toggleStyle(.switch).tint(style.button).disabled(!have)
+                    .onChange(of: on) { v in Stream.wanted = v; if v { model.streamFollow() } else { Streamer.shared.stop(); model.streamNote = nil } }
+            }
+            if !have {
+                line("Sunshine", "Docked streams with Sunshine, which is free and open source. Docked keeps its own copy inside Docked.") {
+                    Button(busy ?? "Get Sunshine") { busy = "Getting Sunshine…"; Streamer.shared.download(progress: { busy = $0 }) { e in busy = nil; note = e; have = Stream.sunshine() != nil } }.disabled(busy != nil)
+                }
+            }
+            if let n = note ?? model.streamNote { Text(n).font(.caption).foregroundStyle(.red) }
+            line("Pair a screen", "In Moonlight, choose this Mac (\(Stream.screenName)). Type the PIN it shows here.") {
+                TextField("PIN", text: $pin).frame(width: 64).textFieldStyle(.roundedBorder)
+                Button("Pair") { Streamer.shared.pair(pin: pin, screen: "Moonlight") { e in note = e; if e == nil { pin = ""; model.tell("Paired. Pick a game in Moonlight.") } } }.disabled(!on || !Stream.validPIN(pin))
+            }
+            line("Picture", "Smoothest keeps latency lowest. Sharpest gives the Mac's encoder a little more time for each frame.") {
+                Picker("Picture", selection: $picture) { ForEach(Stream.Picture.allCases, id: \.self) { Text($0.name).tag($0) } }.labelsHidden().fixedSize()
+                    .onChange(of: picture) { v in Stream.picture = v; if Streamer.shared.running { Streamer.shared.stop(); model.streamFollow() } }
+            }
+            line("For a crisp, smooth picture", "In Moonlight's settings, set the resolution to your TV's, 60 FPS, HEVC, and a bitrate of 40 to 80 Mbps. Use Ethernet or 5 GHz Wi-Fi on both ends. The first time, macOS asks Docked for Screen Recording.") { EmptyView() }
+            Text("Streaming works inside your home network only. Nothing is opened on your router.").font(.caption).foregroundStyle(.secondary)
+        }.onAppear { have = Stream.sunshine() != nil }
     }
 }

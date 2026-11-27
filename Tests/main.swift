@@ -963,4 +963,20 @@ do {
     try? fm.removeItem(at: base)
 }
 
+// TV streaming (Stream.swift)
+do {
+    let f = tmp.appendingPathComponent("stream")
+    let c = Stream.configText(name: "Tyrus's Mac/../x", folder: f, picture: .smooth)
+    check(c.contains("sunshine_name = Tyruss Mac x") && c.contains("encoder = videotoolbox") && c.contains("vt_realtime = enabled") && c.contains("upnp = disabled"), "stream config: clean name, Mac encoder, real time, no router ports")
+    check(c.contains("file_apps = " + f.appendingPathComponent("apps.json").path) && c.contains("origin_web_ui_allowed = pc"), "stream config stays in Docked's folder, settings page for this Mac only")
+    check(Stream.configText(name: "", folder: f, picture: .sharp).contains("vt_realtime = disabled") && Stream.configText(name: "", folder: f, picture: .sharp).contains("sunshine_name = Docked"), "sharpest gives the encoder time; empty name is Docked")
+    var gone = Game(url: tmp.appendingPathComponent("Gone.app"), name: "Gone", titleID: "0100000000000002"); gone.missing = true
+    let ok = Game(url: tmp.appendingPathComponent("Here.app"), name: "Here \"Quoted\"", titleID: "0100000000000001", rom: nil, needs: "")
+    let j = try! JSONSerialization.jsonObject(with: Stream.appList([ok, gone]) { _ in tmp.appendingPathComponent("c.png") }) as! [String: Any], apps = j["apps"] as! [[String: Any]]
+    check(apps.first?["name"] as? String == "Couch Mode" && (apps.first?["detached"] as? [String])?.first == "/usr/bin/open docked://couch", "Moonlight lists Couch Mode first")
+    check(!apps.contains { $0["name"] as? String == "Gone" }, "games that can't play now aren't listed")
+    check(Stream.validPIN("0420") && !Stream.validPIN("42") && !Stream.validPIN("12a4") && !Stream.validPIN("١٢٣٤"), "PIN is four ASCII digits")
+    check(Stream.sunshine(places: [tmp.appendingPathComponent("none").path]) == nil, "no Sunshine found")
+}
+
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
