@@ -13,7 +13,10 @@ enum PlaceError: LocalizedError, Equatable {
     }
 }
 
-func titleID(of app: URL) -> String? { NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))?["DMTitleID"] as? String }
+// An app's own Info.plist, and what Docked reads from a converted game's: its title ID, and its own preferences (the launcher's settings, under its bundle ID)
+func appInfo(_ app: URL) -> NSDictionary? { NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")) }
+func titleID(of app: URL) -> String? { appInfo(app)?["DMTitleID"] as? String }
+func gamePrefs(_ app: URL) -> UserDefaults? { (appInfo(app)?["CFBundleIdentifier"] as? String).flatMap { UserDefaults(suiteName: $0) } }
 
 func sameVolume(_ a: URL, _ b: URL) -> Bool {
     func id(_ u: URL) -> NSObject? { (try? u.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject }
@@ -44,8 +47,7 @@ func placeGame(_ app: URL, in dir: URL, discard: (URL) throws -> Void = { try Fi
         try fm.moveItem(at: app, to: to)
         return to
     }
-    let free = (try? dir.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity ?? 0
-    guard Int64(free) > folderSize(app) + 500_000_000 else { throw PlaceError.noSpace }
+    guard freeSpace(at: dir) > folderSize(app) + 500_000_000 else { throw PlaceError.noSpace }
     let part = dir.appendingPathComponent("." + app.lastPathComponent + ".partial")
     try? fm.removeItem(at: part)
     do {

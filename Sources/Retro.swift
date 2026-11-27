@@ -267,11 +267,6 @@ enum RetroArch {
         guard g.status == 200, let f = g.file, g.size <= limit else { throw RetroError(g.error ?? "The download didn't finish. Check your connection and try again.") }
         try FileManager.default.moveItem(at: f, to: to)
     }
-    static func sha256(_ u: URL) -> String {
-        guard let h = try? FileHandle(forReadingFrom: u) else { return "" }; defer { try? h.close() }
-        var s = SHA256(); while let d = try? h.read(upToCount: 1 << 20), !d.isEmpty { s.update(data: d) }
-        return s.finalize().map { String(format: "%02x", $0) }.joined()
-    }
 }
 
 private final class Fetch: NSObject, URLSessionDownloadDelegate {

@@ -52,8 +52,7 @@ enum Friends {
     }
     // Is Play with friends switched on in this game's own settings
     static func on(_ app: URL) -> Bool {
-        guard let p = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")), let b = p["CFBundleIdentifier"] as? String, let u = UserDefaults(suiteName: b) else { return false }
-        return u.string(forKey: "launcher.DM_FRIENDS") == "1"
+        gamePrefs(app)?.string(forKey: "launcher.DM_FRIENDS") == "1"
     }
     // On Wi-Fi with no wired connection up: Mac Wi-Fi pauses now and then to look for AirDrop and Handoff devices, which lockstep games feel as slow motion
     static func wifiOnly() -> Bool {

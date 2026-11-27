@@ -290,6 +290,10 @@ try! RetroArch.prepare(full: true, shader: true); let dcfg2 = try! String(conten
 let tokCfg = tmp.appendingPathComponent("tok.cfg"); try! "a = \"1\"\ncheevos_token = \"SECRET\"\ncheevos_username = \"me\"\n".write(to: tokCfg, atomically: true, encoding: .utf8); Cheevos.scrub(tokCfg); let tokOut = try! String(contentsOf: tokCfg, encoding: .utf8); check(!tokOut.contains("SECRET") && tokOut.contains("cheevos_username = \"me\"") && tokOut.contains("a = \"1\""), "the sign-in token doesn't stay in RetroArch's file")
 check(Cheevos.key("Legend of Zelda, The - A Link to the Past (USA)") == Cheevos.key("The Legend of Zelda: A Link to the Past") && Cheevos.key("Pokémon Red") == Cheevos.key("Pokemon Red") && Cheevos.key("Sonic & Knuckles") == Cheevos.key("Sonic and Knuckles"), "RetroAchievements titles match Docked's names")
 Cheevos.progress = ["\(Cheevos.consoleIDs["snes"]!):\(Cheevos.key("Super Metroid"))": .init(title: "Super Metroid", console: 3, earned: 5, hardcore: 0, total: 50)]; check(Cheevos.of(Rom(id: "x", name: "Super Metroid (Japan, USA)", console: "snes", path: "/x.sfc")).map(Cheevos.text) == "5 of 50" && Cheevos.of(Rom(id: "y", name: "Super Metroid", console: "nes", path: "/y.nes")) == nil, "progress found by console and name")
+check(raDate("2026-11-26 21:04:11").map { Int($0.timeIntervalSince1970) } == 1795727051, "RetroAchievements times are read as UTC")
+let oldProgress = try! JSONDecoder().decode(Cheevos.Progress.self, from: Data("{\"title\":\"A\",\"console\":3,\"earned\":1,\"hardcore\":0,\"total\":2}".utf8)); check(oldProgress.id == nil && oldProgress.total == 2, "progress saved before game numbers still loads")
+let cset = CheevoSet(id: 1, title: "T", list: [Cheevo(id: 1, title: "a", about: "", badge: "1", points: 5, order: 2, earned: nil, hardcore: false), Cheevo(id: 2, title: "b", about: "", badge: "2", points: 10, order: 1, earned: Date(timeIntervalSince1970: 10), hardcore: true), Cheevo(id: 3, title: "c", about: "", badge: "3", points: 25, order: 3, earned: Date(timeIntervalSince1970: 20), hardcore: false)], fetched: Date())
+check(cset.ordered.map(\.id) == [3, 2, 1] && cset.points == 40 && cset.earnedPoints == 35, "a set shows unlocked badges first, newest first, and adds up its points")
 let lookRom = Rom(id: "test-look-\(UUID().uuidString)", name: "L", console: "gba", path: "/l.gba"); Shaders.setLook(.lcd, console: "gba"); check(Shaders.look(lookRom) == .lcd, "a game follows its console's look"); Shaders.setOwn(.crt, for: lookRom); check(Shaders.look(lookRom) == .crt, "a game's own look wins"); Shaders.setOwn(nil, for: lookRom); Shaders.setLook(.off, console: "gba"); check(Shaders.preset(.crt) == nil || Shaders.installed, "no preset before the looks are downloaded")
 check(dcfg.contains("video_fullscreen = \"false\""), "full screen off: RetroArch games take no Space of their own"); try! RetroArch.prepare(full: true); check((try! String(contentsOf: RetroArch.docked, encoding: .utf8)).contains("video_fullscreen = \"true\""), "full screen by default"); let opts = try! String(contentsOf: RetroArch.options, encoding: .utf8); check(opts.contains("mupen64plus-rdp-plugin = \"parallel\"") && (try! String(contentsOf: RetroArch.docked, encoding: .utf8)).contains("core_options_path = \"\(RetroArch.options.path)\""), "N64 drawn with ParaLLEl"); try! "mupen64plus-rdp-plugin = \"angrylion\"\n".write(to: RetroArch.options, atomically: true, encoding: .utf8); try! RetroArch.prepare(); let opts2 = try! String(contentsOf: RetroArch.options, encoding: .utf8); check(opts2.contains("angrylion") && !opts2.contains("rdp-plugin = \"parallel\"") && opts2.contains("mupen64plus-rsp-plugin = \"parallel\""), "the player's own core settings stay")
 let fillA = RetroArch.filling(CGRect(x: 0, y: 80, width: 1512, height: 860)); check(fillA.contains("video_fullscreen = \"false\"") && fillA.contains("video_window_save_positions = \"true\"") && fillA.contains("video_windowed_position_y = \"80\"") && fillA.contains("video_windowed_position_width = \"1512\"") && fillA.contains("video_windowed_position_height = \"860\""), "a RetroArch window as big as the screen")
@@ -349,7 +353,7 @@ if fm.isExecutableFile(atPath: "/usr/bin/hdiutil") {
     RetroArch.buildbot = bb.absoluteString.hasSuffix("/") ? String(bb.absoluteString.dropLast()) : bb.absoluteString
     _ = mk("OldRA/saves/Puzzle Box.srm", "my save"); _ = mk("RA/saves/Kept.srm", "newer"); _ = mk("OldRA/saves/Kept.srm", "older")
     RetroArch.dmgSHA = "0000"; do { try RetroArch.setUp(console("gb")!); check(false, "a different RetroArch refused") } catch { check(!RetroArch.installed && (error as? RetroError)?.text.contains("reviewed") == true, "a different RetroArch refused") }
-    RetroArch.dmgSHA = RetroArch.sha256(dmg); var said: [String] = []
+    RetroArch.dmgSHA = sha256(dmg) ?? ""; var said: [String] = []
     do { try RetroArch.setUp(console("gb")!) { w, _ in said.append(w) } } catch { check(false, "set up: \(error)") }
     check(RetroArch.installed && RetroArch.installedVersion == RetroArch.version && !RetroArch.app.path.hasPrefix("/Applications"), "RetroArch inside Docked")
     check(RetroArch.core(console("gb")!)?.lastPathComponent == "gambatte_libretro.dylib" && RetroArch.ready(console("gb")!), "the next core when the best isn't built: \(said)")
@@ -403,7 +407,7 @@ var gone: [URL] = []; let kf = mk("my/prod.keys", "k = 1"); check(trashKeys(kf.p
 
 // ---- space, reports, updates, notices ----
 func sj(_ gb: Int64, _ a: After) -> Job { var j = job("s\(gb)\(a)"); j.bytes = gb * 1_000_000_000; j.after = a; return j }
-check(spaceForQueue([]) == 0 && spaceForQueue([sj(10, .ask)]) == 30_000_000_000, "one game"); check(spaceForQueue([sj(10, .ask), sj(5, .ask)]) == 40_000_000_000 && spaceForQueue([sj(10, .leftovers), sj(5, .ask)]) == 30_000_000_000, "what earlier ones leave counts"); check(spaceText(need: 10_000_000_000, free: 50_000_000_000).short == false && spaceText(need: 50_000_000_000, free: 10_000_000_000).text.contains("Free up about 40 GB"), "said plainly")
+check(spaceForQueue([]) == 0 && spaceForQueue([sj(10, .ask)]) == 30_000_000_000, "one game"); check(spaceForQueue([sj(10, .ask), sj(5, .ask)]) == 40_000_000_000 && spaceForQueue([sj(10, .leftovers), sj(5, .ask)]) == 30_000_000_000, "what earlier ones leave counts"); check(SpaceEstimate(need: 10_000_000_000, free: 50_000_000_000, destinationFree: nil, destinationNeed: nil).short == false && spaceAdvice(SpaceEstimate(need: 50_000_000_000, free: 10_000_000_000, destinationFree: nil, destinationNeed: nil)).contains("Free up about 40 GB"), "said plainly")
 let roomOK = spaceEstimate(bytes: 1_000_000_000, destination: tmp, free: 100_000_000_000, destinationFree: 100_000_000_000)
 let roomTight = spaceEstimate(bytes: 10_000_000_000, destination: tmp, free: 1_000_000_000, destinationFree: 1_000_000_000)
 let destTight = spaceEstimate(bytes: 10_000_000_000, destination: tmp, free: 100_000_000_000, destinationFree: 1_000_000_000)
@@ -437,12 +441,26 @@ let gr: [(id: String, games: [String])] = [("grid", (0..<11).map(String.init))];
 for (from, mv, to) in [(0, Move.right, 1), (0, .left, 0), (10, .right, 10), (1, .down, 5), (5, .up, 1), (2, .up, 2), (7, .down, 10), (9, .down, 9), (4, .left, 3)] { check(step(c(from), mv, rows: gr, columns: 4) == c(to), "grid \(from) \(mv)") }
 let gg: [(id: String, games: [String])] = [("A", ["a0", "a1", "a2", "a3", "a4"]), ("B", ["b0", "b1"])]; check(step(Cursor(row: "A", game: "a4"), .down, rows: gg, columns: 4) == Cursor(row: "B", game: "b0") && step(Cursor(row: "A", game: "a1"), .down, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b1"), .up, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b0"), .up, rows: gg, columns: 4) == Cursor(row: "A", game: "a4") && step(Cursor(row: "B", game: "b1"), .down, rows: gg, columns: 4) == Cursor(row: "B", game: "b1"), "a grid in groups, across headings")
 let hr: [(id: String, games: [String])] = [("recent", ["a", "b", "c"]), ("Favorites", []), ("Switch", ["a", "b"])]; check(step(nil, .down, rows: hr, columns: nil) == Cursor(row: "recent", game: "a") && step(Cursor(row: "recent", game: "c"), .down, rows: hr, columns: nil) == Cursor(row: "Switch", game: "b") && step(Cursor(row: "Switch", game: "a"), .up, rows: hr, columns: nil) == Cursor(row: "recent", game: "a"), "rows, past an empty one"); check(step(Cursor(row: "gone", game: "z"), .left, rows: hr, columns: nil) == Cursor(row: "recent", game: "a") && step(nil, .left, rows: [], columns: 4) == nil, "lost, or nothing there")
-let cc = [3, 0, 2]; var spot = CouchSpot()
-spot = couchStep(spot, .right, counts: cc); spot = couchStep(spot, .right, counts: cc); spot = couchStep(spot, .right, counts: cc); check(spot.shelf == 0 && spot.index(3) == 2, "couch: right stops at the end")
-spot = couchStep(spot, .down, counts: cc); check(spot.shelf == 2 && spot.index(2) == 0, "couch: down skips an empty shelf")
-spot = couchStep(spot, .down, counts: cc); check(spot.shelf == 2, "couch: down stops at the last shelf")
-spot = couchStep(spot, .nextSection, counts: cc); check(spot.shelf == 0 && spot.index(3) == 2, "couch: shoulder goes round and the shelf keeps its place")
-check(couchStep(CouchSpot(), .left, counts: []) == CouchSpot() && CouchSpot(shelf: 0, at: [0: 9]).index(4) == 3, "couch: nothing there, or fewer games than before")
+let couchFixture: [(id: String, games: [String])] = [("continue", ["c0", "c1", "c2"]), ("favorites", []), ("all", ["a0", "a1"]), ("nes", ["n0", "n1", "n2", "n3"]), ("snes", ["s0"])]
+var spot = CouchSpot()
+spot = couchStep(spot, .right, rows: couchFixture); spot = couchStep(spot, .right, rows: couchFixture); spot = couchStep(spot, .right, rows: couchFixture); check(spot.index("continue", couchFixture[0].games) == 2 && spot.game == "c2", "couch: right stops at the end of a row")
+spot = couchStep(spot, .down, rows: couchFixture); check(spot.shelfID == "all" && spot.index("all", couchFixture[2].games) == 0, "couch: down skips an empty shelf")
+spot = couchStep(spot, .up, rows: couchFixture); check(spot.shelfID == "continue" && spot.index("continue", couchFixture[0].games) == 2, "couch: up keeps its place")
+for _ in 0..<4 { spot = couchStep(spot, .down, rows: couchFixture) }; check(spot.shelfID == "snes", "couch: down stops at the last shelf")
+spot = couchStep(spot, .down, rows: couchFixture); check(spot.shelfID == "snes", "couch: down stays there")
+spot = couchStep(spot, .nextSection, rows: couchFixture); check(spot.shelfID == "continue" && spot.index("continue", couchFixture[0].games) == 2, "couch: RB wraps and remembers the game")
+spot = couchStep(spot, .previousSection, rows: couchFixture); check(spot.shelfID == "snes" && spot.index("snes", couchFixture[4].games) == 0, "couch: LB wraps back")
+let few = CouchSpot(shelf: 9, at: ["continue": 9]), remembered = CouchSpot(shelf: 0, shelfID: "all", at: ["all": 1], gameID: ["all": "a1"], game: "a1")
+check(couchStep(CouchSpot(), .left, rows: []) == CouchSpot() && few.index("continue", couchFixture[0].games) == 2, "couch: nothing there, or fewer games than before")
+check(remembered.index("all", couchFixture[2].games) == 1, "couch: a shelf keeps its game by name")
+let beforeFav: [(id: String, games: [String])] = [("all", ["a", "b", "c"]), ("gems", ["x", "y"]), ("favorites", [])]
+let gemSpot = CouchSpot(shelf: 1, shelfID: "gems", at: ["gems": 0], gameID: ["gems": "x"], game: "x")
+let afterFav: [(id: String, games: [String])] = [("all", ["a", "b", "c"]), ("favorites", ["x"]), ("gems", ["y"])]
+let followed = gemSpot.resolved(afterFav)
+check(followed.shelfID == "favorites" && followed.index("favorites", afterFav[1].games) == 0 && followed.game == "x", "couch: a game follows its shelf into Favorites")
+check(couchStep(gemSpot, .right, rows: afterFav).game == "x", "couch: a move after a shelf appears keeps that game")
+check(followed.resolved(beforeFav).shelfID == "gems" && followed.resolved(beforeFav).game == "x", "couch: a game survives its shelf going away")
+check(couchDecadeName(1990) == "Best of the 90s" && couchDecadeName(1980) == "Best of the 80s" && couchDecadeName(2000) == "Best of the 2000s" && couchDecadeName(2010) == "Best of the 2010s" && couchDecadeName(1960) == nil && couchDecadeName(1995) == nil, "couch: decade rows are named plainly")
 // ---- updates ----
 let uk = Curve25519.Signing.PrivateKey(), upub = uk.publicKey.rawRepresentation.base64EncodedString(), ud = tmp.appendingPathComponent("upd"), ub = ud.appendingPathComponent("Backups")
 func sh(_ a: [String]) { let p = Process(); p.executableURL = URL(fileURLWithPath: a[0]); p.arguments = Array(a.dropFirst()); p.standardError = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; try! p.run(); p.waitUntilExit() }
@@ -758,10 +776,13 @@ do {
     check(d.root.lastPathComponent == "0100ABC000010000" && !d.hasSave && d.list().isEmpty, "no save yet")
     check((try! d.backUp()) == nil, "nothing to back up")
     _ = mk("nx/0100ABC000010000/save/0/file.bin", "one"); _ = mk("nx/0100ABC000010000/save_device/d.bin", "dev"); _ = mk("nx/0100ABC000010000/save.sync", "base x")
-    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
-    check(fm.fileExists(atPath: b.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b.appendingPathComponent("save.sync").path), "backup holds the save parts only")
-    let b2 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b2 != b, "same second, new folder")
-    check(d.list().count == 2 && d.list().allSatisfy { $0.bytes == 6 }, "backups listed")
+    let b0 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!
+    check(fm.fileExists(atPath: b0.appendingPathComponent("save/0/file.bin").path) && fm.fileExists(atPath: b0.appendingPathComponent("save_device/d.bin").path) && !fm.fileExists(atPath: b0.appendingPathComponent("save.sync").path), "backup holds the save parts only")
+    let b1 = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_000_000))!; check(b1.standardizedFileURL.path == b0.standardizedFileURL.path && d.list().count == 1 && d.list().allSatisfy { $0.bytes == 6 }, "an unchanged save makes no second copy")
+    for i in 0..<5 { try! Data("v\(i)".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02); _ = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_001_000 + Double(i)), label: "Docked before convert") }
+    check(d.list().count == GameData.kept && (try? String(contentsOf: d.list()[0].url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "v4", "a game keeps only its newest 3 copies")
+    try! Data("one".utf8).write(to: d.save.appendingPathComponent("0/file.bin")); Thread.sleep(forTimeInterval: 0.02)
+    let b = try! d.backUp(now: Date(timeIntervalSince1970: 1_800_002_000))!
     check(GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before convert"), date: Date(), bytes: 0).reason == "before conversion" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked before engine update"), date: Date(), bytes: 0).reason == "before engine update" && GameData.Backup(url: URL(fileURLWithPath: "/x/2026-11-26 10.00.00 Docked"), date: Date(), bytes: 0).reason == "manual backup", "backups say why they were made")
     let carried = tmp.appendingPathComponent("carried")
     let out1 = try! d.export(into: carried, named: "My Game")!
@@ -772,7 +793,7 @@ do {
     try! Data("two".utf8).write(to: d.save.appendingPathComponent("0/file.bin"))
     try! d.restore(b)
     check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "one", "backup restored")
-    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" }, "the save it replaced is kept")
+    check(d.list().contains { (try? String(contentsOf: $0.url.appendingPathComponent("save/0/file.bin"), encoding: .utf8)) == "two" } && d.list().count <= GameData.kept, "the save it replaced is kept, still within 3 copies")
     let loose = mk("elsewhere/mysave/0/file.bin", "three").deletingLastPathComponent().deletingLastPathComponent()
     try! d.restore(loose); check((try? String(contentsOf: d.save.appendingPathComponent("0/file.bin"), encoding: .utf8)) == "three" && fm.fileExists(atPath: d.root.appendingPathComponent("save_device").path), "a bare save folder becomes the save")
     try? fm.createDirectory(at: tmp.appendingPathComponent("emptyfolder"), withIntermediateDirectories: true)
@@ -948,6 +969,7 @@ check(cfg.contains("encoder = videotoolbox") && cfg.contains("vt_realtime = enab
 check(cfg.contains("max_bitrate = 8000") && StreamingConfig.text(quality: .native).contains("max_bitrate = 0"), "quality chooses Sunshine's bitrate")
 check(cfg.contains("min_log_level = warning") && cfg.contains("upnp = enabled") && cfg.contains("origin_web_ui_allowed = lan") && cfg.contains("B-frames"), "quiet, reachable and no B-frames")
 check(cfg.contains("port = \(StreamingPaths.port)") && cfg.contains(StreamingPaths.apps.path) && cfg.contains(StreamingPaths.credentials.path), "Docked's own port, apps and credentials")
+check(cfg.contains("file_state = \(StreamingPaths.state.path)") && cfg.contains("cert = ") && cfg.contains("pkey = ") && !cfg.contains("vt_software"), "its own paired devices and certificate, apart from any other Sunshine")
 
 let tvGame = Game(url: tmp.appendingPathComponent("stream/TV Game.app"), name: "TV Game", titleID: "0100ABCDEF")
 let artURL = tmp.appendingPathComponent("stream/art.png")
@@ -955,7 +977,7 @@ let appList = StreamingApps.make(games: [tvGame], imageFor: { _ in artURL })
 check(appList.env.isEmpty && appList.apps.count == 2, "Sunshine needs env and a Couch entry")
 check(appList.apps[0].name == "Couch Mode" && appList.apps[0].cmd.contains("docked://couch"), "Couch Mode opens full screen")
 check(appList.apps[1].name == "TV Game" && appList.apps[1].cmd.contains("docked://play?id=0100ABCDEF"), "a game opens through Docked so play time counts")
-check(appList.apps[1].imagePath == artURL.path && appList.apps[1].detached, "a game has PNG art and does not hold Sunshine open")
+check(appList.apps[1].imagePath == artURL.path && appList.apps[1].autoDetach, "a game has PNG art and does not hold Sunshine open")
 check(!StreamingApps.make(games: [Game(url: tvGame.url, name: "Away", titleID: "1", missing: true)], imageFor: { _ in nil }).apps.contains { $0.name == "Away" }, "missing games are left off the TV")
 do {
     try StreamingFiles.prepare(quality: .balanced, games: [tvGame])
@@ -977,21 +999,24 @@ check(StreamingAPI.clients(Data(clientJSON.utf8)).first?.uuid == "abc" && Stream
 
 final class FakeProcess: StreamProcessLike {
     var onExit: ((Int32) -> Void)?
-    func terminate() { onExit?(0) }
+    func terminate() {}   // like the real one, the exit comes later, by itself
+    func die(_ code: Int32) { onExit?(code) }
 }
 let watcher = SunshineSupervisor()
-var starts = 0, gaveUp = ""
-watcher.launch = { starts += 1; return FakeProcess() }
+var starts = 0, gaveUp = "", made: [FakeProcess] = []
+watcher.launch = { starts += 1; let p = FakeProcess(); made.append(p); return p }
 watcher.onGiveUp = { gaveUp = $0 }
 watcher.start()
 check(starts == 1 && watcher.running, "Sunshine starts")
-for _ in 0..<3 { watcher.exited(1) }
+for _ in 0..<3 { made.last!.die(1) }
 check(starts == 4 && watcher.running && gaveUp.isEmpty, "a crash restarts, up to three times")
-watcher.exited(1)
+made.last!.die(1)
 check(starts == 4 && !watcher.running && gaveUp.contains("last try"), "after three tries Docked leaves it off with a friendly reason")
-watcher.start(); watcher.exited(0)
+watcher.start(); made.last!.die(0)
 check(starts == 5 && !watcher.running, "a clean exit is not a crash, and a new start tries again")
-watcher.start(); watcher.stop(); watcher.exited(1)
+watcher.start(); watcher.stop(); made.last!.die(15)
 check(!watcher.running && starts == 6, "a deliberate stop does not restart")
+watcher.start(); let old = made.last!; watcher.stop(); watcher.start(); old.die(15)
+check(watcher.running && starts == 8, "the old Sunshine exiting after a restart leaves the new one alone")
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)

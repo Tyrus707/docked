@@ -36,6 +36,7 @@ enum StreamingPaths {
     static var apps: URL { base.appendingPathComponent("apps.json") }
     static var credentials: URL { base.appendingPathComponent("credentials.json") }
     static var log: URL { base.appendingPathComponent("sunshine.log") }
+    static var state: URL { base.appendingPathComponent("sunshine_state.json") }
     static var art: URL { base.appendingPathComponent("Artwork") }
     static let port = 48089
     static var webUI: URL { URL(string: "https://127.0.0.1:\(port + 1)")! }
@@ -73,7 +74,6 @@ enum StreamingConfig {
         # Written by Docked. Change it in Settings › TV, not here.
         encoder = videotoolbox
         vt_realtime = enabled
-        vt_software = auto
         hevc_mode = 2
         av1_mode = 0
         max_bitrate = \(quality.maxBitrate)
@@ -86,6 +86,11 @@ enum StreamingConfig {
         file_apps = \(StreamingPaths.apps.path)
         credentials_file = \(StreamingPaths.credentials.path)
         log_path = \(StreamingPaths.log.path)
+        # Its own identity, paired devices and certificate. Left out, they'd be shared with a Sunshine the player already runs.
+        sunshine_name = Docked
+        file_state = \(StreamingPaths.state.path)
+        pkey = \(StreamingPaths.base.appendingPathComponent("credentials/cakey.pem").path)
+        cert = \(StreamingPaths.base.appendingPathComponent("credentials/cacert.pem").path)
         """
     }
 }
@@ -96,11 +101,12 @@ struct StreamingAppEntry: Codable, Equatable {
     var cmd: String
     var imagePath: String?
     var workingDir: String?
-    var detached: Bool
+    var autoDetach: Bool   // `open` returns at once; this tells Sunshine the game is still running
     var output: String?
 
     enum CodingKeys: String, CodingKey {
-        case name, cmd, detached, output
+        case name, cmd, output
+        case autoDetach = "auto-detach"
         case imagePath = "image-path"
         case workingDir = "working-dir"
     }
@@ -119,15 +125,16 @@ enum StreamingApps {
 
     static func make(games: [Game], imageFor: (Game) -> URL?) -> StreamingAppList {
         var list = [StreamingAppEntry(name: couchName, cmd: open("docked://couch"), imagePath: nil,
-                                      workingDir: nil, detached: true, output: nil)]
+                                      workingDir: nil, autoDetach: true, output: nil)]
         for g in games where !g.missing && g.away == nil {
             list.append(StreamingAppEntry(name: g.name, cmd: open(DockedLink.play(g.titleID)),
-                                          imagePath: imageFor(g)?.path, workingDir: nil, detached: true, output: nil))
+                                          imagePath: imageFor(g)?.path, workingDir: nil, autoDetach: true, output: nil))
         }
         return StreamingAppList(env: [:], apps: list)
     }
 
     // Cover art is copied into Sunshine's own folder as a real PNG, never linked from the library.
+    // Sunshine reads this file again each time Moonlight asks for the list, so it never needs a restart.
     @discardableResult static func write(games: [Game]) throws -> StreamingAppList {
         try FileManager.default.createDirectory(at: StreamingPaths.art, withIntermediateDirectories: true)
         var pictures: [String: URL] = [:]
@@ -136,7 +143,8 @@ enum StreamingApps {
         }
         let list = make(games: games) { pictures[$0.id] }
         let j = JSONEncoder(); j.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try j.encode(list).write(to: StreamingPaths.apps, options: .atomic)
+        let data = try j.encode(list)
+        if (try? Data(contentsOf: StreamingPaths.apps)) != data { try data.write(to: StreamingPaths.apps, options: .atomic) }
         return list
     }
 }
@@ -152,22 +160,25 @@ enum StreamingArt {
         return choices.compactMap { $0 }.first { fm.fileExists(atPath: $0.path) }
     }
 
+    // Made again only when the picture behind it is newer: a big library would otherwise redo every cover on each change.
     static func png(for g: Game) -> URL? {
-        guard let from = source(g), let image = NSImage(contentsOf: from),
+        let to = StreamingPaths.art.appendingPathComponent(artStem(g.id) + ".png")
+        guard let from = source(g) else { return nil }
+        if let made = modified(to), let src = modified(from), made >= src { return to }
+        guard let image = NSImage(contentsOf: from),
               let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
               let data = rep.representation(using: .png, properties: [:]) else { return nil }
-        let to = StreamingPaths.art.appendingPathComponent(artStem(g.id) + ".png")
         guard (try? data.write(to: to, options: .atomic)) != nil else { return nil }
         return to
     }
+
+    private static func modified(_ u: URL) -> Date? { (try? u.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate }
 }
 
 enum StreamingFiles {
     static func prepare(quality: StreamingQuality, games: [Game]) throws {
         let fm = FileManager.default
-        var hidden = StreamingPaths.base
-        try fm.createDirectory(at: hidden, withIntermediateDirectories: true)
-        var values = URLResourceValues(); values.isHidden = true; try? hidden.setResourceValues(values)
+        try fm.createDirectory(at: StreamingPaths.base.appendingPathComponent("credentials"), withIntermediateDirectories: true)
         try StreamingApps.write(games: games)
         try Data(StreamingConfig.text(quality: quality).utf8).write(to: StreamingPaths.config, options: .atomic)
     }
@@ -177,11 +188,12 @@ enum StreamingFiles {
 enum StreamingCredentials {
     static let service = "Docked TV Streaming"
     static func ensure() -> (user: String, password: String) {
-        let u = Keychain.string(service: service, account: "user") ?? "docked-" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        let p = Keychain.string(service: service, account: "password") ?? UUID().uuidString.replacingOccurrences(of: "-", with: "") + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        Keychain.set(u, service: service, account: "user")
-        Keychain.set(p, service: service, account: "password")
-        return (u, p)
+        func kept(_ account: String, _ make: () -> String) -> String {
+            if let v = Keychain.string(service: service, account: account) { return v }
+            let v = make(); Keychain.set(v, service: service, account: account); return v
+        }
+        let hex = { UUID().uuidString.replacingOccurrences(of: "-", with: "") }
+        return (kept("user") { "docked-" + hex() }, kept("password") { hex() + hex() })
     }
 }
 
@@ -204,7 +216,6 @@ final class Streaming: ObservableObject {
     private let supervisor = SunshineSupervisor()
     private let work = DispatchQueue(label: "tv-streaming", qos: .utility)
     private var appsWork: DispatchWorkItem?
-    private var appsGeneration = 0
     private var games: [Game] = []
     private var starting = false
     private var generation = 0
@@ -245,7 +256,7 @@ final class Streaming: ObservableObject {
         guard !starting, !supervisor.running else { return }
         starting = true
         generation += 1
-        let token = generation
+        let token = generation, games = self.games, quality = self.quality   // read here, on the main thread
         say("Getting Sunshine ready…", status: .installing)
         work.async { [weak self] in
             guard let self else { return }
@@ -257,12 +268,12 @@ final class Streaming: ObservableObject {
                         self?.installProgress = fraction
                     }
                 }
-                self.finishStart(app: app, token: token)
+                self.finishStart(app: app, token: token, games: games, quality: quality)
             } catch { self.fail(error.localizedDescription, token: token) }
         }
     }
 
-    private func finishStart(app: URL, token: Int) {
+    private func finishStart(app: URL, token: Int, games: [Game], quality: StreamingQuality) {
         do {
             let exe = app.appendingPathComponent("Contents/MacOS/Sunshine")
             guard FileManager.default.isExecutableFile(atPath: exe.path) else {
@@ -295,14 +306,10 @@ final class Streaming: ObservableObject {
     func libraryChanged(_ games: [Game]) {
         self.games = games
         appsWork?.cancel()
-        appsGeneration += 1
-        let token = appsGeneration
+        guard on else { return }   // nothing to keep up to date, and no covers to make, while streaming is off
         let w = DispatchWorkItem { [weak self] in
-            guard let self, token == self.appsGeneration else { return }
-            do {
-                try StreamingApps.write(games: self.games)
-                if self.supervisor.running { DispatchQueue.main.async { self.restart() } }
-            } catch { self.say("The TV app list wasn't saved: \(error.localizedDescription)", status: .error) }
+            do { try StreamingApps.write(games: games) }   // no restart: it would end a stream that's playing
+            catch { self?.say("The TV app list wasn't saved: \(error.localizedDescription)", status: .error) }
         }
         appsWork = w
         work.asyncAfter(deadline: .now() + 0.8, execute: w)

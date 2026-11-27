@@ -44,7 +44,7 @@ struct GameSettings {
     init?(app: URL) {
         let res = app.appendingPathComponent("Contents/Resources")
         struct File: Decodable { var game: String?; var settings: [LaunchSetting] }
-        guard let p = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")), let b = p["CFBundleIdentifier"] as? String,
+        guard let p = appInfo(app), let b = p["CFBundleIdentifier"] as? String,
               let d = try? Data(contentsOf: res.appendingPathComponent("dm/launcher.json")), let f = try? JSONDecoder().decode(File.self, from: d),
               !f.settings.isEmpty, let u = UserDefaults(suiteName: b) else { return nil }
         game = f.game ?? p["DMTitleID"] as? String ?? ""; bundle = b; settings = f.settings; saved = u
