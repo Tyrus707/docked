@@ -64,7 +64,7 @@ enum StreamingInstall {
         let dmg = work.appendingPathComponent("Sunshine.dmg")
         try RetroArch.download(release.url, to: dmg, limit: 200 << 20) { progress("Downloading Sunshine \(release.tag)…", $0) }
         progress("Checking the download…", nil)
-        guard RetroArch.sha256(dmg) == release.sha256 else {
+        guard sha256(dmg) == release.sha256 else {
             throw StreamingError.text("The Sunshine download didn't match GitHub's checksum, so it wasn't used. Try again later.")
         }
 

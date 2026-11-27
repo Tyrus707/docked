@@ -1016,7 +1016,7 @@ watcher.start(); made.last!.die(0)
 check(starts == 5 && !watcher.running, "a clean exit is not a crash, and a new start tries again")
 watcher.start(); watcher.stop(); made.last!.die(15)
 check(!watcher.running && starts == 6, "a deliberate stop does not restart")
-watcher.start(); let old = made.last!; watcher.stop(); watcher.start(); old.die(15)
+watcher.start(); let oldSun = made.last!; watcher.stop(); watcher.start(); oldSun.die(15)
 check(watcher.running && starts == 8, "the old Sunshine exiting after a restart leaves the new one alone")
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
