@@ -1,5 +1,4 @@
 import Foundation
-import Security
 import IOKit.hid
 import GameController
 
@@ -22,19 +21,8 @@ enum Cheevos {
     }
 
     // ---- Keychain ----
-    static func secret(_ kind: String) -> String? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: kind, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
-    }
-    static func keep(_ kind: String, _ value: String?) {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: kind]
-        SecItemDelete(q as CFDictionary)
-        guard let value, !value.isEmpty else { return }
-        var a = q; a[kSecValueData as String] = Data(value.utf8); a[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(a as CFDictionary, nil)
-    }
+    static func secret(_ kind: String) -> String? { Keychain.string(service: service, account: kind) }
+    static func keep(_ kind: String, _ value: String?) { Keychain.set(value, service: service, account: kind) }
 
     // Checks the password with RetroAchievements; only the token it gives back is kept, never the password.
     static func signIn(user u: String, password p: String, webKey: String) throws {

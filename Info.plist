@@ -33,5 +33,7 @@
 	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Docked looks for your TV, iPad or other Mac on the same network when you stream games.</string>
 </dict>
 </plist>

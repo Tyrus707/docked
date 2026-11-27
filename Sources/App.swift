@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 final class Model: ObservableObject {
-    @Published var games: [Game] = [] { didSet { memo = Memo() } }
+    @Published var games: [Game] = [] { didSet { memo = Memo(); streaming.libraryChanged(games) } }
     @Published var checks: [Check] = []
     @Published var checking = false
     @Published var message: String?   // an alert, for a problem the player must act on
@@ -93,6 +93,7 @@ final class Model: ObservableObject {
     @Published var renaming: String?
     @Published var runningIDs = Set<String>()
     private let tracker = PlayTracker()
+    let streaming = Streaming()
     private var washes: [String: NSImage] = [:]
 
     var consolesShown: [Console] { let have = Set(games.map { consoleOf($0.titleID) }); return consoles.filter { $0.id == "switch" || have.contains($0.id) } }
@@ -386,7 +387,7 @@ final class Model: ObservableObject {
     private func trackPlay() {
         tracker.identify = { [weak self] u in self?.games.first { u.path == $0.url.path || u.path.hasPrefix($0.url.path + "/") }?.titleID.uppercased() }
         tracker.countedUntil = { [weak self] id in self?.library.entry(id).lastPlayed }
-        AppDelegate.leaving = { [weak self] in self?.tracker.flush(); self?.saveNow() }
+        AppDelegate.leaving = { [weak self] in self?.streaming.stop(); self?.tracker.flush(); self?.saveNow() }
         tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack(); self?.checkCrash(id, since: a) }
         tracker.changed = { [weak self] in guard let s = self else { return }; s.runningIDs = s.tracker.running; s.themeUpdate() }
         tracker.start()
@@ -704,9 +705,22 @@ final class Model: ObservableObject {
     // ---- the first-run guide ----
     @Published var showGuide = false
     @Published var showSettings = false
+    @Published var showStreamingWelcome = false
     // From settings to another sheet: one has to be gone before the next can come
-    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil || editingMeta != nil || health != nil || tuning != nil || vaultGame != nil }
+    var sheetUp: Bool { showReview || showSetup || showGuide || showSettings || showStreamingWelcome || showHelp || showReleaseNotes || showConsoles || showXcode || cleaning != nil || editing != nil || wantsBios != nil || picking != nil || importing != nil || tidying != nil || editingMeta != nil || health != nil || tuning != nil || vaultGame != nil }
     func openSettings() { if !sheetUp { showSettings = true } }
+    func setStreaming(_ on: Bool) {
+        guard on != streaming.on else { return }
+        let first = on && !streaming.welcomeSeen
+        streaming.enable(on)
+        if first {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self else { return }
+                if self.showSettings { self.leaveSettings { self.showStreamingWelcome = true } }
+                else { self.showStreamingWelcome = true }
+            }
+        }
+    }
     func leaveSetup(_ f: @escaping () -> Void) { showSetup = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveSettings(_ f: @escaping () -> Void) { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
     func leaveGameSettings(_ f: @escaping () -> Void) { tuning = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: f) }
@@ -1096,6 +1110,7 @@ final class Model: ObservableObject {
     // Once, when the window first appears. A failed look says nothing: being offline is not a problem worth a message.
     func windowAppeared() {
         guard !launched else { return }; launched = true; refreshCompat()
+        if streaming.on { streaming.start() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { self.findMetaAll() }   // games not looked up this month fill in slowly, in the background
         for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] { NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { [weak self] x in if x.name == NSApplication.didResignActiveNotification { self?.theme.stop() } else { self?.themeUpdate(); self?.lookInWatched(); self?.evictOffloaded() } } }
         // A drive plugged in or out: its games come back, or show as not connected, and its watched folders are looked through
@@ -1199,6 +1214,7 @@ struct ContentView: View {
             Button { model.openSettings() } label: { Label("Settings", systemImage: "gearshape") }.help("Settings (Command-Comma)")
         }
         .sheet(isPresented: $model.showSettings) { SettingsSheet() }
+        .sheet(isPresented: $model.showStreamingWelcome) { StreamingWelcome(stream: model.streaming) }
         .sheet(isPresented: $model.showGuide) { GuideView() }
         .sheet(isPresented: $model.showSetup) { SetupView() }
         .sheet(isPresented: $model.showXcode) { XcodeStepsView() }
