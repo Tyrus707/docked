@@ -4,7 +4,7 @@ struct SettingsSheet: View {
     @EnvironmentObject var model: Model
     @EnvironmentObject var builder: Builder
     @Environment(\.dismiss) var dismiss
-    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", friends = "Friends", tv = "TV", tools = "Setup" }
+    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", switchGames = "Switch", retro = "Retro", friends = "Friends", tv = "TV", tools = "Setup" }
     static var start = Tab.general   // set just before opening, to land on one tab
     @State private var tab = SettingsSheet.start
     private let phoneGames = xcodeGames()
@@ -137,7 +137,6 @@ struct ThemeSwatch: View {
     }
 }
 
-// Other consoles: RetroAchievements, retro looks and controllers
 // Default settings for every Switch game. A game follows them for anything not chosen in its own Game Settings.
 struct SwitchDefaults: View {
     @EnvironmentObject var model: Model
@@ -191,6 +190,7 @@ struct SwitchDefaults: View {
     }
 }
 
+// Other consoles: RetroAchievements, retro looks and controllers
 struct RetroSettings: View {
     @EnvironmentObject var model: Model
     @State private var user = ""

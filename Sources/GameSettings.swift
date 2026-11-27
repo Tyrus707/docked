@@ -94,7 +94,7 @@ struct GameSettings {
 
     // Back to your defaults (or the tested ones), like the window's own Reset button. Other choices it keeps (microphone, save sync) stay.
     func reset() { for s in settings where !isFixed(s) { saved.removeObject(forKey: Self.prefix + s.env); inherit(s) } }
-    var changed: Bool { settings.contains { own($0).map { v in v != base($0) } ?? false } }
+    var changed: Bool { settings.contains { s in own(s).map { $0 != base(s) } ?? false } }
 
     // Copies your current defaults into every setting you didn't choose for this game. Only a value that differs from the
     // tested default is kept, so a later build's better default reaches the player (nxnative docs/frontends.md).
