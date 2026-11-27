@@ -30,7 +30,8 @@ enum StreamingPermission: String, CaseIterable, Identifiable {
     private var key: String { "streaming.permission.\(rawValue)" }
 
     var state: StreamingPermissionState {
-        UserDefaults.standard.bool(forKey: key) ? .asked : .unknown
+        if self == .screen, CGPreflightScreenCaptureAccess() { return .allowed }
+        return UserDefaults.standard.bool(forKey: key) ? .asked : .unknown
     }
 
     func ask() {

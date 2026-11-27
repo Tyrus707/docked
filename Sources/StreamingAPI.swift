@@ -76,7 +76,7 @@ enum StreamingAPI {
     }
 
     static func unpair(user: String, password: String, uuid: String) throws -> Bool {
-        flag(try call(user: user, password: password, path: "api/unpair", body: ["uuid": uuid]))
+        flag(try call(user: user, password: password, path: "api/clients/unpair", body: ["uuid": uuid]))
     }
 }
 

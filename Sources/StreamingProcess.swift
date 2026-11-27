@@ -18,7 +18,8 @@ final class StreamProcess: StreamProcessLike {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
-        process.terminationHandler = { [weak self] p in self?.onExit?(p.terminationStatus) }
+        // The supervisor lives on the main thread, so its news of an exit does too.
+        process.terminationHandler = { [weak self] p in DispatchQueue.main.async { self?.onExit?(p.terminationStatus) } }
         try process.run()
     }
 
@@ -58,15 +59,17 @@ final class SunshineSupervisor {
             if let launch { p = try launch() }
             else { p = try StreamProcess(executable: executable, arguments: [config.path]) }
             current = p
-            p.onExit = { [weak self] code in self?.exited(code) }
+            p.onExit = { [weak self, weak p] code in if let p { self?.exited(p, code) } }
             onState(.running, "Running")
         } catch {
             giveUp(error.localizedDescription)
         }
     }
 
-    func exited(_ code: Int32) {
-        guard !stopping else { return }
+    // Only the Sunshine running now counts. A stopped one exits a moment after a restart has started the next,
+    // and must not clear it or start a second copy on the same port.
+    func exited(_ p: StreamProcessLike, _ code: Int32) {
+        guard !stopping, p === current else { return }
         current = nil
         if code == 0 { onState(.stopped, "Stopped"); return }
         failures += 1
