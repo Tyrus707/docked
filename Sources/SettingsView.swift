@@ -4,7 +4,7 @@ struct SettingsSheet: View {
     @EnvironmentObject var model: Model
     @EnvironmentObject var builder: Builder
     @Environment(\.dismiss) var dismiss
-    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", friends = "Friends", tools = "Setup" }
+    enum Tab: String, CaseIterable { case general = "General", library = "Library", converting = "Converting", retro = "Retro", friends = "Friends", tv = "TV", tools = "Setup" }
     static var start = Tab.general   // set just before opening, to land on one tab
     @State private var tab = SettingsSheet.start
     private let phoneGames = xcodeGames()
@@ -13,7 +13,7 @@ struct SettingsSheet: View {
             HStack { Text("Settings").font(.title2.weight(.semibold)); Spacer(); Text("Docked \(appVersion)").font(.callout).foregroundStyle(.secondary) }
             Picker("Section", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).labelsHidden()
             ScrollView {
-                Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tools: tools } }
+                Group { switch tab { case .general: general; case .library: library; case .converting: converting; case .retro: RetroSettings(); case .friends: FriendsSettings(); case .tv: TVSettings(stream: model.streaming); case .tools: tools } }
                     .frame(maxWidth: .infinity, alignment: .topLeading).padding(.leading, 2).padding(.trailing, 14).padding(.vertical, 4)
             }.frame(height: 470)
             Divider()

@@ -24,6 +24,8 @@ One library, from NES to Switch. Free, open source, quick to open.</p>
 
 **A cozy library that gets out of the way.** Covers, play time, favourites, sorting and a quick "pick up where you left off". Keep games on your Mac or an external SSD; unplug it and they wait for you. Pick a theme, play with keyboard or controller, and switch on Couch Mode when you're on the sofa.
 
+**Your library on the big screen.** Turn on Streaming in Settings › TV and Docked quietly sets up Sunshine. Install Moonlight on your TV, iPad or another Mac, pick this Mac and type the PIN. Your games and Couch Mode appear there, with your covers and play time. Pair a controller with this Mac by Bluetooth for the quickest input.
+
 ## See it
 
 <p align="center">
@@ -37,6 +39,14 @@ One library, from NES to Switch. Free, open source, quick to open.</p>
 1. Download **Docked.dmg** and drag it to Applications. Upgrading? Choose **Replace** — your games and saves stay.
 2. On first launch, macOS asks permission. Go to **System Settings › Privacy & Security › Open Anyway**. Just once.
 3. Drop in a game. Switch games need one **Convert** press; retro games play straight away.
+
+## Play on any screen
+
+In **Settings › TV**, switch Streaming on. The first time, Docked downloads the newest stable [Sunshine](https://github.com/SunshineStream/Sunshine) release, checks GitHub's checksum, and keeps it in its own hidden folder — nothing is added to Applications or asked to run in Terminal. It uses VideoToolbox on this Mac, with HEVC where the TV supports it, H.264 as the fallback, and AV1 when the hardware can do it.
+
+Install [Moonlight](https://moonlight-stream.org/) on your TV, iPad or another Mac. It finds this Mac on the same network. Choose the Mac, read out the four-digit PIN, and approve it in **Settings › TV**. Pick **Pixel-perfect**, **Balanced** or **Data saver** there. Ethernet or 5 GHz Wi-Fi gives the steadiest picture. Docked stops the stream when you quit, and restarts it up to three times if it ever stops unexpectedly.
+
+Pair a controller with this Mac over Bluetooth rather than with the TV. Its input goes straight into the game, which connects better and has less delay than sending buttons over the network. This first version sends the picture from your Mac; system sound is still on the way. Sunshine is a separate open-source project under the GPL-3.0; Docked downloads it only when you ask and does not bundle it.
 
 Prefer a zip? [Docked.zip](https://github.com/Tyrus707/docked/releases/latest/download/Docked.zip) works the same.
 

@@ -963,4 +963,60 @@ do {
     try? fm.removeItem(at: base)
 }
 
+// TV streaming: settings, Moonlight's app list, pairing replies and the crash-restart rule
+let cfg = StreamingConfig.text(quality: .saver)
+check(cfg.contains("encoder = videotoolbox") && cfg.contains("vt_realtime = enabled") && cfg.contains("hevc_mode = 2") && cfg.contains("av1_mode = 0"), "Sunshine uses VideoToolbox, HEVC and capable AV1")
+check(cfg.contains("max_bitrate = 8000") && StreamingConfig.text(quality: .native).contains("max_bitrate = 0"), "quality chooses Sunshine's bitrate")
+check(cfg.contains("min_log_level = warning") && cfg.contains("upnp = enabled") && cfg.contains("origin_web_ui_allowed = lan") && cfg.contains("B-frames"), "quiet, reachable and no B-frames")
+check(cfg.contains("port = \(StreamingPaths.port)") && cfg.contains(StreamingPaths.apps.path) && cfg.contains(StreamingPaths.credentials.path), "Docked's own port, apps and credentials")
+check(cfg.contains("file_state = \(StreamingPaths.state.path)") && cfg.contains("cert = ") && cfg.contains("pkey = ") && !cfg.contains("vt_software"), "its own paired devices and certificate, apart from any other Sunshine")
+
+let tvGame = Game(url: tmp.appendingPathComponent("stream/TV Game.app"), name: "TV Game", titleID: "0100ABCDEF")
+let artURL = tmp.appendingPathComponent("stream/art.png")
+let appList = StreamingApps.make(games: [tvGame], imageFor: { _ in artURL })
+check(appList.env.isEmpty && appList.apps.count == 2, "Sunshine needs env and a Couch entry")
+check(appList.apps[0].name == "Couch Mode" && appList.apps[0].cmd.contains("docked://couch"), "Couch Mode opens full screen")
+check(appList.apps[1].name == "TV Game" && appList.apps[1].cmd.contains("docked://play?id=0100ABCDEF"), "a game opens through Docked so play time counts")
+check(appList.apps[1].imagePath == artURL.path && appList.apps[1].autoDetach, "a game has PNG art and does not hold Sunshine open")
+check(!StreamingApps.make(games: [Game(url: tvGame.url, name: "Away", titleID: "1", missing: true)], imageFor: { _ in nil }).apps.contains { $0.name == "Away" }, "missing games are left off the TV")
+do {
+    try StreamingFiles.prepare(quality: .balanced, games: [tvGame])
+    check(fm.fileExists(atPath: StreamingPaths.config.path) && fm.fileExists(atPath: StreamingPaths.apps.path), "Docked writes Sunshine's files")
+} catch { check(false, "writing Sunshine's files: \(error)") }
+
+let releaseJSON = #"""
+{"tag_name":"v2026.914.233613","prerelease":false,"assets":[{"name":"Sunshine-macOS-arm64.dmg","browser_download_url":"https://github.com/SunshineStream/Sunshine/releases/download/v2026.914.233613/Sunshine-macOS-arm64.dmg","digest":"sha256:795f03a389c5726f9a7b15f501dc1ddf204b442cae565859ac83aae027a9e07c"}]}
+"""#
+let release = try? StreamingInstall.parseRelease(Data(releaseJSON.utf8), arch: "arm64")
+check(release?.tag == "v2026.914.233613" && release?.sha256.hasPrefix("795f03a3") == true, "the newest stable release carries a checked checksum")
+check((try? StreamingInstall.parseRelease(Data(releaseJSON.replacingOccurrences(of: "\"prerelease\":false", with: "\"prerelease\":true").utf8), arch: "arm64")) == nil, "pre-releases are refused")
+check(!StreamingInstall.isHex("xyz"), "a bad checksum is refused")
+
+let pinJSON = #"{"pairings":[{"id":"0123456789abcdef0123456789abcdef","name":"Living Room","address":"192.168.1.20"}]}"#
+let clientJSON = #"{"status":true,"named_certs":[{"name":"iPad","uuid":"abc","enabled":true}]}"#
+check(StreamingAPI.pairings(Data(pinJSON.utf8)).first?.name == "Living Room", "pending pairing replies are read")
+check(StreamingAPI.clients(Data(clientJSON.utf8)).first?.uuid == "abc" && StreamingAPI.flag(Data(#"{"status":true}"#.utf8)), "paired devices and results are read")
+
+final class FakeProcess: StreamProcessLike {
+    var onExit: ((Int32) -> Void)?
+    func terminate() {}   // like the real one, the exit comes later, by itself
+    func die(_ code: Int32) { onExit?(code) }
+}
+let watcher = SunshineSupervisor()
+var starts = 0, gaveUp = "", made: [FakeProcess] = []
+watcher.launch = { starts += 1; let p = FakeProcess(); made.append(p); return p }
+watcher.onGiveUp = { gaveUp = $0 }
+watcher.start()
+check(starts == 1 && watcher.running, "Sunshine starts")
+for _ in 0..<3 { made.last!.die(1) }
+check(starts == 4 && watcher.running && gaveUp.isEmpty, "a crash restarts, up to three times")
+made.last!.die(1)
+check(starts == 4 && !watcher.running && gaveUp.contains("last try"), "after three tries Docked leaves it off with a friendly reason")
+watcher.start(); made.last!.die(0)
+check(starts == 5 && !watcher.running, "a clean exit is not a crash, and a new start tries again")
+watcher.start(); watcher.stop(); made.last!.die(15)
+check(!watcher.running && starts == 6, "a deliberate stop does not restart")
+watcher.start(); let oldSun = made.last!; watcher.stop(); watcher.start(); oldSun.die(15)
+check(watcher.running && starts == 8, "the old Sunshine exiting after a restart leaves the new one alone")
+
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)
