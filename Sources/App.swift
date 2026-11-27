@@ -1160,6 +1160,7 @@ final class Model: ObservableObject {
             }
         }
         let pause = pauseAirDrop
+        GameSettings(app: g.url)?.sync()   // your defaults from Settings > Switch, for anything not chosen for this game
         let c = NSWorkspace.OpenConfiguration()
         if !settings { c.environment = ["DM_LAUNCHER": "0"] }   // straight into the game
         NSWorkspace.shared.openApplication(at: g.url, configuration: c) { app, e in

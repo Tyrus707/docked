@@ -13,7 +13,7 @@ struct GameSettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(game.name) Settings").font(.title2.weight(.semibold)).foregroundStyle(style.text)
-                Text("The same settings the game shows when you hold Option as it opens. Changes are saved for its next start.").font(.callout).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
+                Text("The same settings the game shows when you hold Option as it opens. Changes here are for this game only and are saved for its next start. Settings > Switch sets them for every game.").font(.callout).foregroundStyle(style.soft).fixedSize(horizontal: false, vertical: true)
             }
             if model.isRunning(game) { Label("\(game.name) is running. Changes apply the next time it starts.", systemImage: "info.circle").font(.callout).foregroundStyle(style.accent) }
             ScrollView {
@@ -41,7 +41,7 @@ struct GameSettingsView: View {
                 }.padding(.vertical, 2)
             }.frame(maxHeight: 460)
             HStack {
-                Button("Reset to Tested Defaults") { gs.reset(); tick += 1 }.disabled(!gs.changed).help("Brings back all settings this game was tested with.")
+                Button(GameDefaults.all.isEmpty ? "Reset to Tested Defaults" : "Use My Defaults") { gs.reset(); tick += 1 }.disabled(!gs.changed).help(GameDefaults.all.isEmpty ? "Brings back all settings this game was tested with." : "Brings back your settings for every Switch game, from Settings > Switch.")
                 Spacer()
                 Button("Play") { model.tuning = nil; model.play(game) }.disabled(game.missing)
                 Button("Done") { model.tuning = nil }.keyboardShortcut(.defaultAction).tint(style.button)

@@ -764,6 +764,26 @@ do {
     check(s["DM_RUMBLE_GAIN"]!.text(1.25) == "1.2" || s["DM_RUMBLE_GAIN"]!.text(1.25) == "1.3", "range to one decimal"); check(s["DM_RUMBLE_MIN"]!.text(0.1) == "0.10", "range to two decimals")
     UserDefaults(suiteName: dom)!.set("dev", forKey: "launcher.DM_MIC_DEVICE")
     g.reset(); check(g.value(s["DM_OPMODE"]!) == "1" && !g.changed && UserDefaults(suiteName: dom)!.string(forKey: "launcher.DM_MIC_DEVICE") == "dev", "reset keeps other choices")
+    // your defaults for every Switch game: followed unless chosen for this game, and copied in so the game sees them outside Docked
+    let mine = "local.docked.test.defaults.\(UUID().uuidString)"; GameDefaults.store = UserDefaults(suiteName: mine)!
+    let p = UserDefaults(suiteName: dom)!
+    g.set(s["DM_RUMBLE"]!, "0")   // this game's own choice
+    GameDefaults.set(s["DM_OPMODE"]!, "0"); GameDefaults.set(s["DM_RUMBLE"]!, "1"); GameDefaults.set(s["DM_LANG"]!, "ja"); GameDefaults.set(s["DM_RUMBLE_MIN"]!, "0.30")
+    check(GameDefaults.all["DM_RUMBLE"] == nil, "a default equal to the tested one isn't kept")
+    check(g.value(s["DM_OPMODE"]!) == "0" && !g.isSaved(s["DM_OPMODE"]!), "a game follows your defaults")
+    GameDefaults.set(s["DM_RUMBLE"]!, "0"); GameDefaults.set(s["DM_RUMBLE"]!, "1")
+    check(g.value(s["DM_RUMBLE"]!) == "0", "the game's own choice wins over your defaults")
+    GameDefaults.sync([app])
+    check(p.string(forKey: "launcher.DM_OPMODE") == "0" && p.string(forKey: "launcher.DM_RUMBLE_MIN") == "0.30" && p.string(forKey: "launcher.DM_RUMBLE") == "0", "defaults copied into the game, its own choice kept")
+    check(p.string(forKey: "launcher.DM_LANG") == nil && g.value(s["DM_LANG"]!) == "ja", "env.txt still wins over defaults")
+    check(!g.isSaved(s["DM_OPMODE"]!) && g.isSaved(s["DM_RUMBLE"]!), "a copied default isn't the game's own choice")
+    GameDefaults.set(s["DM_OPMODE"]!, "1"); g.sync()
+    check(p.string(forKey: "launcher.DM_OPMODE") == nil && g.value(s["DM_OPMODE"]!) == "1", "changing a default reaches games that follow it")
+    g.set(s["DM_RUMBLE_MIN"]!, "0"); check(p.string(forKey: "launcher.DM_RUMBLE_MIN") == "0" && g.value(s["DM_RUMBLE_MIN"]!) == "0", "choosing the tested value for one game is kept against your default")
+    p.set("0.50", forKey: "launcher.DM_RUMBLE_MIN"); check(g.isSaved(s["DM_RUMBLE_MIN"]!) && g.value(s["DM_RUMBLE_MIN"]!) == "0.50", "a choice made in the game's own window is its own")
+    g.reset(); check(g.value(s["DM_RUMBLE_MIN"]!) == "0.30" && g.value(s["DM_RUMBLE"]!) == "1" && p.string(forKey: "launcher.DM_RUMBLE_MIN") == "0.30" && !g.changed, "reset goes back to your defaults")
+    check(GameDefaults.catalog([app]).map(\.env) == ["DM_OPMODE", "DM_LANG", "DM_RUMBLE", "DM_RUMBLE_GAIN", "DM_RUMBLE_MIN"], "every setting the games offer, once")
+    UserDefaults.standard.removePersistentDomain(forName: mine); GameDefaults.store = .standard
     UserDefaults.standard.removePersistentDomain(forName: dom)
     _ = mk("Bare.app/Contents/Info.plist", #"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>x.y</string></dict></plist>"#)
     check(GameSettings(app: tmp.appendingPathComponent("Bare.app")) == nil, "no settings list: none")
