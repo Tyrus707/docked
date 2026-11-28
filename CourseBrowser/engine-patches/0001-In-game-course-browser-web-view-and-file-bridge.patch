@@ -1,21 +1,5 @@
-diff --git a/dm/host/front_mac.m b/dm/host/front_mac.m
-index e956b7d..2ecb136 100644
---- a/dm/host/front_mac.m
-+++ b/dm/host/front_mac.m
-@@ -1885,6 +1885,11 @@ void front_run(void (*guest)(void)) {
-         pads_start();
-         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
-             if (e.window != win) return e;   // Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
-+            // F6 opens the Course Browser over the game picture, the same web view the offline HTML pages use. It is only a request: the bridge folder
-+            // must have been set by Docked, and the page is never opened if the game has no window.
-+            if (e.type == NSEventTypeKeyDown && e.keyCode == 97 && !(e.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption))) {
-+                extern void dm_course_browser_request(void); dm_course_browser_request(); return nil;
-+            }
-             if (e.type == NSEventTypeKeyDown && (e.modifierFlags & NSEventModifierFlagCommand)) return e;   // ⌘ shortcuts go to the menu; a key released while ⌘ is held still reaches the game, or it would stay pressed
-             if (e.type == NSEventTypeKeyDown && fn_shortcut(e)) return e;   // fn (Globe) + a letter is the system's (fn+F full screen, GitHub issue #873), not the game's F
-             if (!e.isARepeat) on_key(e, e.type == NSEventTypeKeyDown);
 diff --git a/dm/host/hle_web.c b/dm/host/hle_web.c
-index e2c19dd..290e4b5 100644
+index e2c19dd..e58fd36 100644
 --- a/dm/host/hle_web.c
 +++ b/dm/host/hle_web.c
 @@ -14,6 +14,10 @@
@@ -63,10 +47,6 @@ index e2c19dd..290e4b5 100644
 +    g_web_real = front_web_open(html, "index.html", "dmweb://course-browser-done/", 0, &o) == 0;
 +    if (g_web_real) { g_cb_open = 1; g_web_held = 1; dm_input_hold(1); front_web_show(); g_cb_retry = 0; }
 +    else { g_web_state = 0; g_cb_retry = 12; }   // the Metal layer may not exist yet: try again shortly
-+}
-+
-+void dm_course_browser_request(void) {   // F6 in the game window: open, or close if already open
-+    pthread_mutex_lock(&g_web_mu); g_cb_wanted = 1; pthread_mutex_unlock(&g_web_mu);
 +}
 +
 +static int cb_name_order(const void *a, const void *b) {
@@ -140,6 +120,10 @@ index e2c19dd..290e4b5 100644
 +    cb_path(p, sizeof p, "to-game"); mkdir(p, 0700);
 +    cb_path(p, sizeof p, "to-docked"); mkdir(p, 0700);
 +    cb_path(p, sizeof p, "html"); mkdir(p, 0700);
++    // The only way in is Docked's macOS File menu, which launches this game
++    // with DM_COURSE_BROWSER. The page appears when the Metal window is ready;
++    // there is no in-game key that can open it.
++    g_cb_wanted = 1; g_cb_retry = 20;
 +    pthread_create(&g_cb_thread, NULL, cb_thread, NULL);
 +}
 +

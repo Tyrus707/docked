@@ -1178,10 +1178,63 @@ do {
     let tiny = SMM2OverlayLayout.frame(game: CGRect(x: 200, y: 200, width: 400, height: 300), panel: CGSize(width: 900, height: 600), screen: CGRect(x: 0, y: 0, width: 1440, height: 900))
     check(tiny.width <= 1440 && tiny.height <= 900 && abs(tiny.midX - 400) < 1 && abs(tiny.midY - 350) < 1, "a small game window gets a centred panel that still fits the screen")
 
+    // ---- a browse-first catalog, not a search box ----
+    let shelfRows: [[String: Any]] = [
+        ["data_id": 3000004, "name": "Well liked", "uploaded": 1561646179, "likes": 5000, "plays": 90],
+        ["data_id": 3000005, "name": "Fresh upload", "uploaded": 1700000000, "likes": 4, "plays": 2],
+        ["data_id": 3000006, "name": "Quiet middle", "uploaded": 1600000000, "likes": 40, "plays": 9]
+    ]
+    let shelfAnswer = try! JSONSerialization.data(withJSONObject: ["rows": shelfRows.map { ["row": $0] }, "partial": false, "num_rows_total": 3])
+    let shelfFound = try! SMM2Archive.parse(shelfAnswer)
+    check(shelfFound.courses.count == 3 && shelfFound.courses[1].uploaded == 1700000000, "the catalog keeps each course's upload time")
+    check(SMM2Catalog.order(shelfFound.courses, for: .popular).map(\.name) == ["Well liked", "Quiet middle", "Fresh upload"],
+          "Popular uses the archive's real like counts, sorted here")
+    check(SMM2Catalog.order(shelfFound.courses, for: .newest).map(\.name) == ["Fresh upload", "Quiet middle", "Well liked"],
+          "New uses the archive's real upload times, not the row order")
+    check(SMM2Shelf.browse.map(\.rawValue) == ["popular", "newest", "castle", "puzzle", "speedrun", "world3d"] &&
+          SMM2Shelf.browse.map(\.title) == ["Popular", "New uploads", "Castle", "Puzzle solving", "Speedruns", "3D World"],
+          "the catalog opens on shelves a player can scroll, including Popular and New")
+    check(SMM2Catalog.queryItems(for: .castle).contains(where: { $0.name == "where" && $0.value == "\"theme\"=2" }) &&
+          SMM2Catalog.queryItems(for: .puzzle).contains(where: { $0.name == "where" && $0.value == "\"tag1\"=2" }) &&
+          SMM2Catalog.queryItems(for: .world3d).contains(where: { $0.name == "where" && $0.value == "\"gamestyle\"=4" }) &&
+          SMM2Catalog.queryItems(for: .popular).contains(where: { $0.name == "where" && $0.value == "\"likes\">1000" }),
+          "category shelves ask the public archive for real categories that actually have rows")
+    check(SMM2Catalog.queryItems(for: .newest).contains(where: { $0.name == "length" && $0.value == "30" }) &&
+          !SMM2Catalog.queryItems(for: .newest).contains(where: { $0.name == "where" }) &&
+          SMM2Catalog.tailOffset(total: 26_609_725, length: 30) == 26_609_695 &&
+          SMM2Catalog.tailOffset(total: 5, length: 30) == 0,
+          "New reads the last rows of the archive, because the filter endpoint only sees its first sample")
+    let sizeAnswer = Data("{\"size\":{\"dataset\":{\"num_rows\":26609725}}}".utf8)
+    check((try? SMM2Archive.totalRows(from: sizeAnswer)) == 26_609_725 && (try? SMM2Archive.totalRows(from: Data("{}".utf8))) == nil,
+          "the archive's total row count is read before asking for the newest upload rows")
+    let shelfJSON = SMM2WebBridge.catalogJSON([(.popular, shelfFound.courses), (.newest, shelfFound.courses)])
+    let shelves = shelfJSON["shelves"] as? [[String: Any]]
+    check(shelfJSON["cmd"] as? String == "catalog" && shelves?.count == 2 &&
+          shelves?.first?["id"] as? String == "popular" && shelves?.last?["title"] as? String == "New uploads" &&
+          (shelves?.first?["courses"] as? [[String: Any]])?.count == 3,
+          "the page receives whole shelves, with real courses and honest previews")
+    check(((shelves?.first?["courses"] as? [[String: Any]])?.first?["preview"] as? [String: Any])?["kind"] as? String == "none",
+          "a card with no picture and no level data says so instead of pretending")
+
     // ---- the browser page that lives inside the game window ----
     check(SMM2WebPage.html.contains("window.nx.sendMessage") && SMM2WebPage.html.contains("window.nx.addEventListener('message'") &&
-          SMM2WebPage.html.contains("F6 opens and closes") && SMM2WebPage.html.contains("setAssign('B', 'Close Browser'"),
-          "the in-game page uses the host web view and explains its keys")
+          SMM2WebPage.html.contains("cmd: 'catalog'") && SMM2WebPage.html.contains("cmd: 'play'") &&
+          SMM2WebPage.html.contains("Popular") && SMM2WebPage.html.contains("New uploads") &&
+          SMM2WebPage.html.contains("overflow:auto"),
+          "the in-game page is a scrollable catalog with a play handoff, driven only by the host bridge")
+    check(!SMM2WebPage.html.contains("F6") && !SMM2WebPage.html.contains("keyCode") && !SMM2WebPage.html.contains("setAssign('B'") &&
+          SMM2WebPage.html.contains("File menu") && SMM2WebPage.html.contains("Play in SMM2"),
+          "the page is opened from the File menu only and hands play back without in-game keys")
+    let enginePatch = try! String(contentsOfFile: "CourseBrowser/engine-patches/0001-In-game-course-browser-web-view-and-file-bridge.patch", encoding: .utf8)
+    check(!enginePatch.contains("diff --git a/dm/host/front_mac.m") && !enginePatch.contains("keyCode == 97") &&
+          !enginePatch.contains("dm_course_browser_request") && enginePatch.contains("getenv(\"DM_COURSE_BROWSER\")") &&
+          enginePatch.contains("g_cb_wanted = 1; g_cb_retry = 20;"),
+          "the engine patch opens the page automatically for the File-menu launch, with no in-game key")
+    let appSource = try! String(contentsOfFile: "Sources/App.swift", encoding: .utf8)
+    check(appSource.contains("Super Mario Maker 2 Course Browser…") && appSource.contains("openCourseBrowserForSMM2()"),
+          "the macOS File menu launches the browser session")
+    let savesSource = try! String(contentsOfFile: "Sources/Saves.swift", encoding: .utf8)
+    check(!savesSource.contains("Course Browser…"), "there is no second launcher on a game's Saves menu")
     check(!SMM2WebPage.html.contains("<script src=") && !SMM2WebPage.html.contains("@import") && !SMM2WebPage.html.contains("url(http"),
           "the page loads no outside script, font or picture")
 
@@ -1207,6 +1260,7 @@ do {
     check(reply?["id"] as? Int == 2 && reply?["ok"] as? Bool == true && (reply?["cmd"] as? String) == "hello", "the page receives the reply with its request ID")
 
     check(SMM2WebCommand(["cmd": "search", "q": "  castle  "]) != nil && SMM2WebCommand(["cmd": "lookup", "code": "4RF-XV8-WCG"]) != nil &&
+          SMM2WebCommand(["cmd": "catalog"]) != nil && SMM2WebCommand(["cmd": "play"]) != nil &&
           SMM2WebCommand(["cmd": "inject", "dataID": 3000004, "slot": 125]) != nil && SMM2WebCommand(["cmd": "cancel"]) != nil,
           "real browser commands are accepted")
     check(SMM2WebCommand(["cmd": "search", "q": "   "]) == nil && SMM2WebCommand(["cmd": "inject", "dataID": 3000004, "slot": 60]) == nil &&

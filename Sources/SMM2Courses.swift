@@ -94,6 +94,7 @@ struct SMM2Course: Identifiable, Equatable {
     var difficulty: String
     var likes: Int?
     var plays: Int?
+    var uploaded: Int?          // Unix time from the public archive, used by the New shelf
     // Archive level data is a compressed course. A live server can return the
     // finished .bcd instead; `isBcdFile` tells the injector which one it has.
     var levelData: Data?
@@ -111,6 +112,7 @@ struct SMM2Course: Identifiable, Equatable {
         difficulty = ""
         likes = nil
         plays = nil
+        uploaded = nil
         self.levelData = levelData
         self.isBcdFile = isBcdFile
     }
@@ -129,6 +131,7 @@ struct SMM2Course: Identifiable, Equatable {
         difficulty = Self.string(row["difficulty_name"]).nonempty ?? Self.name(for: row["difficulty"], table: Self.difficulties)
         likes = Self.number(row["likes"]) ?? Self.number(row["num_likes"])
         plays = Self.number(row["plays"]) ?? Self.number(row["num_plays"])
+        uploaded = Self.number(row["uploaded"])
         levelData = Self.levelData(from: row["level_data"])
         isBcdFile = false
     }
@@ -182,6 +185,74 @@ struct SMM2Search {
     var total: Int?
 }
 
+// The browser opens on shelves, not a blank search box. Every shelf is a real
+// question to the public archive; none of them is Nintendo's Course World feed.
+enum SMM2Shelf: String, CaseIterable, Hashable {
+    case popular, newest, castle, puzzle, speedrun, world3d
+
+    static let browse: [SMM2Shelf] = [.popular, .newest, .castle, .puzzle, .speedrun, .world3d]
+
+    var title: String {
+        switch self {
+        case .popular: return "Popular"
+        case .newest: return "New uploads"
+        case .castle: return "Castle"
+        case .puzzle: return "Puzzle solving"
+        case .speedrun: return "Speedruns"
+        case .world3d: return "3D World"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .popular: return "Well-liked courses from a public archive sample, sorted by likes"
+        case .newest: return "The last 30 rows of the public archive, sorted by upload time"
+        case .castle: return "Castle-themed courses"
+        case .puzzle: return "Puzzle-solving courses"
+        case .speedrun: return "Speedrun courses"
+        case .world3d: return "Super Mario 3D World style"
+        }
+    }
+}
+
+enum SMM2Catalog {
+    // The public dataset has no order-by operator. Category shelves ask for a
+    // real subset and sort it here; "New uploads" uses the archive's last rows,
+    // because /filter only sees the first sample of this very large dataset.
+    static func queryItems(for shelf: SMM2Shelf) -> [URLQueryItem] {
+        if shelf == .newest { return [URLQueryItem(name: "length", value: "30")] }
+        let whereClause: String
+        switch shelf {
+        case .popular: whereClause = "\"likes\">1000"
+        case .castle: whereClause = "\"theme\"=2"
+        case .puzzle: whereClause = "\"tag1\"=2"
+        case .speedrun: whereClause = "\"tag1\"=3"
+        case .world3d: whereClause = "\"gamestyle\"=4"
+        case .newest: whereClause = ""   // handled above
+        }
+        return [URLQueryItem(name: "where", value: whereClause), URLQueryItem(name: "length", value: "30")]
+    }
+
+    static func tailOffset(total: Int, length: Int = 30) -> Int { max(0, total - length) }
+
+    static func order(_ courses: [SMM2Course], for shelf: SMM2Shelf) -> [SMM2Course] {
+        if shelf == .newest {
+            return courses.sorted { a, b in
+                let au = a.uploaded ?? 0, bu = b.uploaded ?? 0
+                if au != bu { return au > bu }
+                return likes(a) > likes(b)
+            }
+        }
+        return courses.sorted { a, b in
+            let al = likes(a), bl = likes(b)
+            if al != bl { return al > bl }
+            return (a.plays ?? 0) > (b.plays ?? 0)
+        }
+    }
+
+    private static func likes(_ c: SMM2Course) -> Int { c.likes ?? 0 }
+}
+
 enum SMM2Archive {
     static let base = "https://datasets-server.huggingface.co"
     static let liveBase = "https://tgrcode.com/mm2"
@@ -192,6 +263,36 @@ enum SMM2Archive {
 
     static func course(dataID id: UInt32) throws -> SMM2Search {
         try fetch(path: "/filter", extra: [URLQueryItem(name: "where", value: "\"data_id\"=\(id)"), URLQueryItem(name: "length", value: "1")])
+    }
+
+    // A shelf in the browse-first catalog. The returned rows are sorted by
+    // SMM2Catalog before they reach the page.
+    static func shelf(_ shelf: SMM2Shelf) throws -> SMM2Search {
+        if shelf == .newest { return try newest() }
+        return try fetch(path: "/filter", extra: SMM2Catalog.queryItems(for: shelf))
+    }
+
+    // /filter only searches the first parquet sample of this dataset, so an
+    // upload-time filter misses the newer rows. /rows can seek to the real end;
+    // the size endpoint says where that is.
+    static func newest() throws -> SMM2Search {
+        let total = try totalRows()
+        return try fetch(path: "/rows", extra: SMM2Catalog.queryItems(for: .newest),
+                         offset: SMM2Catalog.tailOffset(total: total))
+    }
+
+    static func totalRows(from data: Data) throws -> Int {
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let dataset = json["size"] as? [String: Any],
+              let n = (dataset["dataset"] as? [String: Any])?["num_rows"] as? NSNumber else { throw SMM2Error.badArchive }
+        return n.intValue
+    }
+
+    private static func totalRows() throws -> Int {
+        guard var parts = URLComponents(string: base + "/size") else { throw SMM2Error.badArchive }
+        parts.queryItems = [URLQueryItem(name: "dataset", value: "TheGreatRambler/mm2_level")]
+        guard let url = parts.url, let data = try get(url) else { throw SMM2Error.badArchive }
+        return try totalRows(from: data)
     }
 
     // One course by its printed ID. The live server is a fallback only; if it
@@ -226,13 +327,13 @@ enum SMM2Archive {
         return data
     }
 
-    private static func fetch(path: String, extra: [URLQueryItem]) throws -> SMM2Search {
+    private static func fetch(path: String, extra: [URLQueryItem], offset: Int = 0) throws -> SMM2Search {
         guard var parts = URLComponents(string: base + path) else { throw SMM2Error.badArchive }
         parts.queryItems = [
             URLQueryItem(name: "dataset", value: "TheGreatRambler/mm2_level"),
             URLQueryItem(name: "config", value: "default"),
             URLQueryItem(name: "split", value: "train"),
-            URLQueryItem(name: "offset", value: "0")
+            URLQueryItem(name: "offset", value: String(max(0, offset)))
         ] + extra
         guard let url = parts.url, let data = try get(url) else { throw SMM2Error.badArchive }
         return try parse(data)

@@ -346,8 +346,9 @@ extension Model {
         let timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.pollSMM2WebBridge() }
         RunLoop.main.add(timer, forMode: .common)
         smm2WebTimer = timer
-        // The page is not a separate panel: it is shown by the game's own web
-        // view when F6 is pressed in the game window.
+        // The page is not a separate panel: the menu launch gives this game a
+        // private browser folder, and the host shows the page when its window
+        // is ready. No in-game key can open it; the page's Close button leaves.
         play(g)
     }
 
@@ -383,6 +384,24 @@ extension Model {
                     return nil
                 }
                 return try SMM2Archive.course(code: code, tryLive: tryLive)
+            }
+            DispatchQueue.main.async { then(answer) }
+        }
+    }
+
+    // The browse shelves come from real public-archive questions. Everything
+    // happens off the main queue; a shelf that fails is left out and reported,
+    // never replaced with made-up courses.
+    func smm2Catalog(then: @escaping (Result<[(SMM2Shelf, [SMM2Course])], Error>) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let answer = Result { () throws -> [(SMM2Shelf, [SMM2Course])] in
+                var found: [(SMM2Shelf, [SMM2Course])] = []
+                for shelf in SMM2Shelf.browse {
+                    guard let response = try? SMM2Archive.shelf(shelf) else { continue }
+                    found.append((shelf, SMM2Catalog.order(response.courses, for: shelf)))
+                }
+                if found.isEmpty { throw SMM2Error.offline }
+                return found
             }
             DispatchQueue.main.async { then(answer) }
         }
@@ -500,12 +519,26 @@ extension Model {
             switch command {
             case .hello, .slots:
                 let slots = Array(SMM2Slots.populated(in: GameData(game.titleID).save)).sorted()
-                let note = smm2QueueNote.isEmpty ? "Press F6 in the game window to open the browser, or B to close it. Save and quit to let a queued course be written." : smm2QueueNote
+                let note = smm2QueueNote.isEmpty ? "This browser opened only from Docked's File menu. Scroll the shelves, choose a course, then save and quit to let a queued course be written." : smm2QueueNote
                 let running = isRunning(game) || isOpen(game)
+                let body: [String: Any] = ["slots": slots, "running": running, "queued": smm2Queue != nil, "note": note]
                 if case .slots = command {
-                    smm2WebReply(id, ["cmd": "slots", "slots": slots, "running": running, "note": note])
+                    smm2WebReply(id, ["cmd": "slots"].merging(body) { _, new in new })
                 } else {
-                    smm2WebReply(id, ["cmd": "hello", "slots": slots, "running": running, "note": note])
+                    smm2WebReply(id, ["cmd": "hello"].merging(body) { _, new in new })
+                }
+            case .catalog:
+                smm2Catalog { [weak self] result in
+                    guard let self, let dir = self.smm2WebDir else { return }
+                    switch result {
+                    case .failure(let e):
+                        self.smm2WebReply(id, dir: dir, ["cmd": "catalog", "ok": false, "shelves": [], "note": e.localizedDescription])
+                    case .success(let shelves):
+                        self.smm2WebRemember(shelves.flatMap { $0.1 })
+                        let missing = SMM2Shelf.browse.count - shelves.count
+                        let note = missing == 0 ? "Scroll the shelves to browse public courses." : "\(missing) shelf\(missing == 1 ? "" : "s") could not be reached. The rest are real archive courses."
+                        self.smm2WebReply(id, dir: dir, SMM2WebBridge.catalogJSON(shelves).merging(["note": note]) { _, new in new })
+                    }
                 }
             case .search(let text):
                 smm2Search(text) { [weak self] result in
@@ -563,7 +596,7 @@ extension Model {
                 }
                 if isRunning(game) || isOpen(game) {
                     queueSMM2Course(course, in: slot, for: game)
-                    smm2WebReply(id, ["cmd": "inject", "ok": true, "note": smm2QueueNote])
+                    smm2WebReply(id, ["cmd": "inject", "ok": true, "queued": true, "note": smm2QueueNote])
                 } else {
                     smm2Inject(course, into: game, slot: slot, tryLive: true) { [weak self] result in
                         guard let self, let dir = self.smm2WebDir else { return }
@@ -575,6 +608,16 @@ extension Model {
                                                              "note": "Done. The course is in Downloaded Course \(SMM2Slots.name(slot)). Coursebot still shows that slot's old thumbnail and title."])
                         }
                     }
+                }
+            case .play:
+                // Closing the page returns to the game. A queued course is
+                // written when the player saves and quits; a later ordinary
+                // launch from Docked then opens that Coursebot slot.
+                smm2WebReply(id, ["cmd": "close", "ok": true])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                    guard let self, self.courseBrowserGame?.url.standardizedFileURL == game.url.standardizedFileURL else { return }
+                    self.closeSMM2WebSession()
+                    self.play(game)
                 }
             case .cancel:
                 cancelSMM2Queue()

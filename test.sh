@@ -6,6 +6,11 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 [ "$(sed -n 's/^let pinnedEngine = "\(.*\)"/\1/p' Sources/Core.swift) $(sed -n 's/^let pinnedEngineDate = "\(.*\)"/\1/p' Sources/Core.swift)" = "$(awk '$1=="commit"{c=$2} $1=="date"{d=$2} END{print c, d}' ENGINE_PIN)" ] || { echo "FAIL: Sources/Core.swift and ENGINE_PIN name different engines"; exit 1; }
 # The in-game browser is an engine patch, not a separate app. It must still fit the pinned engine.
 if [ -d "$HOME/Docked/engine" ]; then ./CourseBrowser/apply.sh --check "$HOME/Docked/engine" "$(awk '$1=="commit"{print $2}' ENGINE_PIN)" >/dev/null || { echo "FAIL: the Course Browser patch no longer applies"; exit 1; }; fi
+# Docked's macOS File menu is the only way in. No in-game key, no second menu item.
+if grep -qiE 'F6|keyCode|setAssign|dm_course_browser_request|front_mac' CourseBrowser/engine-patches/*.patch; then echo "FAIL: the engine patch still has an in-game shortcut or a second host file"; exit 1; fi
+if ! grep -q 'DM_COURSE_BROWSER' CourseBrowser/engine-patches/*.patch || ! grep -q 'g_cb_wanted = 1; g_cb_retry = 20;' CourseBrowser/engine-patches/*.patch; then echo "FAIL: the engine patch has no menu-launched browser hook"; exit 1; fi
+if ! grep -q 'Super Mario Maker 2 Course Browser…' Sources/App.swift; then echo "FAIL: the macOS File menu has no Course Browser launch"; exit 1; fi
+if grep -q 'Course Browser…' Sources/Saves.swift; then echo "FAIL: the Saves menu still opens the browser; use the File menu only"; exit 1; fi
 # Everything but the windows: the tests build it with their own main. A new file goes here, or in APP_ONLY when it only makes sense inside the app.
 SRC=(); for n in Core Notify Builder Review Estimate Place Install Originals Pipeline LibraryData Meta Consoles Disc Lookup Retro RetroExtras Organize Artwork Queue Cleanup Extras Notes Smart Navigate Update Arrive Phone Xcode Engine Verify GameSettings Offload GameData Compat Friends Health Links Netplay Keychain Streaming StreamingInstall StreamingProcess StreamingAPI StreamingPermissions TVDisplay SMM2Courses SMM2Crypto SMM2CoursePreview CourseBrowserBridge; do SRC+=("Sources/$n.swift"); done
 APP_ONLY=" Offloading PlayTracker Power Spotlight Theme "   # plus every file that imports SwiftUI
@@ -25,7 +30,7 @@ fi
 # With a payload: the same checks using only the carried tools, with Homebrew and any other Docked install blocked.
 if [ -n "${PAYLOAD:-}" ]; then
   mkdir "$T/all"; tar -xJf "$PAYLOAD" -C "$T/all"
-  grep -q 'dm_course_browser_request' "$T/all/tools/engine/dm/host/hle_web.c" || { echo "FAIL: the payload engine has no in-game Course Browser"; exit 1; }
+  grep -q 'DM_COURSE_BROWSER' "$T/all/tools/engine/dm/host/hle_web.c" && ! grep -qiE 'F6|keyCode|dm_course_browser_request' "$T/all/tools/engine/dm/host/hle_web.c" && ! grep -q 'dm_course_browser_request' "$T/all/tools/engine/dm/host/front_mac.m" || { echo "FAIL: the payload engine has no menu-only in-game Course Browser"; exit 1; }
   printf '(version 1)(allow default)(deny file-read* file-write* (subpath "/opt/homebrew") (subpath "/usr/local") (subpath "%s/Docked") (subpath "/Library/Developer/CommandLineTools"))' "$HOME" > "$T/block.sb"
   DOCKED_ROOT="$T/all" sandbox-exec -f "$T/block.sb" "$T/itests"
 fi
