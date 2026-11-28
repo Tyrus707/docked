@@ -4,8 +4,10 @@ cd "$(dirname "$0")"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 # One engine pin: ENGINE_PIN, and the app's copy of it
 [ "$(sed -n 's/^let pinnedEngine = "\(.*\)"/\1/p' Sources/Core.swift) $(sed -n 's/^let pinnedEngineDate = "\(.*\)"/\1/p' Sources/Core.swift)" = "$(awk '$1=="commit"{c=$2} $1=="date"{d=$2} END{print c, d}' ENGINE_PIN)" ] || { echo "FAIL: Sources/Core.swift and ENGINE_PIN name different engines"; exit 1; }
+# The in-game browser is an engine patch, not a separate app. It must still fit the pinned engine.
+if [ -d "$HOME/Docked/engine" ]; then ./CourseBrowser/apply.sh --check "$HOME/Docked/engine" "$(awk '$1=="commit"{print $2}' ENGINE_PIN)" >/dev/null || { echo "FAIL: the Course Browser patch no longer applies"; exit 1; }; fi
 # Everything but the windows: the tests build it with their own main. A new file goes here, or in APP_ONLY when it only makes sense inside the app.
-SRC=(); for n in Core Notify Builder Review Estimate Place Install Originals Pipeline LibraryData Meta Consoles Disc Lookup Retro RetroExtras Organize Artwork Queue Cleanup Extras Notes Smart Navigate Update Arrive Phone Xcode Engine Verify GameSettings Offload GameData Compat Friends Health Links Netplay Keychain Streaming StreamingInstall StreamingProcess StreamingAPI StreamingPermissions TVDisplay SMM2Courses SMM2Crypto SMM2CoursePreview; do SRC+=("Sources/$n.swift"); done
+SRC=(); for n in Core Notify Builder Review Estimate Place Install Originals Pipeline LibraryData Meta Consoles Disc Lookup Retro RetroExtras Organize Artwork Queue Cleanup Extras Notes Smart Navigate Update Arrive Phone Xcode Engine Verify GameSettings Offload GameData Compat Friends Health Links Netplay Keychain Streaming StreamingInstall StreamingProcess StreamingAPI StreamingPermissions TVDisplay SMM2Courses SMM2Crypto SMM2CoursePreview CourseBrowserBridge; do SRC+=("Sources/$n.swift"); done
 APP_ONLY=" Offloading PlayTracker Power Spotlight Theme "   # plus every file that imports SwiftUI
 for f in Sources/*.swift; do n=$(basename "$f" .swift); grep -q '^import SwiftUI' "$f" && continue; [[ " ${SRC[*]} " == *" $f "* || "$APP_ONLY" == *" $n "* ]] || { echo "FAIL: $f is in neither test.sh SRC nor APP_ONLY"; exit 1; }; done
 swiftc -swift-version 5 -target ${ARCH:-arm64}-apple-macos13.0 "${SRC[@]}" Tests/main.swift -o "$T/tests"
@@ -23,6 +25,7 @@ fi
 # With a payload: the same checks using only the carried tools, with Homebrew and any other Docked install blocked.
 if [ -n "${PAYLOAD:-}" ]; then
   mkdir "$T/all"; tar -xJf "$PAYLOAD" -C "$T/all"
+  grep -q 'dm_course_browser_request' "$T/all/tools/engine/dm/host/hle_web.c" || { echo "FAIL: the payload engine has no in-game Course Browser"; exit 1; }
   printf '(version 1)(allow default)(deny file-read* file-write* (subpath "/opt/homebrew") (subpath "/usr/local") (subpath "%s/Docked") (subpath "/Library/Developer/CommandLineTools"))' "$HOME" > "$T/block.sb"
   DOCKED_ROOT="$T/all" sandbox-exec -f "$T/block.sb" "$T/itests"
 fi

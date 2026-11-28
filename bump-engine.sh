@@ -40,6 +40,8 @@ if [ -n "$moved$others" ]; then
 fi
 # Play with friends must come along: stop before anything changes when its patches no longer fit
 ./Friends/apply.sh --check "$E" "$NEW" || { echo "Nothing was changed. Refresh Friends/engine-patches for ${NEW:0:8} first (Friends/README.md)."; exit 1; }
+# The in-game Course Browser must come along too: its host hook is dormant until Docked opens the page inside the game window
+./CourseBrowser/apply.sh --check "$E" "$NEW" || { echo "Nothing was changed. Refresh CourseBrowser/engine-patches for ${NEW:0:8} first (CourseBrowser/README.md)."; exit 1; }
 # The engine in ~/Docked/engine, and its Python packages if they changed
 $G checkout -q --detach "$NEW"
 if ! $G diff --quiet "$OLD" "$NEW" -- .github/requirements/tools.txt; then

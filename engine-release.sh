@@ -21,7 +21,8 @@ W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 lay() { mkdir -p "$2/engine"; $G archive "$1" | tar -xf - -C "$2/engine"; rm -rf "$2/engine/docs/images" "$2/engine/.github"; }
 # Play with friends goes in as Bundle/make.sh puts it in. Older engines in players' hands may or may not have it, so a difference from one is offered only when
 # its tree matches (Engine.swift falls back to the full engine otherwise)
-layf() { lay "$1" "$2"; ./Friends/apply.sh "$2/engine"; }
+# Only the new engine gets the Course Browser hook; older engines stay exactly as players have them so the delta is safe.
+layf() { lay "$1" "$2"; ./Friends/apply.sh "$2/engine"; ./CourseBrowser/apply.sh "$2/engine"; }
 pack() { (cd "$1" && COPYFILE_DISABLE=1 tar -cJf "$2" engine*) }   # no AppleDouble files: Docked checks every file
 layf "$PIN" "$W/new"; read TREE FILES <<< "$(python3 -I Bundle/engine_tree.py tree "$W/new/engine")"
 C=${PIN:0:12}; pack "$W/new" "$W/engine-$C.tar.xz"

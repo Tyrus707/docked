@@ -60,9 +60,12 @@ final class Model: ObservableObject {
     @Published var notice: Notice?     // a quiet word in the tray (Tray.swift)
     @Published var activity: [ActivityEntry] = []   // what happened this session, in the tray's Activity list
     @Published var vaultGame: Game?    // the game whose Save Vault sheet is open
-    @Published var courseBrowserGame: Game?   // the converted SMM2 game whose floating Course Browser is open
+    @Published var courseBrowserGame: Game?   // the SMM2 game launched with the in-window Course Browser bridge
     @Published var smm2Queue: SMM2Queue?      // a course waiting for the game to close; never written while it runs
     @Published var smm2QueueNote = ""         // what happened to that queue, shown in the browser
+    var smm2WebDir: URL?                      // the private mailbox folder the game host reads
+    var smm2WebCourses: [UInt32: SMM2Course] = [:]   // courses the page can ask about without re-searching
+    var smm2WebTimer: Timer?                  // polls that mailbox while Docked is awake
     @Published var showSetup = false
     @Published var showHelp = false
     @Published var showReleaseNotes = false
@@ -392,7 +395,11 @@ final class Model: ObservableObject {
         tracker.identify = { [weak self] u in self?.games.first { u.path == $0.url.path || u.path.hasPrefix($0.url.path + "/") }?.titleID.uppercased() }
         tracker.countedUntil = { [weak self] id in self?.library.entry(id).lastPlayed }
         AppDelegate.leaving = { [weak self] in self?.streaming.stop(); self?.tracker.flush(); self?.saveNow() }
-        tracker.finished = { [weak self] id, a, b in self?.library.played(id, from: a, to: b); self?.comeBack(); self?.checkCrash(id, since: a) }
+        tracker.finished = { [weak self] id, a, b in
+            guard let self else { return }
+            if self.courseBrowserGame?.titleID.uppercased() == id { self.closeSMM2WebSession() }
+            self.library.played(id, from: a, to: b); self.comeBack(); self.checkCrash(id, since: a)
+        }
         tracker.changed = { [weak self] in guard let s = self else { return }; s.runningIDs = s.tracker.running; s.themeUpdate(); s.applySMM2QueueIfReady() }
         tracker.start()
     }
@@ -400,9 +407,9 @@ final class Model: ObservableObject {
     // ---- while a game plays, Docked steps aside; when the last game closes, the library is back in front ----
     @Published var hideWhilePlaying = UserDefaults.standard.object(forKey: "hideWhilePlaying") as? Bool ?? true { didSet { UserDefaults.standard.set(hideWhilePlaying, forKey: "hideWhilePlaying") } }
     private var asideForGame = false
-    // A queued course needs Docked awake to notice the game closing. The panel
-    // keeps it awake; without one, the library still steps out of the way.
-    func stepAside() { guard hideWhilePlaying, courseBrowserGame == nil else { return }; asideForGame = true; NSApp.hide(nil) }
+    // The browser page lives in the game window. Docked can hide while it
+    // answers the page: the process stays awake and still notices the game closing.
+    func stepAside() { guard hideWhilePlaying else { return }; asideForGame = true; NSApp.hide(nil) }
     private func comeBack() {
         guard asideForGame, tracker.running.isEmpty else { return }
         asideForGame = false
@@ -1168,10 +1175,21 @@ final class Model: ObservableObject {
         let pause = pauseAirDrop
         GameSettings(app: g.url)?.sync()   // your defaults from Settings > Switch, for anything not chosen for this game
         let c = NSWorkspace.OpenConfiguration()
-        if !settings { c.environment = ["DM_LAUNCHER": "0"] }   // straight into the game
+        // A Course Browser session wakes the host hook only for this game, only
+        // when launched from Docked. An ordinary launch has no browser folder.
+        let env = SMM2WebLaunch.environment(settings: settings,
+                                            browserDir: courseBrowserGame?.url == g.url ? smm2WebDir : nil,
+                                            game: g.url,
+                                            browserGame: courseBrowserGame?.url)
+        if !env.isEmpty { c.environment = env }
         NSWorkspace.shared.openApplication(at: g.url, configuration: c) { app, e in
             if e == nil, pause, let app { Friends.pauseAirDrop(whilePID: app.processIdentifier) }
-            DispatchQueue.main.async { if let e { self.message = e.localizedDescription } else { self.stepAside() } }
+            DispatchQueue.main.async {
+                if let e {
+                    self.message = e.localizedDescription
+                    if self.courseBrowserGame?.url == g.url { self.closeSMM2WebSession() }
+                } else { self.stepAside() }
+            }
         }
     }
 

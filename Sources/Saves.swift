@@ -12,7 +12,7 @@ struct SaveMenu: View {
             if game.rom == nil && game.titleID.uppercased() == smm2TitleID {
                 Button("Course Browser…") { model.openCourseBrowser(game) }
                     .disabled(game.missing || !d.hasSave)
-                    .help("Find a public Super Mario Maker 2 course in a panel over the game. While the game runs, the course is queued and written only after it closes.")
+                    .help("Start the game with the Course Browser inside its window (F6). While the game runs, the course is queued and written only after it closes.")
             }
             Button("Save Vault…") { model.openVault(game) }
             Button("Back Up Now") { model.backUpSave(game) }.disabled(!d.hasSave)

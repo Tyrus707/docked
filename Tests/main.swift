@@ -1177,6 +1177,62 @@ do {
     check(room.width == 900 && room.height == 600 && room.minX >= 100 && room.maxX <= 1300 && room.minY >= 80 && room.maxY <= 880, "the browser fits inside a normal game window")
     let tiny = SMM2OverlayLayout.frame(game: CGRect(x: 200, y: 200, width: 400, height: 300), panel: CGSize(width: 900, height: 600), screen: CGRect(x: 0, y: 0, width: 1440, height: 900))
     check(tiny.width <= 1440 && tiny.height <= 900 && abs(tiny.midX - 400) < 1 && abs(tiny.midY - 350) < 1, "a small game window gets a centred panel that still fits the screen")
+
+    // ---- the browser page that lives inside the game window ----
+    check(SMM2WebPage.html.contains("window.nx.sendMessage") && SMM2WebPage.html.contains("window.nx.addEventListener('message'") &&
+          SMM2WebPage.html.contains("F6 opens and closes") && SMM2WebPage.html.contains("setAssign('B', 'Close Browser'"),
+          "the in-game page uses the host web view and explains its keys")
+    check(!SMM2WebPage.html.contains("<script src=") && !SMM2WebPage.html.contains("@import") && !SMM2WebPage.html.contains("url(http"),
+          "the page loads no outside script, font or picture")
+
+    if let web = SMM2WebBridge.prepare(smm2TitleID) {
+    let inbox = web.appendingPathComponent("to-game"), outbox = web.appendingPathComponent("to-docked")
+    check(FileManager.default.fileExists(atPath: web.appendingPathComponent("html/index.html").path), "the page is written where the game host reads it")
+    _ = mk("nx/\(smm2TitleID)/course-browser/to-game/old.json", "stale")
+    _ = mk("nx/\(smm2TitleID)/course-browser/to-docked/old.json", "stale")
+    _ = SMM2WebBridge.prepare(smm2TitleID)
+    check((try? fm.contentsOfDirectory(atPath: inbox.path))?.isEmpty == true && (try? fm.contentsOfDirectory(atPath: outbox.path))?.isEmpty == true,
+          "a fresh browser session starts with an empty mailbox")
+
+    let ask = web.appendingPathComponent("to-docked/2.json")
+    try! Data(#"{"cmd":"hello","id":2}"#.utf8).write(to: ask)
+    try! Data("not json".utf8).write(to: web.appendingPathComponent("to-docked/broken.json"))
+    let asks = SMM2WebBridge.requests(in: web)
+    check(asks.count == 1 && SMM2WebBridge.requestID(asks[0]) == 2, "requests are read once and broken ones are dropped")
+    check((try? fm.contentsOfDirectory(atPath: outbox.path))?.isEmpty == true, "no request is left behind")
+    check(SMM2WebBridge.send(SMM2WebBridge.reply(2, ["cmd": "hello"]), in: web), "a reply can be posted to the page")
+    let replyFiles = (try? fm.contentsOfDirectory(atPath: inbox.path)) ?? []
+    let reply = replyFiles.compactMap { try? Data(contentsOf: inbox.appendingPathComponent($0)) }
+                          .compactMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }.first
+    check(reply?["id"] as? Int == 2 && reply?["ok"] as? Bool == true && (reply?["cmd"] as? String) == "hello", "the page receives the reply with its request ID")
+
+    check(SMM2WebCommand(["cmd": "search", "q": "  castle  "]) != nil && SMM2WebCommand(["cmd": "lookup", "code": "4RF-XV8-WCG"]) != nil &&
+          SMM2WebCommand(["cmd": "inject", "dataID": 3000004, "slot": 125]) != nil && SMM2WebCommand(["cmd": "cancel"]) != nil,
+          "real browser commands are accepted")
+    check(SMM2WebCommand(["cmd": "search", "q": "   "]) == nil && SMM2WebCommand(["cmd": "inject", "dataID": 3000004, "slot": 60]) == nil &&
+          SMM2WebCommand(["cmd": "inject", "dataID": 3000004, "slot": 180]) == nil && SMM2WebCommand(["cmd": "select", "dataID": 0]) == nil &&
+          SMM2WebCommand(["cmd": "upload"]) == nil, "empty searches, My Courses slots and unknown commands are refused before any save is touched")
+
+    let gameApp = tmp.appendingPathComponent("Games/SMM2.app"), otherApp = tmp.appendingPathComponent("Games/Other.app")
+    let noEnv = SMM2WebLaunch.environment(settings: true, browserDir: web, game: gameApp, browserGame: gameApp)
+    let ordinary = SMM2WebLaunch.environment(settings: false, browserDir: web, game: gameApp, browserGame: otherApp)
+    let browser = SMM2WebLaunch.environment(settings: false, browserDir: web, game: gameApp, browserGame: gameApp)
+    check(noEnv.isEmpty, "game settings never wake the browser")
+    check(ordinary == ["DM_LAUNCHER": "0"] && browser["DM_LAUNCHER"] == "0" && browser["DM_COURSE_BROWSER"] == web.path,
+          "only the chosen game is launched with the private browser folder")
+
+    let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    let realThumb = SMM2WebPreview.json(for: SMM2Course(dataID: 3000004), thumbnail: png)
+    let drawnPreview = SMM2WebPreview.json(for: archived)
+    let noPreview = SMM2WebPreview.json(for: SMM2Course(dataID: 3000004))
+    check(realThumb["kind"] as? String == "thumbnail" && (realThumb["image"] as? String)?.hasPrefix("data:image/png;base64,") == true,
+          "a real image is shown as a thumbnail and nothing else")
+    check(drawnPreview["kind"] as? String == "map" && (drawnPreview["svg"] as? String)?.contains("Course map") == true &&
+          (drawnPreview["honesty"] as? String)?.contains("level data") == true,
+          "without a picture the preview is drawn from that course's own level bytes and says so")
+    check(noPreview["kind"] as? String == "none" && (noPreview["honesty"] as? String)?.contains("No preview") == true,
+          "with neither a picture nor level data the page says there is no preview")
+    } else { check(false, "the browser mailbox can be made") }
 }
 
 print("\(passed) passed, \(failed) failed"); exit(failed == 0 ? 0 : 1)

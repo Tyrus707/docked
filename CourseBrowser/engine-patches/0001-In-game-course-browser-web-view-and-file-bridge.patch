@@ -1,0 +1,169 @@
+diff --git a/dm/host/front_mac.m b/dm/host/front_mac.m
+index e956b7d..2ecb136 100644
+--- a/dm/host/front_mac.m
++++ b/dm/host/front_mac.m
+@@ -1885,6 +1885,11 @@ void front_run(void (*guest)(void)) {
+         pads_start();
+         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
+             if (e.window != win) return e;   // Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
++            // F6 opens the Course Browser over the game picture, the same web view the offline HTML pages use. It is only a request: the bridge folder
++            // must have been set by Docked, and the page is never opened if the game has no window.
++            if (e.type == NSEventTypeKeyDown && e.keyCode == 97 && !(e.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption))) {
++                extern void dm_course_browser_request(void); dm_course_browser_request(); return nil;
++            }
+             if (e.type == NSEventTypeKeyDown && (e.modifierFlags & NSEventModifierFlagCommand)) return e;   // ⌘ shortcuts go to the menu; a key released while ⌘ is held still reaches the game, or it would stay pressed
+             if (e.type == NSEventTypeKeyDown && fn_shortcut(e)) return e;   // fn (Globe) + a letter is the system's (fn+F full screen, GitHub issue #873), not the game's F
+             if (!e.isARepeat) on_key(e, e.type == NSEventTypeKeyDown);
+diff --git a/dm/host/hle_web.c b/dm/host/hle_web.c
+index e2c19dd..290e4b5 100644
+--- a/dm/host/hle_web.c
++++ b/dm/host/hle_web.c
+@@ -14,6 +14,10 @@
+ #include "dm_input.h"
+ #include <pthread.h>
+ #include <sys/stat.h>
++#include <dirent.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <ctype.h>
+ 
+ enum { TLV_CALLBACK_URL = 0x3, TLV_DOCUMENT_PATH = 0x6, TLV_KEY_REPEAT_DELAY = 0x1c, TLV_KEY_REPEAT_PULSE = 0x1d, TLV_BOOT_MODE = 0x41 };
+ enum { ARG_SIZE = 0x2000, URL_SIZE = 0x1000, MSG_MAX = 32 };
+@@ -88,17 +92,129 @@ static void web_end_locked(uint32_t reason, const char *url) {   // the page end
+     pthread_cond_broadcast(&g_web_cv);
+ }
+ 
++// ---- the in-game Course Browser (host page over the game picture) ----
++// DM_COURSE_BROWSER names a folder Docked owns. html/index.html is the page it
++// shows; to-game/*.json are replies for the page, to-docked/*.json are the
++// page's requests. This is the same web view an offline HTML page uses: no
++// sign-in, no Nintendo connection, no save access, no guest-code patching.
++static char g_cb_dir[1024];
++static int g_cb_wanted, g_cb_open, g_cb_retry;   // under g_web_mu
++static unsigned long long g_cb_seq;
++static pthread_t g_cb_thread;
++
++static void cb_path(char *out, size_t n, const char *part) { snprintf(out, n, "%s/%s", g_cb_dir, part); }
++
++static void cb_write_out_locked(const char *msg, size_t n) {   // a page request, as one whole file Docked can pick up; g_web_mu is held
++    if (!g_cb_dir[0] || !msg || !n) return;
++    char tmp[1200], dst[1200]; unsigned long long seq = ++g_cb_seq;
++    snprintf(tmp, sizeof tmp, "%s/to-docked/.%llu.%ld.tmp", g_cb_dir, seq, (long)getpid());
++    snprintf(dst, sizeof dst, "%s/to-docked/%llu.json", g_cb_dir, seq);
++    FILE *f = fopen(tmp, "wb"); if (!f) return;
++    fwrite(msg, 1, n, f); fclose(f);
++    if (rename(tmp, dst)) unlink(tmp);
++}
++
++static void cb_open_locked(void) {   // show our page as a session the game does not own
++    if (g_web_state) { front_web_close(); if (g_web_held) dm_input_hold(0); }
++    msg_clear(); g_web_held = 0; g_web_reason = 0; g_web_url[0] = 0; g_web_state = 2;
++    char html[1100]; snprintf(html, sizeof html, "%s/html", g_cb_dir);
++    dm_web_opts o = {0, 0};
++    g_web_real = front_web_open(html, "index.html", "dmweb://course-browser-done/", 0, &o) == 0;
++    if (g_web_real) { g_cb_open = 1; g_web_held = 1; dm_input_hold(1); front_web_show(); g_cb_retry = 0; }
++    else { g_web_state = 0; g_cb_retry = 12; }   // the Metal layer may not exist yet: try again shortly
++}
++
++void dm_course_browser_request(void) {   // F6 in the game window: open, or close if already open
++    pthread_mutex_lock(&g_web_mu); g_cb_wanted = 1; pthread_mutex_unlock(&g_web_mu);
++}
++
++static int cb_name_order(const void *a, const void *b) {
++    const char *x = *(const char *const *)a, *y = *(const char *const *)b;
++    unsigned long long nx = strtoull(x, NULL, 10), ny = strtoull(y, NULL, 10);
++    return nx < ny ? -1 : nx > ny ? 1 : 0;
++}
++
++static void cb_deliver_replies(void) {
++    char d[1100]; cb_path(d, sizeof d, "to-game");
++    DIR *dir = opendir(d); if (!dir) return;
++    char *names[256]; int n = 0; struct dirent *de;
++    while ((de = readdir(dir)) && n < 256) {
++        const char *s = de->d_name, *dot;
++        if (!isdigit((unsigned char)*s)) continue;
++        dot = strchr(s, '.'); if (!dot || strcmp(dot, ".json")) continue;
++        names[n++] = strdup(s);
++    }
++    closedir(dir); if (!n) return;
++    qsort(names, n, sizeof names[0], cb_name_order);
++    for (int i = 0; i < n; i++) {
++        char path[1200]; snprintf(path, sizeof path, "%s/%s", d, names[i]);
++        FILE *f = fopen(path, "rb");
++        if (f) {
++            fseek(f, 0, SEEK_END); long sz = ftell(f); rewind(f);
++            if (sz > 0 && sz < 4 * 1024 * 1024) {
++                char *buf = malloc((size_t)sz); size_t k = buf ? fread(buf, 1, (size_t)sz, f) : 0;
++                pthread_mutex_lock(&g_web_mu); int active = g_cb_open && g_web_real; pthread_mutex_unlock(&g_web_mu);
++                if (active && k == (size_t)sz) front_web_send(buf, k);
++                free(buf);
++            }
++            fclose(f);
++        }
++        unlink(path); free(names[i]);
++    }
++}
++
++static void *cb_thread(void *unused) {
++    (void)unused;
++    for (;;) {
++        if (g_cb_dir[0]) {
++            int want;
++            pthread_mutex_lock(&g_web_mu);
++            want = g_cb_wanted; g_cb_wanted = 0;
++            if (!want && g_cb_retry > 0 && --g_cb_retry == 0) want = 1;
++            int open = g_cb_open;
++            pthread_mutex_unlock(&g_web_mu);
++            if (want) {
++                if (open) {
++                    pthread_mutex_lock(&g_web_mu);
++                    web_end_locked(0, NULL); g_cb_open = 0; g_web_state = 0;
++                    pthread_mutex_unlock(&g_web_mu);
++                    front_web_close();
++                } else {
++                    pthread_mutex_lock(&g_web_mu); cb_open_locked(); pthread_mutex_unlock(&g_web_mu);
++                }
++            }
++            cb_deliver_replies();
++        }
++        usleep(200000);
++    }
++    return NULL;
++}
++
++__attribute__((constructor)) static void cb_init(void) {
++    const char *d = getenv("DM_COURSE_BROWSER");
++    if (!d || !*d || strlen(d) > sizeof g_cb_dir - 32) return;
++    snprintf(g_cb_dir, sizeof g_cb_dir, "%s", d);
++    char p[1200];
++    mkdir(g_cb_dir, 0700);
++    cb_path(p, sizeof p, "to-game"); mkdir(p, 0700);
++    cb_path(p, sizeof p, "to-docked"); mkdir(p, 0700);
++    cb_path(p, sizeof p, "html"); mkdir(p, 0700);
++    pthread_create(&g_cb_thread, NULL, cb_thread, NULL);
++}
++
+ // Front end reports (main thread)
+ void dm_web_message(const char *msg, size_t n) {
+     pthread_mutex_lock(&g_web_mu);
+     static int logged; if (logged++ < 16) LOG("web: content message from the page: \"%.*s\"", (int)(n > 80 ? 80 : n), msg);
+     if (g_web_state == 1 || g_web_state == 2) msg_push(msg, n);
++    if (g_cb_open) cb_write_out_locked(msg, n);
+     pthread_mutex_unlock(&g_web_mu);
+ }
+ void dm_web_ended(uint32_t reason, const char *url) {
+     pthread_mutex_lock(&g_web_mu);
+     if (g_web_state == 1 || g_web_state == 2) LOG("web: the page ended: exit reason %u, last URL %s", reason, url && *url ? url : "(none)");
+     web_end_locked(reason, url);
++    if (g_cb_open) { g_cb_open = 0; g_cb_retry = 0; g_web_state = 0; front_web_close(); }
+     pthread_mutex_unlock(&g_web_mu);
+ }
+ void dm_web_failed(const char *why) {   // the page did not load: the stand-in takes over (its empty ready message, closed when it appears)
+@@ -107,6 +223,7 @@ void dm_web_failed(const char *why) {   // the page did not load: the stand-in t
+         LOG("[RED] web: the page could not be shown (%s); the stand-in answers", why ?: "?");
+         g_web_real = 0;
+         if (g_web_state == 1) msg_push("", 0); else web_end_locked(0, NULL);
++        if (g_cb_open) { g_cb_open = 0; g_web_state = 0; front_web_close(); }
+     }
+     pthread_mutex_unlock(&g_web_mu);
+ }

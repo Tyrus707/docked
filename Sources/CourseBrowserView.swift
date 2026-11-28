@@ -2,9 +2,11 @@ import AppKit
 import CoreGraphics
 import SwiftUI
 
-// Public courses, in plain language. The panel floats over the game window. No
-// account, no Nintendo servers, no upload, and no write while the game is open:
-// a course chosen during play waits until the game has closed.
+// The Course Browser session: the page itself lives in CourseBrowserBridge.swift
+// and is shown by the game's own web view. This file keeps the old drawing code
+// for maps and the model's queue/inject path. No account, no Nintendo servers,
+// no upload, and no write while the game is open: a course chosen during play
+// waits until the game has closed.
 struct CourseBrowserView: View {
     @EnvironmentObject var model: Model
     let game: Game
@@ -323,79 +325,30 @@ struct SMM2CourseMapView: View {
     }
 }
 
-// The panel owns no game state. It only hosts the SwiftUI view and sits above
-// the game's own window, including when that window is on a full-screen Space.
-final class CourseBrowserPanel {
-    static let shared = CourseBrowserPanel()
-    private var panel: NSPanel?
-    private weak var model: Model?
-
-    func show(game: Game, model: Model) {
-        close()
-        self.model = model
-        let size = NSSize(width: 860, height: 640)
-        let root = CourseBrowserView(game: game) { self.close() }.environmentObject(model)
-        let hosting = NSHostingView(rootView: root)
-        hosting.frame = NSRect(origin: .zero, size: size)
-
-        let p = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .miniaturizable, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-        p.contentView = hosting
-        p.title = "Course Browser — \(game.name)"
-        p.isFloatingPanel = true
-        p.hidesOnDeactivate = false
-        p.level = .floating
-        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        p.isMovableByWindowBackground = true
-        p.setFrame(Self.frame(game: game, size: size), display: true)
-        panel = p
-        if NSApp.isHidden { NSApp.unhide(nil) }
-        p.orderFrontRegardless()
-        p.makeKey()
-    }
-
-    func close() {
-        panel?.close()
-        panel = nil
-        model?.courseBrowserGame = nil
-    }
-
-    private static func frame(game: Game, size: NSSize) -> NSRect {
-        let window = gameWindow(game) ?? NSApp.windows.first { $0.canBecomeMain }?.frame ?? NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let screen = NSScreen.screens.first { $0.frame.intersects(window) } ?? NSScreen.main
-        return SMM2OverlayLayout.frame(game: window, panel: size, screen: screen?.frame ?? window)
-    }
-
-    // The converted game is its own Mac app. Core Graphics reports the real
-    // window bounds without reaching into the game or changing it.
-    private static func gameWindow(_ game: Game) -> NSRect? {
-        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL == game.url.standardizedFileURL }) else { return nil }
-        let list = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
-        for info in list {
-            guard let owner = (info[kCGWindowOwnerPID as String] as? NSNumber)?.intValue, owner == Int(app.processIdentifier),
-                  let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, layer == 0,
-                  let bounds = info[kCGWindowBounds as String] as? [String: Any] else { continue }
-            func number(_ key: String) -> CGFloat? { (bounds[key] as? NSNumber).map { CGFloat($0.doubleValue) } }
-            guard let x = number("X"), let y = number("Y"), let w = number("Width"), let h = number("Height"), w > 200, h > 200 else { continue }
-            let cg = CGRect(x: x, y: y, width: w, height: h)
-            let mainHeight = NSScreen.screens.first?.frame.height ?? 0
-            let centre = NSPoint(x: cg.midX, y: mainHeight - cg.midY)
-            let top = (NSScreen.screens.first { $0.frame.contains(centre) } ?? NSScreen.main)?.frame.maxY ?? mainHeight
-            return NSRect(x: cg.minX, y: top - cg.maxY, width: w, height: h)
-        }
-        return nil
-    }
-}
-
 extension Model {
     func openCourseBrowser(_ g: Game) {
         guard g.rom == nil, g.titleID.uppercased() == smm2TitleID, !g.missing else {
             message = "Course Browser works with converted Super Mario Maker 2 games only."; return
         }
         guard GameData(g.titleID).hasSave else { message = SMM2Error.noSave.errorDescription ?? ""; return }
+        guard !isOpen(g), !isRunning(g) else {
+            message = "Quit \(g.name), then choose Course Browser again. The browser opens inside a fresh game window."
+            return
+        }
+        guard let dir = SMM2WebBridge.prepare(g.titleID) else {
+            message = "Docked couldn't make the Course Browser folder, so nothing was changed."; return
+        }
         smm2QueueNote = ""
-        CourseBrowserPanel.shared.show(game: g, model: self)
+        smm2WebDir = dir
+        smm2WebCourses = [:]
         courseBrowserGame = g
+        smm2WebTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.pollSMM2WebBridge() }
+        RunLoop.main.add(timer, forMode: .common)
+        smm2WebTimer = timer
+        // The page is not a separate panel: it is shown by the game's own web
+        // view when F6 is pressed in the game window.
+        play(g)
     }
 
     func openCourseBrowserForSMM2() {
@@ -524,5 +477,125 @@ extension Model {
                 }
             }
         }
+    }
+}
+
+extension Model {
+    func closeSMM2WebSession() {
+        smm2WebTimer?.invalidate(); smm2WebTimer = nil
+        smm2WebDir = nil; smm2WebCourses = [:]
+        courseBrowserGame = nil
+    }
+
+    // Docked reads the page's requests on the main queue. Every network lookup
+    // and preview build happens off it; only replies come back here.
+    func pollSMM2WebBridge() {
+        guard let dir = smm2WebDir, let game = courseBrowserGame else { return }
+        for request in SMM2WebBridge.requests(in: dir) {
+            let id = SMM2WebBridge.requestID(request)
+            guard let command = SMM2WebCommand(request) else {
+                smm2WebReply(id, ["cmd": "error", "ok": false, "note": "Docked couldn't understand that request. Nothing was changed."])
+                continue
+            }
+            switch command {
+            case .hello, .slots:
+                let slots = Array(SMM2Slots.populated(in: GameData(game.titleID).save)).sorted()
+                let note = smm2QueueNote.isEmpty ? "Press F6 in the game window to open the browser, or B to close it. Save and quit to let a queued course be written." : smm2QueueNote
+                let running = isRunning(game) || isOpen(game)
+                if case .slots = command {
+                    smm2WebReply(id, ["cmd": "slots", "slots": slots, "running": running, "note": note])
+                } else {
+                    smm2WebReply(id, ["cmd": "hello", "slots": slots, "running": running, "note": note])
+                }
+            case .search(let text):
+                smm2Search(text) { [weak self] result in
+                    guard let self, let dir = self.smm2WebDir else { return }
+                    switch result {
+                    case .failure(let e):
+                        self.smm2WebReply(id, dir: dir, ["cmd": "search", "ok": false, "courses": [], "note": e.localizedDescription])
+                    case .success(let found):
+                        self.smm2WebRemember(found.courses)
+                        let note = found.courses.isEmpty
+                            ? (found.partial ? "The archive couldn't finish that search. Try a shorter name or a course ID." : "No courses matched. Try a shorter name or a course ID.")
+                            : "\(found.courses.count) course\(found.courses.count == 1 ? "" : "s") found."
+                        self.smm2WebReply(id, dir: dir, ["cmd": "search", "ok": !found.courses.isEmpty,
+                                                         "courses": found.courses.map(SMM2WebBridge.courseJSON(_:)), "note": note])
+                    }
+                }
+            case .lookup(let code):
+                smm2Course(code: code, tryLive: true) { [weak self] result in
+                    guard let self, let dir = self.smm2WebDir else { return }
+                    switch result {
+                    case .failure(let e):
+                        self.smm2WebReply(id, dir: dir, ["cmd": "lookup", "ok": false, "courses": [], "note": e.localizedDescription])
+                    case .success(let found):
+                        guard let found else {
+                            self.smm2WebReply(id, dir: dir, ["cmd": "lookup", "ok": false, "courses": [], "note": "That course isn't in the archive. Try another ID."])
+                            return
+                        }
+                        self.smm2WebRemember([found])
+                        self.smm2WebReply(id, dir: dir, ["cmd": "lookup", "ok": true,
+                                                         "courses": [SMM2WebBridge.courseJSON(found)], "note": "Course found."])
+                    }
+                }
+            case .select(let courseID):
+                guard var course = smm2WebCourses[courseID] else {
+                    smm2WebReply(id, ["cmd": "select", "ok": false, "dataID": courseID, "note": "Search again to load that course's data."])
+                    continue
+                }
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    let thumbnail = SMM2Archive.thumbnail(dataID: course.dataID)
+                    if course.levelData == nil, let bcd = try? SMM2Archive.liveData(course.courseID) {
+                        course.levelData = bcd; course.isBcdFile = true
+                    }
+                    let preview = SMM2WebPreview.json(for: course, thumbnail: thumbnail)
+                    DispatchQueue.main.async {
+                        guard let self, let dir = self.smm2WebDir else { return }
+                        self.smm2WebCourses[course.dataID] = course
+                        self.smm2WebReply(id, dir: dir, ["cmd": "select", "ok": true,
+                                                         "dataID": course.dataID, "preview": preview])
+                    }
+                }
+            case .inject(let courseID, let slot):
+                guard let course = smm2WebCourses[courseID] else {
+                    smm2WebReply(id, ["cmd": "inject", "ok": false, "note": "Search again to load that course's data."])
+                    continue
+                }
+                if isRunning(game) || isOpen(game) {
+                    queueSMM2Course(course, in: slot, for: game)
+                    smm2WebReply(id, ["cmd": "inject", "ok": true, "note": smm2QueueNote])
+                } else {
+                    smm2Inject(course, into: game, slot: slot, tryLive: true) { [weak self] result in
+                        guard let self, let dir = self.smm2WebDir else { return }
+                        switch result {
+                        case .failure(let e):
+                            self.smm2WebReply(id, dir: dir, ["cmd": "inject", "ok": false, "note": e.localizedDescription])
+                        case .success:
+                            self.smm2WebReply(id, dir: dir, ["cmd": "inject", "ok": true,
+                                                             "note": "Done. The course is in Downloaded Course \(SMM2Slots.name(slot)). Coursebot still shows that slot's old thumbnail and title."])
+                        }
+                    }
+                }
+            case .cancel:
+                cancelSMM2Queue()
+                smm2WebReply(id, ["cmd": "cancel", "ok": true, "note": smm2QueueNote])
+            case .close:
+                smm2WebReply(id, ["cmd": "close", "ok": true])
+            }
+        }
+    }
+
+    func smm2WebRemember(_ courses: [SMM2Course]) {
+        if smm2WebCourses.count > 300 { smm2WebCourses = [:] }
+        for course in courses { smm2WebCourses[course.dataID] = course }
+    }
+
+    func smm2WebReply(_ id: Int?, _ body: [String: Any]) {
+        guard let dir = smm2WebDir else { return }
+        smm2WebReply(id, dir: dir, body)
+    }
+
+    func smm2WebReply(_ id: Int?, dir: URL, _ body: [String: Any]) {
+        SMM2WebBridge.send(SMM2WebBridge.reply(id, body), in: dir)
     }
 }
